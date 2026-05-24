@@ -1,0 +1,19 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: backup-overdue
+  displayName: Backup RPO Violated
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    Fires when merkle_backup_age_seconds exceeds 86400 (24 hours) for more than
+    10 minutes, indicating the RPO target has been breached. An RPO violation
+    lasting more than 2 hours triggers a postmortem.
+  severity: warning
+  condition:
+    kind: burnrate
+    threshold: 1
+    lookbackWindow: 10m
+    alertAfter: 10m

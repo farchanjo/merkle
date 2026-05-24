@@ -1,0 +1,35 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: unseal-success-rate
+  displayName: Unseal Success Rate
+  labels:
+    boundedContext: identityAndSealing
+spec:
+  description: >
+    Ratio of successful Unseal Protocol completions to attempted unseals over a
+    30-day rolling window, counted only when the OS Keychain entry or a
+    passphrase is present and accessible. Failures due to missing or revoked
+    keychain entries are excluded from the denominator via label filtering on
+    reason. The metric source is the merkle_unseal_total counter labeled by
+    outcome and reason; the exclusion filter removes entries where
+    reason=keychain_missing or reason=keychain_revoked.
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_unseal_total{outcome="ok"}[30d])
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_unseal_total{reason!~"keychain_missing|keychain_revoked"}[30d])
+          # yamllint enable rule:line-length

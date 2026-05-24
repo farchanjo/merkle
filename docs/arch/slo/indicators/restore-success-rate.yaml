@@ -1,0 +1,37 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: restore-success-rate
+  displayName: Restore Success Rate
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    Ratio of successful restores — where the restore process exits with code 0
+    and the vault is accessible after the operation — to attempted
+    restores over a 30-day rolling window. Failures caused by corrupt
+    backup files are excluded from the denominator; only restores from
+    structurally valid backup archives are counted. The primary measurement
+    source is the merkle_restore_total{outcome} Prometheus counter. The
+    structured JSON log emitted by merkle restore --log-format json is a
+    secondary, forensic-detail source; a per-restore log entry is still
+    emitted for audit trail purposes, but the SLI math uses Prometheus.
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_restore_total{outcome="ok"}[30d])
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_restore_total{outcome!="corrupt_backup"}[30d])
+          # yamllint enable rule:line-length

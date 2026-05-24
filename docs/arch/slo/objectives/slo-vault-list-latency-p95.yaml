@@ -1,0 +1,27 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-vault-list-latency-p95
+  displayName: vault.list p95 Latency < 50 ms
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    No more than 5% of vault.list calls may exceed 50 ms at the p95 percentile
+    in any 30-day rolling window, measured with 1,000 secrets in the namespace
+    and the FTS5 index warm. Latency SLOs do not translate directly into time
+    budgets; the error budget is expressed as a fraction of requests: at most
+    5% of vault.list calls may be slow. A rolling 1-hour window exceeding 10%
+    slow requests constitutes a fast-burn alert condition.
+  service: mcp-adapter
+  indicator:
+    metadataRef: vault-list-latency-p95
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "95% of vault.list requests complete within 50 ms"
+      op: gte
+      target: 0.95

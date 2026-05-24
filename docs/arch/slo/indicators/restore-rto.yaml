@@ -1,0 +1,38 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: restore-rto
+  displayName: Restore RTO — Completion Within 60 s
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    Histogram-based latency indicator measuring the fraction of restore
+    operations that complete within 60 seconds. The numerator is the count of
+    restore duration histogram observations with le=60 (i.e., completed in 60 s
+    or less); the denominator is the total number of restore observations
+    (le=+Inf). The SLO target of 1.0 means every restore must complete within
+    the 60-second RTO. The metric source is
+    merkle_restore_duration_seconds_bucket emitted by backup::restore, which is
+    the canonical SLI source for the Restore RTO < 60 s objective.
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            sum(rate(merkle_restore_duration_seconds_bucket{le="60"}[30d]))
+            / sum(rate(merkle_restore_duration_seconds_bucket{le="+Inf"}[30d]))
+          # yamllint enable rule:line-length
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            clamp_max(sum(rate(merkle_restore_duration_seconds_bucket{le="+Inf"}[30d]))
+            * 0 + 1, 1)

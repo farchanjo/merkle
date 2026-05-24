@@ -1,0 +1,31 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-backup-freshness-rpo
+  displayName: Backup Freshness RPO max(24h, 10 mutations)
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    At any point during host-up time the elapsed time since the last successful
+    backup must not exceed max(24h, 10 mutations). The error budget is zero
+    percent of host-up time spent outside RPO over the 30-day rolling Timeslices
+    window. A single RPO violation lasting more than 2 hours triggers a
+    postmortem. Backup freshness is driven by the Anacron Trigger, the
+    Change-Triggered Backup, and the Sleep Hook. This SLO uses the host-up
+    window rather than agent-up; host sleep intervals are excluded from both
+    numerator and denominator.
+  service: vault-agent
+  indicator:
+    metadataRef: backup-freshness-rpo
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Timeslices
+  objectives:
+    - displayName: "0% of host-up timeslices outside RPO"
+      op: gte
+      target: 1.0
+      timeSliceTarget: 1.0
+      timeSliceWindow: 5m

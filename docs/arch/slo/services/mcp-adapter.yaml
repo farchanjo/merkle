@@ -1,0 +1,25 @@
+---
+apiVersion: openslo/v1
+kind: Service
+metadata:
+  name: mcp-adapter
+  displayName: Merkle MCP Adapter
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    The short-lived MCP Server process (one per client window) that translates
+    MCP tool calls into Vault Agent RPC. It is the driving port through which
+    LLM clients (such as Claude Code) interact with the vault. It owns the
+    latency measurement window: from the moment a complete tool-call frame
+    arrives to the moment the last byte of the response frame is written.
+    External-service round-trips and OOB Confirmation waits are subtracted
+    from the measurement window. The service scope covers the tool methods
+    vault.list, vault.use, vault.reveal, and vault.ssh.exec.
+
+  # SLOs owned by this service
+  # ---------------------------------------------------------------------------
+  # slo-vault-list-latency-p95      95% of vault.list requests within 50 ms
+  # slo-vault-use-latency-p95       95% of vault.use requests within 100 ms
+  # slo-vault-reveal-latency-p95    95% of vault.reveal requests within 200 ms
+  # slo-vault-ssh-exec-overhead-p95 95% of vault.ssh.exec agent overhead < 50 ms

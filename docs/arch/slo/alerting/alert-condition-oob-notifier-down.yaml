@@ -1,0 +1,26 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: oob-notifier-down
+  displayName: OOB Notifier Unreachable (>5m)
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fires when the Out-of-Band Notifier has been unreachable or unhealthy for
+    more than 5 minutes, as indicated by merkle_oob_notifier_available == 0.
+    The OOB Notifier is required for vault.reveal operations in namespaces with
+    sensitive Secrets: when it is down, high-sensitivity reveals either block
+    or degrade. Default severity is P2 (warning). Severity escalates to P1
+    (critical) when the bound namespace has sensitivity=high reveals pending,
+    as the notifier absence directly blocks authorized Secret access. The alert
+    source is the OOB Notifier health probe emitting
+    merkle_oob_notifier_available. Refer to runbook scenario 16
+    (OOB Notifier Unavailable) for response procedure.
+  severity: warning
+  condition:
+    kind: burnrate
+    threshold: 1
+    lookbackWindow: 5m
+    alertAfter: 5m

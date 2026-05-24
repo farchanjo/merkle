@@ -1,0 +1,30 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-companion-socket-connect-rate
+  displayName: Companion Socket Connect Success Rate 99.9%
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    At least 99.9% of authorized Unix domain socket connection handshakes must
+    succeed over a 30-day rolling window, during agent-up time only.
+    Authorization failures from unknown PIDs or processes not in the Allowed
+    Consumers list count as neither success nor failure and are tracked
+    separately as policy events. Only transport-layer failures —
+    socket errors, agent-side panics, and backlog exhaustion — count
+    against the SLO. The
+    metric source is merkle_companion_socket_connects_total with outcome
+    accepted; rejected outcome entries are excluded from the denominator.
+  service: companion-socket
+  indicator:
+    metadataRef: companion-socket-connect-rate
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "99.9% of authorized socket connections succeed"
+      op: gte
+      target: 0.999

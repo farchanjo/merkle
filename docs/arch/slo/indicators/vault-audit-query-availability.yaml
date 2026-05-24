@@ -1,0 +1,38 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: vault-audit-query-availability
+  displayName: vault.audit.query Availability
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Ratio of successful vault.audit.query MCP tool responses to total
+    vault.audit.query requests, over a 30-day rolling window. A successful
+    response is a non-error JSON-RPC result; internal errors, panics, and
+    timeouts count as failures. Structured errors such as permission_denied
+    returned by the MCP protocol layer count as successes at the transport
+    layer. The metric source is merkle_rpc_requests_total and
+    merkle_rpc_errors_total filtered to op="vault.audit.query".
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_requests_total{op="vault.audit.query"}[30d])
+            - increase(merkle_rpc_errors_total{op="vault.audit.query"}[30d])
+          # yamllint enable rule:line-length
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_requests_total{op="vault.audit.query"}[30d])
+          # yamllint enable rule:line-length

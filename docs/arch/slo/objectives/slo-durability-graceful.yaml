@@ -1,0 +1,34 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-durability-graceful
+  displayName: Data Durability — Graceful Shutdown Zero Loss
+  labels:
+    boundedContext: secretStorage
+spec:
+  description: >
+    On a graceful shutdown (SIGTERM received), the agent must drain
+    all in-flight writes and reach a clean WAL checkpoint before the
+    process exits. Zero data loss is the target: every write committed
+    before the SIGTERM must be retrievable after the agent restarts.
+    This is an always-on invariant with no time window and no error
+    budget. Any graceful-shutdown loss event is a P1 incident.
+    Verification is performed by merkle doctor --durability and the
+    WAL configuration audit. Modeled as a Timeslices SLO with a
+    1-minute timeslice window and a target of 1.0 (100% of timeslices
+    must have zero loss) because OpenSLO v1 requires a numeric time
+    window.
+  service: vault-agent
+  indicator:
+    metadataRef: durability-invariants-ok
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Timeslices
+  objectives:
+    - displayName: "Zero data loss on graceful shutdown — 100% timeslices"
+      op: gte
+      target: 1.0
+      timeSliceTarget: 1.0
+      timeSliceWindow: 1m

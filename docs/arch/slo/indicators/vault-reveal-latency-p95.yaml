@@ -1,0 +1,35 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: vault-reveal-latency-p95
+  displayName: vault.reveal p95 Latency
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fraction of vault.reveal requests completed within 200 ms at the p95
+    percentile. The OOB Confirmation round-trip is subtracted from the
+    measurement window: the clock pauses while the agent awaits the operator
+    acknowledgment via desktop notification, terminal prompt, or localhost
+    browser page and resumes on receipt. The plaintext serialization phase
+    is included in the measured window. The metric source is
+    merkle_rpc_duration_seconds_bucket labeled by op="vault.reveal".
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_duration_seconds_bucket{op="vault.reveal",le="0.2"}[30d])
+          # yamllint enable rule:line-length
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_rpc_duration_seconds_count{op="vault.reveal"}[30d])

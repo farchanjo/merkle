@@ -1,0 +1,22 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: audit-chain-broken
+  displayName: Audit Chain Integrity Breach (P1)
+  labels:
+    boundedContext: auditCompliance
+spec:
+  description: >
+    Fires immediately when the merkle_chain_integrity_ok gauge drops to 0.
+    There is no error budget for chain integrity; any breach is a P1 incident.
+    Secret writes are frozen until the chain is repaired or attested. The
+    condition has no lookback window tolerance: a single gauge reading of 0
+    triggers it. Refer to runbook scenario 20 (Audit Chain Integrity Broken)
+    for response procedure.
+  severity: page
+  condition:
+    kind: burnrate
+    threshold: 1
+    lookbackWindow: 5m
+    alertAfter: 0m

@@ -1,0 +1,20 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: unseal-failure-second-in-month
+  displayName: Unseal Second Failure in Calendar Month
+  labels:
+    boundedContext: identityAndSealing
+spec:
+  description: >
+    Fires when a second Unseal failure occurs within the same calendar month.
+    The 99.9% SLO over 30 days allows only 1 tolerated failure per month. A
+    second failure triggers root cause analysis. Refer to runbook scenario 19
+    (Unseal Calendar-Month Failure) for response procedure.
+  severity: warning
+  condition:
+    kind: occurrences
+    threshold: 2
+    lookbackWindow: 30d
+    alertAfter: 0m

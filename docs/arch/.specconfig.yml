@@ -1,0 +1,50 @@
+---
+project:
+  name: merkle
+  organization: fapp
+  version: "0.1.0"
+  description: >-
+    Local-first MCP vault that mediates between LLM context and secret
+    storage. Issues opaque handles by default; LLM operates secrets via
+    proxy tools without seeing plaintext. Audit log uses a Merkle-style
+    hash chain inspired by Ralph Merkle's tree construction.
+
+spec_root: docs/arch
+
+ddd:
+  bounded_contexts:
+    - identity-and-sealing
+    - secret-storage
+    - access-mediation
+    - audit-compliance
+    - backup-recovery
+    - policy-permissions
+  tactical_roles:
+    - AggregateRoot
+    - Entity
+    - ValueObject
+    - DomainService
+    - ReadModel
+
+hexagonal:
+  driving_ports:
+    - mcp-adapter
+    - cli-adapter
+    - companion-socket
+  driven_ports:
+    - storage-adapter
+    - keychain-adapter
+    - crypto-adapter
+    - oob-notifier-adapter
+    - external-service-adapter
+
+conventions:
+  language: en-US
+  markdown_flavor: commonmark
+  cue_filename_case: snake_case
+  cue_def_case: PascalCase
+  uuid_version: 7
+  diagrams: mermaid
+
+validation:
+  default_lane: medium

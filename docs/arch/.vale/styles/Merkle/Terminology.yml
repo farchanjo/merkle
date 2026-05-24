@@ -1,0 +1,44 @@
+---
+# Merkle/Terminology.yml
+# Enforces glossary-defined canonical terms via substitution.
+# Keys are incorrect forms (wrong case / wrong synonym); values are the
+# canonical glossary forms.
+# ignorecase: false — so the correct capitalized form is never flagged.
+# Severity: error.
+#
+# Rationale drawn from docs/arch/glossary.md.
+extends: substitution
+message: "Use the canonical term '%s' instead of '%s' (see glossary.md)."
+level: warning
+ignorecase: false
+swap:
+  # ── Identity and Sealing ───────────────────────────────────────────────────
+  # Wrong: "root key" (omits "Vault") — not already "Vault Root Key"
+  # yamllint disable-line rule:line-length
+  'root key(?!\s+is|\s+was|\s+will|\s+can|\s+has|\.|\,|\)|\s*$)': 'Vault Root Key'
+  # Wrong: "DEK" without "Namespace" prefix (ambiguous abbreviation)
+  '\bDEK\b(?!\s+is|\s+was|\s+are)': 'Namespace DEK'
+
+  # ── Access Mediation ───────────────────────────────────────────────────────
+  # Wrong: "out-of-band confirmation" — use OOB Confirmation
+  '[Oo]ut-of-band [Cc]onfirmation': 'OOB Confirmation'
+  '[Oo]ut of band [Cc]onfirmation': 'OOB Confirmation'
+
+  # ── Audit and Compliance ───────────────────────────────────────────────────
+  # Wrong: "append only" (missing hyphen)
+  '\bappend only\b': 'Append-Only'
+
+  # ── Backup and Recovery ────────────────────────────────────────────────────
+  # Wrong: "change triggered" (missing hyphen)
+  '\bchange triggered backup\b': 'Change-Triggered Backup'
+  # Wrong: "idle triggered" (missing hyphen)
+  '\bidle triggered backup\b': 'Idle-Triggered Backup'
+
+  # ── Policy and Permissions ─────────────────────────────────────────────────
+  # Wrong: "cross namespace" (missing hyphen)
+  '\bcross namespace access\b': 'Cross-Namespace Access'
+
+  # ── Storage Adapter ────────────────────────────────────────────────────────
+  # Wrong: "per blob encryption" (missing hyphen)
+  '\bper blob encryption\b': 'Per-Blob Encryption'
+  # Wrong: "per-blob" (correct) vs "per blob" — covered above

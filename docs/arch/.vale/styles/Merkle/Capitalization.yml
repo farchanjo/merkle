@@ -1,0 +1,29 @@
+---
+# Merkle/Capitalization.yml
+# Flags mis-cased variants of project proper nouns and brand names.
+# Only covers tokens that are unambiguously proper nouns and cannot
+# appear as ordinary English words — avoids false positives on terms
+# like "reveal" (verb) or "handle" (verb/noun).
+# Severity: warning.
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: false
+swap:
+  # Storage / search
+  'sqlite': 'SQLite'
+  'fts5': 'FTS5'
+
+  # Crypto algorithm names
+  'xchacha20-poly1305': 'XChaCha20-Poly1305'
+  'xchacha20poly1305': 'XChaCha20-Poly1305'
+  'argon2id': 'Argon2id'
+
+  # OS / platform names
+  'macos': 'macOS'
+
+  # Spec / schema languages (lowercase variants only)
+  'openapi': 'OpenAPI'
+  'asyncapi': 'AsyncAPI'
+  'openSlo': 'OpenSLO'
+  'openslo': 'OpenSLO'

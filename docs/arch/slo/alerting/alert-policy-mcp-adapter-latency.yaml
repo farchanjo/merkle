@@ -1,0 +1,25 @@
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: mcp-adapter-latency
+  displayName: MCP Adapter Latency Alert Policy
+  labels:
+    boundedContext: operations
+spec:
+  description: >
+    Alert policy for latency fast-burn on the mcp-adapter service. Fires when
+    the rolling 1-hour slow-request fraction exceeds the fast-burn threshold on
+    any of the four latency SLOs: vault.use, vault.list, vault.reveal, or
+    vault.ssh.exec. A 14.4x burn rate over 1 hour signals a sustained latency
+    regression that will exhaust the 30-day error budget ahead of schedule.
+  alertWhenNoData: false
+  alertWhenBreaching: true
+  alertWhenResolved: true
+  conditions:
+    - conditionRef: vault-use-latency-fast-burn
+    - conditionRef: vault-list-latency-fast-burn
+    - conditionRef: vault-reveal-latency-fast-burn
+    - conditionRef: vault-ssh-exec-overhead-fast-burn
+  notificationTargets:
+    - targetRef: local-operator

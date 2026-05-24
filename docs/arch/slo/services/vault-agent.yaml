@@ -1,0 +1,28 @@
+---
+apiVersion: openslo/v1
+kind: Service
+metadata:
+  name: vault-agent
+  displayName: Merkle Vault Agent
+  labels:
+    boundedContext: secretStorage
+spec:
+  description: >
+    The Vault Agent daemon process (merkle agent) running on the local host.
+    It owns the sealed/unsealed key lifecycle, the SQLite secret store with
+    WAL durability, the Merkle-style audit hash chain, backup scheduling via
+    Anacron and change-triggered hooks, and the Companion Socket that mediates
+    between external processes and secret material. The service boundary
+    excludes host availability, OS keychain availability, network availability,
+    and all external services. Measurement is restricted to agent-up time.
+
+  # SLOs owned by this service
+  # ---------------------------------------------------------------------------
+  # slo-agent-availability          99.5% availability over 30d rolling
+  # slo-durability-graceful         zero data loss on SIGTERM drain
+  # slo-durability-crash            loss bounded to last 10 mutations on SIGKILL
+  # slo-audit-chain-integrity       100% chain verifiability (zero error budget)
+  # slo-backup-freshness-rpo        max(24h, 10 mutations) RPO over host-up time
+  # slo-restore-rto                 < 60 s restore time (vault < 1,000 secrets)
+  # slo-restore-success-rate        99.0% restore success over 30d rolling
+  # slo-unseal-success-rate         99.9% unseal success over 30d rolling

@@ -1,0 +1,35 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: vault-list-latency-p95
+  displayName: vault.list p95 Latency
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fraction of vault.list requests completed within 50 ms at the p95
+    percentile, measured from the moment the MCP Adapter receives a
+    complete tool-call frame to the moment it writes the last byte of
+    the response frame. Baseline assumes 1,000 secrets in the namespace
+    with the FTS5 index warm. External-service round-trips are not included
+    in the measurement window. The metric source is
+    merkle_rpc_duration_seconds_bucket labeled by op="vault.list".
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_duration_seconds_bucket{op="vault.list",le="0.05"}[30d])
+          # yamllint enable rule:line-length
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_rpc_duration_seconds_count{op="vault.list"}[30d])

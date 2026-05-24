@@ -1,0 +1,46 @@
+# Merkle project rejected vocabulary
+# One term per line. Vale flags these as incorrect when found in prose.
+# Entries are non-canonical synonyms or deprecated terms that the
+# glossary replaces with a specific canonical form.
+
+# Wrong synonym for "Vault Root Key"
+root-key
+
+# Wrong synonym for "Namespace DEK"
+data-encryption-key
+
+# Wrong synonym for "OOB Confirmation"
+out-of-band-ack
+oob-ack-flow
+
+# Wrong form of "Per-Blob Encryption"
+per-blob-enc
+
+# Wrong synonym for "Hash Chain"
+audit-chain-log
+hash-log
+
+# Wrong synonym for "Append-Only"
+append-only-log-flat
+
+# Non-canonical form of "Companion Socket"
+companion-sock
+vault-socket
+
+# Non-canonical form of "Vault Agent"
+vault-daemon
+vault-service
+
+# Non-canonical forms of crypto algorithms
+xchacha20
+poly1305-alone
+chacha-aead
+
+# Non-canonical backup naming
+backup-file
+vault-backup
+
+# Non-canonical "Use Token" synonyms
+use-ticket
+proxy-token
+temp-token

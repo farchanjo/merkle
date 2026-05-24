@@ -1,0 +1,34 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: agent-availability
+  displayName: Vault Agent Availability
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Ratio of successful MCP tool responses (non-error JSON-RPC result) to total
+    requests received, over a 30-day rolling window, measured during agent-up
+    time only. A response that returns a structured error such as
+    permission_denied still counts as a successful response at the transport
+    layer; only internal panics, timeouts, and process crashes count as
+    failures. Host-sleep intervals and cold-start periods are excluded from
+    both the numerator and denominator.
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_rpc_requests_total[30d])
+            - increase(merkle_rpc_errors_total[30d])
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_rpc_requests_total[30d])

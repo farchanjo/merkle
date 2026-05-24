@@ -1,0 +1,22 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: availability-fast-burn
+  displayName: Agent Availability Fast-Burn (6x)
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fires when the availability error budget is burning at 6x or faster,
+    corresponding to 30 or more minutes of downtime per day. At this rate the
+    30-day budget of 216 minutes is exhausted in 5 days. Triggers an immediate
+    reliability review. Refer to runbook scenario 17 (MCP Latency Regression)
+    for the initial triage steps; if the agent process is absent rather than
+    slow, follow the runbook section on agent failure recovery.
+  severity: page
+  condition:
+    kind: burnrate
+    threshold: 6
+    lookbackWindow: 1h
+    alertAfter: 5m

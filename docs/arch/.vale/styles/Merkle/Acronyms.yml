@@ -1,0 +1,35 @@
+---
+# Merkle/Acronyms.yml
+# Encourages first-use spell-out for project acronyms.
+# Fires when the bare acronym appears without a preceding parenthetical
+# definition or an inline definition in the same paragraph.
+# Severity: warning — not all documents need full spell-out (glossary
+# references are sufficient in cross-linked files).
+#
+# Implementation note: Vale's `existence` rule flags any match found in
+# the document. Because we cannot track per-document first-occurrence
+# state in a single-pass rule, this rule uses a narrow regex that only
+# matches the bare acronym at a sentence boundary (start or after period),
+# which is the most likely location for a first-use violation. This keeps
+# false positives low while still catching undeclared acronyms in new
+# documents.
+extends: existence
+message: >-
+  Consider spelling out '%s' on first use
+  (e.g., 'Model Context Protocol (MCP)').
+level: warning
+raw:
+  # Match bare acronym at start of a word after whitespace or sentence start,
+  # NOT preceded by "(" (which means it IS the definition)
+  # and NOT followed by ")" (which means it IS being defined).
+  - '(?<!\()\bMCP\b(?!\))'
+  - '(?<!\()\bADR\b(?!\))'
+  - '(?<!\()\bCUE\b(?!\))'
+  - '(?<!\()\bAEAD\b(?!\))'
+  - '(?<!\()\bKDF\b(?!\))'
+  - '(?<!\()\bSLI\b(?!\))'
+  - '(?<!\()\bSLO\b(?!\))'
+  - '(?<!\()\bTLA\b(?!\))'
+  - '(?<!\()\bOOB\b(?!\))'
+  - '(?<!\()\bFTS\b(?!\))'
+  - '(?<!\()\bDEK\b(?!\))'

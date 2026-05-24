@@ -1,0 +1,2667 @@
+---
+openapi: 3.1.0
+
+info:
+  title: Merkle Companion Socket API
+  version: 0.1.0
+  description: >
+    Local administrative and control-plane HTTP API exposed by the Merkle
+    Vault Agent over a Unix domain socket at
+    `unix:///run/merkle/companion.sock`.
+
+
+    This surface is distinct from the MCP stdio JSON-RPC transport.
+    It is consumed by:
+
+    - The **CLI Adapter** (`merkle` CLI commands such as `unseal`, `seal`,
+      `backup`, `restore`, `audit`).
+
+    - The **MCP Adapter** process that connects to the daemon after each MCP
+      session handshake to obtain a session lease, resolve Use Tokens, and
+      dispatch Proxy Tool operations.
+
+    - Privileged local tooling operating as the same OS user as the Vault
+      Agent.
+
+
+    **Authentication**: Callers are authenticated by Unix peer credentials
+    (SO_PEERCRED / SCM_CREDENTIALS). The agent verifies `uid` and optionally
+    `pid` + process name against the `allowed_consumers` list in the
+    Namespace Policy. The `X-Companion-Peer` request header is a
+    documentation placeholder only; real authentication is kernel-enforced
+    at socket accept time.
+
+
+    **Transport**: HTTP/1.1 over a Unix domain socket. No TLS; isolation is
+    the OS permission boundary (`0600` socket owned by the running user).
+
+
+    **Error model**: All error responses use `application/problem+json`
+    (RFC 7807) with a `type` discriminator drawn from the `ProblemType`
+    enum.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost
+    description: >
+      Requests are issued over the Unix domain socket
+      `unix:///run/merkle/companion.sock`. The `localhost` base URL is a
+      documentation convention only; actual transport is a Unix domain
+      socket. Clients must connect to the socket path, not to a TCP
+      address. On macOS the default path is `$TMPDIR/merkle/companion.sock`.
+
+security:
+  - companion-socket-peer: []
+
+tags:
+  - name: identity-and-sealing
+    description: Seal / unseal lifecycle and agent health.
+  - name: secret-storage
+    description: Namespace management and Secret CRUD operations.
+  - name: access-mediation
+    description: Session leases, Use Token resolution, and Reveal authorization.
+  - name: audit-compliance
+    description: Append-only audit log queries and chain verification.
+  - name: backup-recovery
+    description: Backup triggers, snapshot listing, and restore plan creation.
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Identity and Sealing
+  # ---------------------------------------------------------------------------
+
+  /v1/agent/init:
+    post:
+      operationId: identity-and-sealing--init-vault
+      summary: Bootstrap a fresh vault (generate keys, store in keychain)
+      description: >-
+        Executes the Init Vault Bootstrap Ceremony for a fresh installation.
+        Calling this endpoint on an already-initialized vault (OS Keychain
+        entry dev.fapp.merkle/master-v1 already present) returns 409 Conflict
+        and leaves all existing key material untouched.
+
+
+        Ceremony steps (atomic):
+
+        1. Check idempotency — if OS Keychain entry exists, return 409.
+
+        2. Generate Master Key (32 bytes, OsRng).
+
+        3. Persist Master Key in OS Keychain (service=dev.fapp.merkle,
+           account=master-v1).
+
+        4. Generate Recovery Key (age X25519 identity).
+
+        5. Generate Vault Root Key (32 bytes, OsRng).
+
+        6. Dual-wrap VRK: one copy under Master Key (XChaCha20-Poly1305),
+           one copy for Recovery Public Key (age encryption).
+
+        7. Persist both wrapped copies atomically in SQLite.
+
+        8. Emit Audit Entry op=init, outcome=allow.
+
+        9. Return 201 with vault_id, recovery_key, and master_key_keychain_ref.
+
+
+        The recovery_key in the response is the only transmission of the
+        age X25519 public key. The CLI MUST print it to stdout before any
+        other output. The private Recovery Key identity is never stored.
+
+
+        Non-interactive mode (interactive=false) suppresses the CLI
+        confirmation prompt but does NOT suppress the recovery_key display.
+      tags:
+        - identity-and-sealing
+      x-merkle-sensitivity: high
+      x-merkle-attestation: required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitVaultRequest"
+      responses:
+        "201":
+          description: Vault initialized successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitVaultResponse"
+        "409":
+          description: Vault is already initialized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: OS Keychain is unavailable; ceremony aborted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/agent/status:
+    get:
+      operationId: identity-and-sealing--get-agent-status
+      summary: Get agent health and seal state
+      description: >
+        Returns the current seal state, agent version, and diagnostic
+        indicators. This endpoint is always available regardless of seal
+        state and never requires an unsealed vault. Equivalent to
+        `vault.doctor` on the MCP surface.
+      tags:
+        - identity-and-sealing
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      responses:
+        "200":
+          description: Agent status retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentStatus"
+        "503":
+          description: Agent is degraded or shutting down.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/agent/unseal:
+    post:
+      operationId: identity-and-sealing--unseal
+      summary: Unseal the Vault Agent
+      description: >-
+        Transitions the agent from Sealed State to Unsealed State by loading
+        the Vault Root Key into protected memory. The agent fetches the
+        Master Key from the OS Keychain. Passphrase-based derivation (Argon2id
+        RFC 9106) is handled exclusively by the CLI TTY path and is NEVER
+        accepted over this API endpoint.
+
+
+        Calling this endpoint when the agent is already unsealed is a no-op
+        and returns 200 with already_unsealed: true.
+
+
+        On success an Audit Entry with op: unseal and outcome: allow is
+        appended.
+      tags:
+        - identity-and-sealing
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      x-merkle-attestation: required
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnsealRequest"
+      responses:
+        "200":
+          description: Agent unsealed successfully or was already unsealed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnsealResponse"
+        "400":
+          description: Invalid request body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Wrong passphrase or keychain authentication failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is shutting down; unseal rejected.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/agent/seal:
+    post:
+      operationId: identity-and-sealing--seal
+      summary: Seal the Vault Agent
+      description: >
+        Zeroizes the Vault Root Key from protected memory and transitions
+        the agent to Sealed State. All in-flight operations complete before
+        sealing. Subsequent secret read and write requests are rejected until
+        a new unseal succeeds.
+
+
+        An Audit Entry with `op: seal` and `outcome: success` is appended
+        before the key is zeroized.
+      tags:
+        - identity-and-sealing
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      x-merkle-attestation: required
+      responses:
+        "200":
+          description: Agent sealed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - sealed
+                properties:
+                  sealed:
+                    type: boolean
+                    const: true
+        "409":
+          description: Agent is already sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Secret Storage — Namespaces
+  # ---------------------------------------------------------------------------
+
+  /v1/namespaces:
+    get:
+      operationId: secret-storage--list-namespaces
+      summary: List all known Namespaces
+      description: >
+        Returns the list of Namespaces that exist in the vault database.
+        The Vault Agent must be in Unsealed State. Each entry exposes only
+        public metadata; no Namespace DEK material is returned.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+      responses:
+        "200":
+          description: Namespace list returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                  - total
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Namespace"
+                  total:
+                    type: integer
+                    description: Total count of Namespaces (unpaginated).
+                  next_cursor:
+                    type: string
+                    description: >
+                      Opaque cursor for the next page. Absent when this is
+                      the final page.
+        "403":
+          description: Caller not authorized to list Namespaces.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Secret Storage — Secrets
+  # ---------------------------------------------------------------------------
+
+  /v1/namespaces/{namespace_id}/secrets:
+    get:
+      operationId: secret-storage--list-secrets
+      summary: List Secrets in a Namespace
+      description: >
+        Returns Public Metadata for all Secrets in the specified Namespace.
+        The Private Blob is never included. Supports filtering by category,
+        sensitivity, tags (AND semantics), name glob, expiry date, and FTS5
+        full-text query. Results are ordered by `created_at` descending and
+        support cursor-based pagination.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/NamespaceIdPath"
+        - name: category
+          in: query
+          description: Filter by built-in or custom category.
+          schema:
+            $ref: "#/components/schemas/Category"
+        - name: sensitivity
+          in: query
+          description: Filter by sensitivity level.
+          schema:
+            $ref: "#/components/schemas/Sensitivity"
+        - name: tags
+          in: query
+          description: >
+            Comma-separated list of `key:value` tags. All supplied tags must
+            be present on the Secret (AND semantics).
+          schema:
+            type: string
+            example: "env:prod,role:bastion"
+        - name: name_pattern
+          in: query
+          description: "Glob pattern applied to Secret name. Example: `prod-*`."
+          schema:
+            type: string
+        - name: expires_before
+          in: query
+          description: >
+            ISO 8601 datetime. Returns Secrets expiring before this time.
+          schema:
+            type: string
+            format: date-time
+        - name: fts_query
+          in: query
+          description: FTS5 MATCH expression over public metadata fields.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+      responses:
+        "200":
+          description: Secret list returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                  - total
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Secret"
+                  total:
+                    type: integer
+                  next_cursor:
+                    type: string
+                    description: Absent when this is the final page.
+        "403":
+          description: Caller not authorized for this Namespace.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Namespace not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+    post:
+      operationId: secret-storage--put-secret
+      summary: Create or overwrite a Secret
+      description: >
+        Creates a new Secret under the specified Namespace. If a Secret with
+        the same `name` and `category` already exists and the request does
+        not carry `force: true`, the request is rejected with `409 Conflict`.
+        The Private Blob is validated against the Category CUE schema and
+        encrypted with XChaCha20-Poly1305 using the Namespace DEK before
+        persistence.
+
+
+        A duplicate fingerprint warning is returned without storing when
+        `force` is absent. Set `force: true` to proceed past a fingerprint
+        collision.
+
+
+        An Audit Entry with `op: put` is appended on both success and policy
+        rejection.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/NamespaceIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutSecretRequest"
+      responses:
+        "201":
+          description: Secret created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PutSecretResponse"
+        "400":
+          description: Schema validation failed or category not registered.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: >
+            Policy tag validation failed (e.g., `env:*` required for
+            sensitivity=high).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Namespace not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            Secret with this name already exists (`DuplicateName`) or
+            duplicate fingerprint detected without `force: true`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/namespaces/{namespace_id}/secrets/{handle_encoded}:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceIdPath"
+      - name: handle_encoded
+        in: path
+        required: true
+        description: >
+          URL-encoded Handle URI. Example:
+          `vault%3A%2F%2Facme-backend%2Fssh%2Fbastion-prod`.
+        schema:
+          type: string
+
+    get:
+      operationId: secret-storage--get-secret
+      summary: Get public metadata for a Secret
+      description: >
+        Returns full Public Metadata for a single Secret. The Private Blob
+        is never included. Does not trigger a Reveal; use `/v1/reveal` for
+        that.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      responses:
+        "200":
+          description: Secret public metadata returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Secret"
+        "404":
+          description: Handle not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+    delete:
+      operationId: secret-storage--delete-secret
+      summary: Permanently delete a Secret and all its versions
+      description: >-
+        Deletes the Secret aggregate and all retained SecretVersions. This
+        operation is irreversible. An Audit Entry with op: delete is appended.
+        Requires operator_confirmation.slash_command=true. Non-Claude-Code
+        clients must present a signed config flag per ADR-0011 amendment.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      x-merkle-attestation: required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - purpose
+                - operator_confirmation
+              properties:
+                purpose:
+                  type: string
+                  description: Human-readable reason recorded in the Audit Log.
+                operator_confirmation:
+                  type: object
+                  description: >-
+                    Two-flag confirmation required for destructive delete.
+                    slash_command MUST be true; oob_ack required for
+                    high-sensitivity secrets.
+                  required:
+                    - slash_command
+                    - oob_ack
+                  properties:
+                    slash_command:
+                      type: boolean
+                    oob_ack:
+                      type: boolean
+      responses:
+        "200":
+          description: Secret deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - deleted
+                  - versions_removed
+                properties:
+                  deleted:
+                    type: boolean
+                    const: true
+                  versions_removed:
+                    type: integer
+        "404":
+          description: Handle not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/namespaces/{namespace_id}/secrets/{handle_encoded}/versions:
+    get:
+      operationId: secret-storage--list-secret-versions
+      summary: List version history of a Secret
+      description: >
+        Returns the version history of a Secret. Each entry contains version
+        number, timestamps, and private-blob size in bytes. Private material
+        is never returned.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/NamespaceIdPath"
+        - name: handle_encoded
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Version list returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - handle
+                  - versions
+                properties:
+                  handle:
+                    $ref: "#/components/schemas/Handle"
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SecretVersion"
+        "404":
+          description: Handle not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/namespaces/{namespace_id}/secrets/{handle_encoded}/rotate:
+    post:
+      operationId: secret-storage--rotate-secret
+      summary: Rotate the active value of a Secret
+      description: >
+        Replaces the active Private Blob of a Secret with new material,
+        increments the Secret Version, and retains previous versions up to
+        the `retain_count` declared in the Namespace Policy (default 3).
+        Versions beyond the limit are pruned.
+
+
+        Before writing the new version the agent initiates a pre-snapshot
+        Backup. Only after the Backup completes does the rotation proceed.
+        An Audit Entry with `op: backup` (note: `pre_rotate_snapshot`) is
+        appended before the rotate entry.
+
+
+        Requires the Vault Agent to be in Unsealed State.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/NamespaceIdPath"
+        - name: handle_encoded
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateSecretRequest"
+      responses:
+        "200":
+          description: Secret rotated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateSecretResponse"
+        "400":
+          description: Schema validation failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Handle not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/namespaces/{namespace_id}/secrets/{handle_encoded}/rollback:
+    post:
+      operationId: secret-storage--rollback-secret
+      summary: Roll back a Secret to a previous version
+      description: >
+        Restores the active Private Blob of a Secret to a previous retained
+        version. Requires Operator Confirmation via slash command
+        (`operator_confirmation.slash_command: true`). Without it the
+        request is rejected with `403`.
+
+
+        An Audit Entry with `op: rollback` is appended on both success and
+        rejection.
+      tags:
+        - secret-storage
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      x-merkle-attestation: required
+      parameters:
+        - $ref: "#/components/parameters/NamespaceIdPath"
+        - name: handle_encoded
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - target_version
+                - operator_confirmation
+              properties:
+                target_version:
+                  type: integer
+                  description: The version number to restore as active.
+                  minimum: 1
+                operator_confirmation:
+                  $ref: "#/components/schemas/OperatorConfirmation"
+                purpose:
+                  type: string
+      responses:
+        "200":
+          description: Rollback completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - handle
+                  - active_version
+                  - rolled_back_at
+                properties:
+                  handle:
+                    $ref: "#/components/schemas/Handle"
+                  active_version:
+                    type: integer
+                  rolled_back_at:
+                    type: string
+                    format: date-time
+        "403":
+          description: Operator Confirmation required or was invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Handle or target version not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Access Mediation — Sessions
+  # ---------------------------------------------------------------------------
+
+  /v1/sessions:
+    post:
+      operationId: access-mediation--create-session
+      summary: Create a session lease
+      description: >
+        Called by the MCP Adapter immediately after the MCP
+        `notifications/initialized` handshake. The agent issues a
+        `session_id` (UUIDv7) that scopes all subsequent Companion Socket
+        calls from this MCP server process. The `session_id` is used for
+        tempfile ownership, orphan reaping, idle backup triggers, and
+        rate-limit accounting.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - cwd_hash
+              properties:
+                cwd_hash:
+                  type: string
+                  description: >
+                    BLAKE3 hash of the canonical working-directory path
+                    supplied by the MCP host in the `initialize` request.
+                    Used for default Namespace binding (ADR-0008).
+                  example: cwd-4a7f9b3e1c2d0e5f
+                namespace_label:
+                  type: string
+                  description: >
+                    Optional. Label override from `.merklerc` or
+                    `MERKLE_NAMESPACE` env var. When supplied, the agent
+                    binds the session to this label instead of deriving it
+                    from `cwd_hash`.
+                client_pid:
+                  type: integer
+                  description: >
+                    PID of the MCP Adapter process (informational; verified
+                    against SO_PEERCRED).
+      responses:
+        "201":
+          description: Session lease created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - session_id
+                  - namespace_id
+                  - namespace_label
+                  - policy_profile
+                properties:
+                  session_id:
+                    type: string
+                    format: uuid
+                    description: UUIDv7 session identifier.
+                  namespace_id:
+                    type: string
+                    format: uuid
+                  namespace_label:
+                    type: string
+                  policy_profile:
+                    $ref: "#/components/schemas/PolicyProfile"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/sessions/{session_id}:
+    delete:
+      operationId: access-mediation--close-session
+      summary: Close and release a session lease
+      description: >
+        Called by the MCP Adapter when the MCP client closes the stdio pipe
+        or sends an explicit close notification. The agent revokes all Use
+        Tokens issued in this session, schedules cleanup of tempfiles owned
+        by the `session_id`, and releases the session lease.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+      responses:
+        "200":
+          description: Session closed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - closed
+                properties:
+                  closed:
+                    type: boolean
+                    const: true
+                  use_tokens_revoked:
+                    type: integer
+                  tempfiles_scheduled_for_cleanup:
+                    type: integer
+        "404":
+          description: Session not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Access Mediation — Reveal
+  # ---------------------------------------------------------------------------
+
+  /v1/reveal:
+    post:
+      operationId: access-mediation--reveal-secret
+      summary: Reveal the plaintext of a Secret
+      description: >
+        Returns the decrypted Private Blob of a Secret to the caller. This
+        is the **only** endpoint that returns plaintext; all other endpoints
+        return Public Metadata or opaque tokens only.
+
+
+        Authorization requirements (ADR-0011):
+
+        - `operator_confirmation.slash_command` MUST be `true`. The Vault
+          Agent verifies that this flag was set by the MCP Adapter in
+          response to a verified slash command, not by an LLM-generated
+          tool argument.
+
+        - For `sensitivity = high` Secrets (or when the Namespace Policy
+          `oob_threshold` is set lower): `operator_confirmation.oob_ack`
+          MUST additionally be `true`. The agent initiates the OOB
+          Confirmation flow and blocks until the operator acknowledges via
+          desktop notification, terminal prompt, or localhost browser
+          confirmation, or until the OOB timeout elapses.
+
+
+        On every attempt (approved or rejected) an Audit Entry with
+        `op: reveal` is appended.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: true
+      x-merkle-attestation: required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevealRequest"
+      responses:
+        "200":
+          description: >
+            Plaintext returned. Warning — material is now in caller memory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevealAuthorization"
+        "202":
+          description: >
+            OOB Confirmation flow initiated. The agent is waiting for the
+            operator to acknowledge. The caller should poll or await a
+            notification; the agent will complete the reveal and push the
+            result, or return `408` on timeout.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - oob_pending
+                  - oob_channel
+                  - expires_at
+                  - request_nonce
+                properties:
+                  oob_pending:
+                    type: boolean
+                    const: true
+                  oob_channel:
+                    $ref: "#/components/schemas/OobChannel"
+                  expires_at:
+                    type: string
+                    format: date-time
+                  request_nonce:
+                    type: string
+                    description: >-
+                      32-byte random nonce hex-encoded as 64 lowercase hex
+                      characters. Returned to the caller so they can
+                      correlate poll responses and supply the nonce to the
+                      OOB resolution flow. The device_signature on
+                      OobChallengeResolved is computed over
+                      SHA256(challenge_id || request_nonce || outcome ||
+                      authorized_at) per ADR-0011 Amendment.
+                    pattern: "^[0-9a-f]{64}$"
+                    # yamllint disable-line rule:line-length
+                    example: "4a7f3d9e2b1c8f0a4a7f3d9e2b1c8f0a4a7f3d9e2b1c8f0a4a7f3d9e2b1c8f0a"
+        "403":
+          description: >
+            Reveal denied. Either `slash_command` was false (operator
+            confirmation required), the Namespace Policy forbids reveals,
+            or rate limit exceeded.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Handle not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "408":
+          description: >
+            OOB Confirmation timed out before the operator acknowledged.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          description: Reveal rate limit exceeded.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Audit and Compliance
+  # ---------------------------------------------------------------------------
+
+  /v1/audit:
+    get:
+      operationId: audit-compliance--query-audit
+      summary: Query the append-only Audit Log
+      description: >
+        Returns Audit Entries matching the supplied filter criteria. When
+        `verify_chain` is `true` the Chain Verifier runs end-to-end over
+        the returned entries and reports `chain_valid`. Results are ordered
+        by sequence number ascending.
+      tags:
+        - audit-compliance
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - name: handle
+          in: query
+          description: Filter by Secret handle URI.
+          schema:
+            type: string
+        - name: op
+          in: query
+          description: Filter by operation type.
+          schema:
+            $ref: "#/components/schemas/AuditOp"
+        - name: since
+          in: query
+          description: ISO 8601 datetime. Returns entries at or after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          description: >
+            ISO 8601 datetime. Returns entries before or at this time.
+          schema:
+            type: string
+            format: date-time
+        - name: session_id
+          in: query
+          description: Filter by session ID.
+          schema:
+            type: string
+            format: uuid
+        - name: outcome
+          in: query
+          description: Filter by operation outcome.
+          schema:
+            $ref: "#/components/schemas/AuditOutcome"
+        - name: verify_chain
+          in: query
+          description: >
+            When `true`, run the Chain Verifier over returned entries and
+            include `chain_valid` in the response. Adds latency proportional
+            to result set size. Default `false`.
+          schema:
+            type: boolean
+            default: false
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Audit entries returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - entries
+                  - total
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEntry"
+                  total:
+                    type: integer
+                  chain_valid:
+                    type: boolean
+                    description: >
+                      Present only when `verify_chain=true`. `true` if the
+                      Hash Chain is intact across all returned entries.
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Backup and Recovery
+  # ---------------------------------------------------------------------------
+
+  /v1/backup:
+    post:
+      operationId: backup-recovery--trigger-backup
+      summary: Trigger an on-demand Backup
+      description: >
+        Initiates an encrypted `age`-format Backup of the entire vault
+        state. Two recipients are used: the Master public key and the
+        Recovery Public Key. The resulting file is written to the configured
+        target directory with the filename pattern
+        `merkle-bk-<utc-iso8601>.merkle.age`.
+
+
+        An Audit Entry with `op: backup` is appended on success.
+        Pre-rotate backups triggered automatically by `rotate` use
+        `note: pre_rotate_snapshot`.
+      tags:
+        - backup-recovery
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+                  description: >
+                    Free-form note appended to the Audit Entry for this
+                    backup. The agent uses `pre_rotate_snapshot` internally;
+                    custom values are allowed for manual triggers.
+      responses:
+        "201":
+          description: Backup created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSnapshot"
+        "503":
+          description: Agent is sealed or backup storage is unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/backup/snapshots:
+    get:
+      operationId: backup-recovery--list-snapshots
+      summary: List available Backup snapshots
+      description: >
+        Returns metadata for existing Backup files in the configured target
+        directory. Does not decrypt or validate the files; use
+        `/v1/backup/restore-plan` for pre-restore validation.
+      tags:
+        - backup-recovery
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+      responses:
+        "200":
+          description: Snapshot list returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - snapshots
+                properties:
+                  snapshots:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BackupSnapshot"
+                  next_cursor:
+                    type: string
+        "503":
+          description: Agent is sealed or backup directory is unreadable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/backup/restore-plan:
+    post:
+      operationId: backup-recovery--create-restore-plan
+      summary: Create a Restore Plan from a Backup snapshot
+      description: >
+        Validates a Backup file and generates a Restore Plan that previews
+        the changes that would be applied to the current vault state. Does
+        not apply any changes. The caller must inspect the plan and call
+        `/v1/backup/restore` with the `plan_id` to execute.
+
+
+        Restore modes: `overwrite` (replace all), `merge` (add missing,
+        skip existing), `newest_wins` (compare `created_at` and keep the
+        newer version).
+      tags:
+        - backup-recovery
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      x-merkle-attestation: required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - snapshot_filename
+                - mode
+              properties:
+                snapshot_filename:
+                  type: string
+                  description: >
+                    Filename (not full path) of a Backup file in the
+                    configured target directory. Example:
+                    `merkle-bk-2026-05-22T10:00:00Z.merkle.age`.
+                mode:
+                  $ref: "#/components/schemas/RestoreMode"
+                recovery_key_path:
+                  type: string
+                  description: >
+                    Path to the `age` Recovery Key file if the Master Key
+                    is unavailable (Disaster Recovery path).
+      responses:
+        "200":
+          description: Restore Plan created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestorePlan"
+        "400":
+          description: >
+            Snapshot file not found, corrupt, or decryption failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/backup/restore:
+    post:
+      operationId: backup-recovery--execute-restore
+      summary: Execute a Restore Plan
+      description: >-
+        Applies a previously created Restore Plan identified by plan_id.
+        This operation is destructive. An Audit Entry with op: restore is
+        appended. Requires operator_confirmation (slash_command AND oob_ack).
+        Non-Claude-Code clients must present a signed config flag per ADR-0011
+        amendment.
+
+
+        The Vault Agent must be in Unsealed State. After restore the agent
+        re-derives Namespace DEKs from the restored Vault Root Key.
+      tags:
+        - backup-recovery
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: true
+      x-merkle-attestation: required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - plan_id
+                - operator_confirmation
+              properties:
+                plan_id:
+                  type: string
+                  description: >-
+                    Opaque plan ID returned by /v1/backup/restore-plan.
+                operator_confirmation:
+                  type: object
+                  description: >-
+                    Two-flag confirmation required for destructive restore.
+                    Both slash_command and oob_ack MUST be true.
+                  required:
+                    - slash_command
+                    - oob_ack
+                  properties:
+                    slash_command:
+                      type: boolean
+                    oob_ack:
+                      type: boolean
+      responses:
+        "200":
+          description: Restore completed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - restored
+                  - secrets_restored
+                  - namespaces_restored
+                properties:
+                  restored:
+                    type: boolean
+                    const: true
+                  secrets_restored:
+                    type: integer
+                  namespaces_restored:
+                    type: integer
+                  restored_at:
+                    type: string
+                    format: date-time
+        "400":
+          description: Plan ID not found or plan has expired.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            Restore conflict that could not be resolved by the chosen mode.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+# =============================================================================
+# Components
+# =============================================================================
+
+components:
+
+  securitySchemes:
+    companion-socket-peer:
+      type: apiKey
+      in: header
+      name: X-Companion-Peer
+      description: >-
+        Documentation placeholder only. Real authentication is performed by
+        the Vault Agent at socket accept time using Unix peer credentials.
+        Peer credential matrix per platform:
+          Linux   — SCM_CREDENTIALS / SO_PEERCRED: uid, gid, pid inspected.
+          macOS   — LOCAL_PEERCRED (getsockopt): uid and pid inspected.
+          Windows — GetNamedPipeClientProcessId: pid inspected; uid derived
+                    from token owner SID.
+        The agent validates the caller uid, pid, and process name against
+        the allowed_consumers list in the Namespace Policy. The
+        X-Companion-Peer header is not evaluated for authentication; it is
+        documented here to satisfy OpenAPI's requirement for a named security
+        scheme. Clients MUST NOT rely on this header as an authentication
+        mechanism.
+
+  parameters:
+
+    NamespaceIdPath:
+      name: namespace_id
+      in: path
+      required: true
+      description: UUIDv7 of the target Namespace.
+      schema:
+        type: string
+        format: uuid
+
+    SessionIdPath:
+      name: session_id
+      in: path
+      required: true
+      description: >
+        UUIDv7 session identifier issued by `/v1/sessions`.
+      schema:
+        type: string
+        format: uuid
+
+    LimitParam:
+      name: limit
+      in: query
+      description: Maximum number of results to return. Default 50, max 500.
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 500
+
+    CursorParam:
+      name: cursor
+      in: query
+      description: >
+        Opaque pagination cursor returned by a previous response's
+        `next_cursor`.
+      schema:
+        type: string
+
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Value objects and enums
+    # -------------------------------------------------------------------------
+
+    Handle:
+      type: string
+      description: >
+        Opaque URI identifying a Secret without exposing its material.
+        Format: `vault://<namespace-label>/<category>/<name>`.
+        Sufficient to invoke any Proxy Tool; insufficient to reveal
+        plaintext.
+      pattern: "^vault://[^/]+/[^/]+/[^/]+$"
+      example: vault://acme-backend/ssh/bastion-prod
+
+    Category:
+      type: string
+      description: >
+        Closed enum classifying the shape and semantics of a Secret.
+        Custom categories are registered with a CUE schema and appear here
+        as additional values beyond the built-in set.
+      enum:
+        - ssh
+        - password
+        - token
+        - env
+        - cert
+        - key
+        - database
+        - note
+        - otp
+        - cloud
+        - gpg
+
+    Sensitivity:
+      type: string
+      description: >
+        Classification of how sensitive the Secret material is.
+        Determines OOB Confirmation requirements and rate-limit class.
+      enum:
+        - low
+        - medium
+        - high
+
+    PolicyProfile:
+      type: string
+      description: >
+        Security profile bundle applied to a Namespace at creation.
+      enum:
+        - relaxed
+        - balanced
+        - paranoid
+
+    OobChannel:
+      type: string
+      description: >
+        Channel through which the OOB Confirmation request was delivered.
+        Exactly one channel is recorded per OOB Confirmation attempt.
+      enum:
+        - desktop-notif
+        - terminal-prompt
+        - localhost-confirm
+
+    InitVaultRequest:
+      type: object
+      description: >-
+        Request body for the Init Vault Bootstrap Ceremony
+        (POST /v1/agent/init). Source of truth:
+        docs/arch/schemas/identity_and_sealing/init_vault.cue
+        #InitVaultRequest. See ADR-0021 for ceremony steps and
+        idempotency rules.
+      required:
+        - interactive
+      properties:
+        interactive:
+          type: boolean
+          description: >-
+            When true, the CLI displays an interactive confirmation prompt
+            after printing the Recovery Key. When false (--non-interactive),
+            the prompt is suppressed but the Recovery Key is still printed
+            to stdout. The recovery_key is always included in the response.
+        security_profile:
+          $ref: "#/components/schemas/PolicyProfile"
+
+    InitVaultResponse:
+      type: object
+      description: >-
+        Response for a successful vault initialization (201 Created).
+        The recovery_key field is transmitted exactly once; the agent never
+        stores the corresponding private age identity. Source of truth:
+        docs/arch/schemas/identity_and_sealing/init_vault.cue
+        #InitVaultResponse.
+      required:
+        - vault_id
+        - recovery_key
+        - master_key_keychain_ref
+      properties:
+        vault_id:
+          type: string
+          format: uuid
+          description: UUIDv7 identifying this vault installation.
+        recovery_key:
+          type: string
+          description: >-
+            The age X25519 recipient public key string. Format: age1<bech32>.
+            MUST be printed to the CLI stdout before any other output.
+            MUST NOT be logged or persisted by any component.
+          pattern: "^age1[a-z0-9]{59}$"
+          # yamllint disable-line rule:line-length
+          example: "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"
+        master_key_keychain_ref:
+          type: string
+          description: >-
+            Canonical service+account reference where the Master Key was stored.
+            Format: dev.fapp.merkle/master-v1.
+          pattern: "^dev\\.fapp\\.merkle/master-v[0-9]+$"
+          example: "dev.fapp.merkle/master-v1"
+
+    AuditOp:
+      type: string
+      description: >-
+        Operation type recorded in an Audit Entry. Closed enum — 31 values.
+        Append-only; new operations require an ADR before adding a variant.
+        Amendment 2026-05-23: added "init" per ADR-0021.
+        Source of truth: docs/arch/schemas/audit_compliance/
+        audit_entry.cue #AuditOp.
+      enum:
+        - init
+        - unseal
+        - put
+        - get
+        - use
+        - use_token_resolved
+        - reveal
+        - rotate
+        - delete
+        - restore
+        - backup
+        - list
+        - search
+        - describe
+        - doctor
+        - audit_query
+        - bind
+        - http_request
+        - ssh_exec
+        - ssh_copy
+        - port_forward
+        - spawn
+        - write_tempfile
+        - http_download
+        - http_upload
+        - crypto_sign
+        - crypto_decrypt
+        - namespace_create
+        - category_create
+        - cross_env_warning
+        - disaster_recovery
+
+    AuditOutcome:
+      type: string
+      description: >-
+        Authorization decision persisted in a stored AuditEntry. Exactly three
+        values: "allow" (permitted and executed), "deny" (rejected by policy or
+        missing confirmation), "error" (internal fault; operation did not
+        complete). Fine-grained rejection codes are recorded in
+        denial_reason, not here. Source of truth:
+        docs/arch/schemas/audit_compliance/audit_entry.cue #AuditOutcome.
+      enum:
+        - allow
+        - deny
+        - error
+
+    RestoreMode:
+      type: string
+      description: >-
+        Strategy applied when the Backup contains Secrets that already
+        exist in the vault. Source of truth:
+        docs/arch/schemas/backup_recovery/restore_plan.cue #RestoreMode.
+      enum:
+        - overwrite
+        - merge
+        - newest_wins
+
+    # -------------------------------------------------------------------------
+    # Domain aggregates
+    # -------------------------------------------------------------------------
+
+    Namespace:
+      type: object
+      description: >-
+        Top-level container for related Secrets. Identified by a UUIDv7 and
+        a stable label. Namespace DEK material is never exposed over this API.
+        Source of truth:
+        docs/arch/schemas/secret_storage/namespace.cue #Namespace.
+      required:
+        - id
+        - label
+        - policy_profile
+        - created_at
+        - dek_version
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUIDv7 primary key; immutable after creation.
+        label:
+          type: string
+          description: >-
+            Human-readable label. Either a cwd-hash prefix (cwd-<16hex>)
+            or an explicit label from .merklerc / vault.bind. Unique per vault.
+          example: acme-backend
+        policy_profile:
+          $ref: "#/components/schemas/PolicyProfile"
+        created_at:
+          type: string
+          format: date-time
+        dek_version:
+          type: integer
+          description: >-
+            Active Namespace DEK version used for new writes. Incremented on
+            every DEK rotation. Minimum value 1.
+          minimum: 1
+        cwd_hash:
+          type: string
+          description: >-
+            SHA-256 hex digest of the resolved absolute path of the working
+            directory at bind time. Absent when the namespace is not bound to
+            a directory (global or label-only binding).
+        policy_id:
+          type: string
+          format: uuid
+          description: >-
+            UUIDv7 referencing the governing NamespacePolicy in the
+            policy-permissions bounded context. Absent means the vault-wide
+            default policy applies.
+        secret_count:
+          type: integer
+          description: Total number of active Secrets in this Namespace.
+
+    Tag:
+      type: object
+      description: >-
+        Structured key-value discriminator attached to a Secret. Used for
+        informal cohesion and cross-env auditing. Both key and value follow
+        slug conventions. Source of truth:
+        docs/arch/schemas/secret_storage/tag.cue #Tag.
+      required:
+        - key
+        - value
+      properties:
+        key:
+          type: string
+          description: >-
+            Tag discriminator key. Closed enum: env, project, role, provider,
+            team. Extending this enum requires a new ADR entry.
+          enum:
+            - env
+            - project
+            - role
+            - provider
+            - team
+        value:
+          type: string
+          description: >-
+            Tag discriminator value. Slug pattern: starts with lowercase
+            letter or digit, may contain hyphens, 2–64 characters total.
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$"
+
+    PublicMetadata:
+      type: object
+      description: >-
+        Base mixin of fields that are safe to return through the MCP transport
+        in vault.list and vault.describe responses. No field here may contain
+        or be derived from the Secret's plaintext material.
+        Source of truth:
+        docs/arch/schemas/secret_storage/public_metadata.cue #PublicMetadata.
+      properties:
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tag"
+          description: >-
+            Mirrors Secret.tags for convenient filtering in list views.
+        description:
+          type: string
+          description: >-
+            Free-form human-readable description indexed by FTS5. Must never
+            contain credentials or key material.
+        notes_public:
+          type: string
+          description: >-
+            Free-form operator commentary that the LLM may read. Must never
+            contain credentials or key material.
+        prefix:
+          type: string
+          description: >-
+            Visible prefix of the secret value (e.g., the first 4 characters
+            of a token). Example: "ghp_" for a GitHub PAT.
+        last4:
+          type: string
+          description: >-
+            Last four characters of the secret value for disambiguation.
+        fingerprint:
+          type: string
+          description: >-
+            Public digest identifying the key material without revealing it.
+            Format is key-type-specific (e.g., "SHA256:<base64>" for SSH keys).
+        expose:
+          type: boolean
+          description: >-
+            When true, the Secret name and description are eligible for FTS5
+            public indexing. MUST be false when sensitivity=high; the server
+            rejects with 422 if violated.
+          default: false
+
+    Secret:
+      type: object
+      description: >-
+        Public Metadata for a Secret aggregate. The Private Blob is never
+        returned; only this public envelope is exposed over the API.
+        Design choice: public_meta fields are flattened into the top-level
+        Secret envelope for ergonomic API consumption; the PublicMetadata
+        schema exists as a reusable component for per-category extension.
+      required:
+        - handle
+        - name
+        - category
+        - sensitivity
+        - tags
+        - version
+        - created_at
+      properties:
+        handle:
+          $ref: "#/components/schemas/Handle"
+        name:
+          type: string
+          description: Unique within Namespace + Category.
+        category:
+          $ref: "#/components/schemas/Category"
+        sensitivity:
+          $ref: "#/components/schemas/Sensitivity"
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tag"
+          description: >-
+            Structured key-value discriminators attached to this Secret.
+            When sensitivity=high, at least one tag with key="env" must be
+            present (enforced at write time by tag_validation.rego Rule 3).
+        public_meta:
+          $ref: "#/components/schemas/PublicMetadata"
+          description: >-
+            Public metadata block. Fields are also flattened at the top level
+            of this schema for ergonomic access; this nested ref is provided
+            for tooling that consumes per-category PublicMetadata extensions.
+        description:
+          type: string
+          description: Optional human-readable description indexed by FTS5.
+        version:
+          type: integer
+          description: Current active version number. Starts at 1.
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            Optional expiry time. The agent emits an expiry_warning Audit
+            Entry when fewer than 7 days remain.
+        schema_id:
+          type: string
+          description: >-
+            CUE schema reference in effect for this Secret's Private Blob.
+        expose:
+          type: boolean
+          description: >-
+            When true, the Secret name and description are eligible for FTS5
+            public indexing. MUST be false when sensitivity=high; server
+            rejects with 422 if violated.
+          default: false
+        expiry_warning:
+          type: string
+          description: >-
+            Present when expires_at is within 7 days of the current time.
+            Value: expires_in_N_days where N is the number of whole days
+            remaining.
+
+    SecretVersion:
+      type: object
+      description: >
+        Historical revision of a Secret. Created on every `rotate` call.
+        Retained up to `retain_count` per Namespace Policy (default 3).
+      required:
+        - version
+        - created_at
+        - size_bytes
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        rotated_at:
+          type: string
+          format: date-time
+          description: Time at which this version was superseded.
+        deleted_at:
+          type: string
+          format: date-time
+          description: >
+            Time at which this version was pruned (beyond retain_count).
+        size_bytes:
+          type: integer
+          description: >
+            Size of the encrypted Private Blob in bytes. Not the plaintext
+            size.
+          minimum: 0
+
+    # -------------------------------------------------------------------------
+    # Request bodies
+    # -------------------------------------------------------------------------
+
+    UnsealRequest:
+      type: object
+      description: >-
+        Optional body for the unseal call. If the OS Keychain is available
+        the body may be omitted; the agent fetches the Master Key automatically.
+        SECURITY NOTE: Passphrase MUST be supplied via the CLI's secure TTY
+        input only. It is NEVER accepted over the Companion Socket HTTP API.
+        Non-keychain unseal is always initiated through the CLI, which reads
+        the passphrase from a TTY and derives the Master Key via Argon2id
+        (RFC 9106) before contacting the agent. This body is reserved for
+        future extension; currently no fields are accepted.
+      properties: {}
+
+    ValueFormat:
+      type: string
+      description: >-
+        Encoding of the value string supplied in PutSecretRequest and
+        RotateSecretRequest. Governs how the agent interprets the value
+        field before encrypting and storing it.
+
+
+        "utf8" — value is a UTF-8 plaintext string; the agent stores the
+        raw UTF-8 bytes after AEAD encryption. This is the default for
+        password, token, env, note, and other text-form secrets.
+
+
+        "base64" — value is a standard-base64-encoded representation of
+        binary or text bytes. The agent base64-decodes the string and
+        stores the decoded bytes after AEAD encryption. Required when
+        the secret contains non-UTF-8 binary data (e.g., raw private key
+        DER, certificate DER, GPG binary packet). Binary payloads MUST
+        use value_format=base64; supplying a binary-encoded string with
+        value_format=utf8 is rejected with 400 invalid_value_format.
+
+
+        Decision rationale (ADR-0021 Amendment, 2026-05-23): structured
+        JSON envelope was chosen over raw binary stream (complicates
+        multipart auth, weakens schema validation) and over base64-only
+        (forces pre-encoding of trivially-text secrets). The value_format
+        field provides explicit type signaling while keeping the payload
+        consistent with the REST/JSON-first API design.
+        Source of truth: docs/arch/schemas/secret_storage/secret.cue.
+      enum:
+        - utf8
+        - base64
+
+    PutSecretRequest:
+      type: object
+      description: >-
+        Request body for creating or overwriting a Secret.
+
+
+        Payload format decision (ADR-0021 Amendment, 2026-05-23): the value
+        field is a string. The value_format field (required) declares whether
+        the string is raw UTF-8 ("utf8") or base64-encoded bytes ("base64").
+        Binary payloads MUST be base64-encoded with value_format=base64.
+        Supplying a non-UTF-8 byte sequence in a value with value_format=utf8
+        is rejected with 400 invalid_value_format.
+        Category-specific additional fields (e.g., ssh passphrase, comment)
+        are supplied in category_fields rather than embedded in value.
+
+
+        Sensitivity/expose invariant: if sensitivity=high, expose MUST be false.
+        Server rejects with 422 UnprocessableEntity if violated.
+        When sensitivity=high, at least one tag with key="env" is required
+        (enforced by tag_validation.rego Rule 3; server rejects with 403 if
+        absent).
+      required:
+        - name
+        - category
+        - value
+        - value_format
+      properties:
+        name:
+          type: string
+          description: Unique within Namespace + Category.
+        category:
+          $ref: "#/components/schemas/Category"
+        value:
+          type: string
+          description: >-
+            The sensitive material as a string. Encoding is declared by
+            value_format. When value_format=utf8 this is the plaintext
+            credential. When value_format=base64 this is the standard-
+            base64 encoding of the binary credential bytes. Write-only;
+            never returned in responses.
+          writeOnly: true
+        value_format:
+          $ref: "#/components/schemas/ValueFormat"
+        category_fields:
+          type: object
+          description: >-
+            Optional map of category-specific supplementary fields that
+            accompany the primary value. Examples: ssh category may carry
+            comment (string), passphrase (string), algo (string); cert
+            category may carry chain (string, base64-encoded). Keys and
+            value types are governed by the Category CUE schema. This
+            object is encrypted as part of the Private Blob alongside
+            value; it is not indexed or exposed in Public Metadata.
+          additionalProperties: true
+        schema_id:
+          type: string
+          description: >-
+            Custom CUE schema reference. Omit to use the built-in schema
+            for the given category.
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tag"
+          default: []
+          description: >-
+            Structured key-value discriminators. When sensitivity=high, at
+            least one entry with key="env" is required.
+        sensitivity:
+          $ref: "#/components/schemas/Sensitivity"
+        description:
+          type: string
+        expose:
+          type: boolean
+          default: false
+          description: >-
+            When true, name and description are eligible for FTS5 public
+            indexing. MUST be false when sensitivity=high; server rejects
+            with 422 if violated.
+        expires_at:
+          type: string
+          format: date-time
+        force:
+          type: boolean
+          description: >-
+            Set true to overwrite an existing Secret with the same name
+            or to proceed past a duplicate-fingerprint warning.
+          default: false
+
+    PutSecretResponse:
+      type: object
+      required:
+        - handle
+        - version
+        - created_at
+      properties:
+        handle:
+          $ref: "#/components/schemas/Handle"
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        duplicate_fingerprint_warning:
+          type: string
+          description: >
+            Present when a duplicate content fingerprint was detected but
+            the Secret was stored anyway because `force: true` was supplied.
+
+    RotateSecretRequest:
+      type: object
+      description: >-
+        Request body for rotating the active value of a Secret. The new_value
+        field uses the same value_format contract as PutSecretRequest:
+        required, either "utf8" (plaintext string) or "base64" (binary bytes
+        base64-encoded). See ADR-0021 Amendment 2026-05-23.
+      required:
+        - new_value
+        - new_value_format
+        - purpose
+      properties:
+        new_value:
+          type: string
+          description: >
+            Replacement sensitive material as a string. Encoding declared by
+            new_value_format. Must conform to the same Category schema as the
+            existing Secret. Write-only; never returned.
+          writeOnly: true
+        new_value_format:
+          $ref: "#/components/schemas/ValueFormat"
+        purpose:
+          type: string
+          description: Human-readable reason recorded in the Audit Log.
+        category_fields:
+          type: object
+          description: >-
+            Optional updated category-specific supplementary fields.
+            When absent, the existing category_fields are preserved unchanged.
+          additionalProperties: true
+
+    RotateSecretResponse:
+      type: object
+      required:
+        - handle
+        - version
+        - rotated_at
+        - versions_retained
+      properties:
+        handle:
+          $ref: "#/components/schemas/Handle"
+        version:
+          type: integer
+          description: New active version number.
+        rotated_at:
+          type: string
+          format: date-time
+        versions_retained:
+          type: integer
+          description: Number of historical versions currently retained.
+
+    OperatorConfirmation:
+      type: object
+      description: >
+        Two-flag model for Operator Confirmation (ADR-0011). Both flags are
+        independent and set by different subsystems.
+      required:
+        - slash_command
+      properties:
+        slash_command:
+          type: boolean
+          description: >
+            Set to `true` by the MCP Adapter when the operation was
+            triggered by a verified slash command (`/merkle-reveal`,
+            `/merkle-rollback`). The Vault Agent rejects the operation if
+            this is `false`. The LLM cannot set this flag through generated
+            tool call arguments.
+        oob_ack:
+          type: boolean
+          description: >
+            Set to `true` by the OOB Notifier after the operator physically
+            acknowledges an OOB Confirmation request. Required for
+            `sensitivity = high` Secrets (or when the Namespace Policy
+            `oob_threshold` is set to `medium`).
+          default: false
+        oob_channel:
+          $ref: "#/components/schemas/OobChannel"
+
+    RevealRequest:
+      type: object
+      description: >-
+        Request body for the reveal endpoint. Both slash_command and (for
+        high-sensitivity) oob_ack must be true for the reveal to succeed.
+        Source of truth:
+        docs/arch/schemas/access_mediation/reveal_request.cue #RevealRequest.
+        NOTE — field name: the domain aggregate uses "reason" (not "purpose").
+        The "purpose" alias is removed; callers MUST supply "reason".
+      required:
+        - handle
+        - reason
+        - session_id
+        - operator_confirmation
+      properties:
+        handle:
+          $ref: "#/components/schemas/Handle"
+        reason:
+          type: string
+          description: >-
+            Caller-supplied justification for the reveal. Must be non-empty.
+            Recorded verbatim in the Audit Log. Maps to
+            #RevealRequest.reason in the domain CUE schema.
+          minLength: 1
+        session_id:
+          type: string
+          format: uuid
+          description: >-
+            Companion Socket session context binding. Issued by
+            POST /v1/sessions
+            during MCP adapter handshake. Used for rate-limit accounting and
+            orphan-reaping. NOTE — session_id is a Companion Socket transport
+            concern and does not appear in the domain #RevealRequest aggregate;
+            it is accepted here to scope the request to the active session.
+        operator_confirmation:
+          $ref: "#/components/schemas/OperatorConfirmation"
+
+    OobResolution:
+      type: object
+      description: >-
+        ValueObject recording the outcome of an Out-of-Band (OOB) Confirmation
+        challenge for a high-sensitivity Reveal. The device_signature field is
+        absent when outcome is "expired" (enforced by server; disjunction
+        mirrors the CUE type constraint).
+        Source of truth:
+        docs/arch/schemas/access_mediation/oob_resolution.cue #OobResolution.
+        Cross-reference: AsyncAPI companion-socket-events.asyncapi.yaml
+        (OobChallengeIssued, OobChallengeResolved events — W2.B scope).
+      required:
+        - challenge_id
+        - outcome
+      properties:
+        challenge_id:
+          type: string
+          format: uuid
+          description: >-
+            UUIDv7 tying this resolution to the originating OOB challenge.
+            Pattern: UUIDv7 — version nibble is 7,
+            variant nibble in [89abAB].
+        outcome:
+          type: string
+          description: >-
+            Resolution outcome. "approved" — operator confirmed.
+            "denied" — operator explicitly rejected. "expired" — TTL elapsed
+            before operator responded; device_signature MUST be absent.
+          enum:
+            - approved
+            - denied
+            - expired
+        authorized_at:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 timestamp when the operator acknowledged the challenge.
+            Present only when outcome is "approved".
+        device_signature:
+          type: string
+          description: >-
+            Hex-encoded device attestation signature. Present only when
+            outcome is "approved" or "denied". MUST be absent when outcome
+            is "expired".
+          pattern: "^[0-9a-f]{64}$"
+
+    RevealAuthorization:
+      type: object
+      description: >
+        Result of a successful Reveal. The `plaintext` field contains the
+        decrypted Private Blob. The caller MUST treat this response as
+        sensitive and not log or persist it.
+      required:
+        - handle
+        - plaintext
+        - revealed_at
+        - warning
+      properties:
+        handle:
+          $ref: "#/components/schemas/Handle"
+        plaintext:
+          type: object
+          description: >
+            Decrypted value of the Secret's Private Blob. Shape varies by
+            Category and conforms to the Category CUE schema.
+        revealed_at:
+          type: string
+          format: date-time
+        warning:
+          type: string
+          const: >-
+            This value was returned in plaintext and is now in the caller's
+            memory. Rotate the Secret if it was intended for single use.
+
+    # -------------------------------------------------------------------------
+    # Audit
+    # -------------------------------------------------------------------------
+
+    AuditEntry:
+      type: object
+      description: >-
+        Append-only Aggregate Root for a single vault audit record. Each entry
+        stores its own BLAKE3 content hash and optionally the hash of the
+        preceding entry, forming a tamper-evident Hash Chain. prev_hash is
+        absent only on the genesis entry (chain start).
+        Source of truth:
+        docs/arch/schemas/audit_compliance/audit_entry.cue #AuditEntry.
+      required:
+        - id
+        - ts
+        - op
+        - outcome
+        - session_id
+        - namespace_id
+        - current_hash
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >-
+            UUIDv7 providing time-ordered unique identity for this entry.
+            Pattern: UUIDv7 — version nibble is 7,
+            variant nibble in [89abAB].
+        ts:
+          type: string
+          format: date-time
+          description: RFC 3339 UTC timestamp of the event.
+        namespace_id:
+          type: string
+          format: uuid
+          description: >-
+            UUIDv7 of the Namespace that owns this audit entry. Every audit
+            entry belongs to exactly one Namespace.
+        op:
+          $ref: "#/components/schemas/AuditOp"
+        handle:
+          $ref: "#/components/schemas/Handle"
+        purpose:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/AuditOutcome"
+        denial_reason:
+          type: string
+          description: >-
+            Present only when outcome is "deny". Free-form human-readable text
+            encoding the fine-grained rejection code. Examples:
+            rejected_policy, rejected_no_confirmation, rejected_oob_timeout,
+            rejected_rate_limit.
+        session_id:
+          type: string
+          format: uuid
+        caller_pid:
+          type: integer
+          description: PID of the caller process as resolved from SO_PEERCRED.
+        caller_program:
+          type: string
+          description: >-
+            Process name of the caller as resolved from /proc/<pid>/comm or
+            platform equivalent.
+        seq:
+          type: integer
+          description: >-
+            DB-local monotonic sequence number for ordering within a store.
+            Optional; NOT part of the hash chain computation and MUST NOT be
+            used as a global identity.
+          minimum: 1
+        note:
+          type: string
+          description: >-
+            Free-form supplemental note. Examples: oob_confirmed,
+            pre_rotate_snapshot, pruned_version=1, argon2id_fallback.
+        current_hash:
+          type: string
+          description: >-
+            BLAKE3 hash of this entry's content payload including prev_hash.
+          pattern: "^blake3:[0-9a-f]{64}$"
+        prev_hash:
+          type: string
+          description: >-
+            BLAKE3 hash of the preceding entry. Absent only for the genesis
+            entry of the chain (no predecessor).
+          pattern: "^blake3:[0-9a-f]{64}$"
+        hmac:
+          type: string
+          description: >-
+            Detached HMAC-BLAKE3 tag for remote sync authentication.
+          pattern: "^[0-9a-f]{64}$"
+
+    # -------------------------------------------------------------------------
+    # Backup and Recovery
+    # -------------------------------------------------------------------------
+
+    BackupSnapshot:
+      type: object
+      description: >
+        Metadata for a single Backup file. The file is `age`-encrypted with
+        two recipients: the Master public key and the Recovery Public Key.
+      required:
+        - filename
+        - created_at
+        - size_bytes
+      properties:
+        filename:
+          type: string
+          description: >
+            Filename in the configured backup target directory.
+            Pattern: `merkle-bk-<utc-iso8601>.merkle.age`.
+          example: merkle-bk-2026-05-22T10:00:00Z.merkle.age
+        created_at:
+          type: string
+          format: date-time
+        size_bytes:
+          type: integer
+          minimum: 0
+        namespace_count:
+          type: integer
+          description: >
+            Number of Namespaces included in the snapshot. Present only
+            when the agent can read the snapshot header without decrypting
+            the full payload.
+        secret_count:
+          type: integer
+          description: Total number of Secrets included in the snapshot.
+        trigger:
+          type: string
+          description: >-
+            How the backup was triggered. Informational only.
+            Source of truth:
+            docs/arch/schemas/backup_recovery/backup_scheduler.cue.
+            change_triggered=on_change_count threshold reached;
+            idle_triggered=on_idle inactivity; anacron_triggered=boot+elapsed
+            max_interval; manual=operator request.
+          enum:
+            - manual
+            - pre_rotate
+            - change_triggered
+            - idle_triggered
+            - anacron_triggered
+
+    RestorePlan:
+      type: object
+      description: >
+        Preview of the changes that `/v1/backup/restore` would apply.
+        Created by `/v1/backup/restore-plan` and referenced by `plan_id`.
+        Plans expire after 10 minutes.
+      required:
+        - plan_id
+        - mode
+        - snapshot_filename
+        - namespaces_to_add
+        - namespaces_to_skip
+        - secrets_to_add
+        - secrets_to_overwrite
+        - secrets_to_skip
+        - expires_at
+      properties:
+        plan_id:
+          type: string
+          description: >
+            Opaque identifier. Pass to `/v1/backup/restore` to execute.
+        mode:
+          $ref: "#/components/schemas/RestoreMode"
+        snapshot_filename:
+          type: string
+        namespaces_to_add:
+          type: integer
+        namespaces_to_skip:
+          type: integer
+        secrets_to_add:
+          type: integer
+        secrets_to_overwrite:
+          type: integer
+          description: >
+            Number of Secrets that already exist and will be overwritten.
+            Zero when `mode = merge` and the existing version is newer.
+        secrets_to_skip:
+          type: integer
+          description: >
+            Number of Secrets that already exist and will NOT be changed
+            (e.g., because `mode = merge` and the existing version is
+            retained).
+        conflicts:
+          type: array
+          description: >
+            Detailed list of handle-level conflicts that would be resolved
+            according to `mode`. Empty when no conflicts exist.
+          items:
+            type: object
+            required:
+              - handle
+              - resolution
+            properties:
+              handle:
+                $ref: "#/components/schemas/Handle"
+              resolution:
+                type: string
+                description: >
+                  How the conflict would be resolved: `overwrite`, `skip`,
+                  or `newest_wins_existing` / `newest_wins_backup`.
+        expires_at:
+          type: string
+          format: date-time
+
+    # -------------------------------------------------------------------------
+    # Agent status
+    # -------------------------------------------------------------------------
+
+    AgentStatus:
+      type: object
+      description: Health and diagnostic status of the Vault Agent.
+      required:
+        - agent_version
+        - vault_state
+        - sealed
+        - keychain_reachable
+        - db_path
+        - db_size_bytes
+        - audit_chain_valid
+        - backup_overdue
+        - disk_free_bytes
+      properties:
+        agent_version:
+          type: string
+          example: "0.1.0"
+        vault_state:
+          type: string
+          description: >-
+            Authoritative lifecycle state of the Vault Agent with respect to
+            the Vault Root Key. State transitions are governed by the unseal
+            protocol defined in ADR-0011 Amendment. Source of truth:
+            docs/arch/schemas/identity_and_sealing/sealed_state.cue
+            #SealedState. Transitions:
+            sealed -> unsealing (unseal command received);
+            unsealing -> unsealed (Vault Root Key loaded into protected
+            memory); unsealing -> sealed (unseal failed; key material
+            zeroed); unsealed -> shutting_down (agent preparing to stop);
+            shutting_down -> sealed (key material zeroed; agent exiting).
+          enum:
+            - sealed
+            - unsealing
+            - unsealed
+            - shutting_down
+        sealed:
+          type: boolean
+          deprecated: true
+          description: >-
+            DEPRECATED. Derive from vault_state instead:
+            sealed=(vault_state=="sealed"). Retained for backward
+            compatibility with clients predating Wave-2.
+        keychain_reachable:
+          type: boolean
+        db_path:
+          type: string
+        db_size_bytes:
+          type: integer
+          minimum: 0
+        audit_chain_valid:
+          type: boolean
+        last_backup_at:
+          type: string
+          format: date-time
+        backup_overdue:
+          type: boolean
+        expiring_soon:
+          type: array
+          description: Secrets expiring within 7 days.
+          items:
+            type: object
+            required:
+              - handle
+              - expires_at
+            properties:
+              handle:
+                $ref: "#/components/schemas/Handle"
+              expires_at:
+                type: string
+                format: date-time
+        disk_free_bytes:
+          type: integer
+          minimum: 0
+        warnings:
+          type: array
+          items:
+            type: string
+
+    UnsealResponse:
+      type: object
+      required:
+        - sealed
+        - already_unsealed
+      properties:
+        sealed:
+          type: boolean
+          const: false
+        already_unsealed:
+          type: boolean
+          description: >
+            `true` when the agent was already in Unsealed State and the
+            call was a no-op. `false` when the unseal transition was
+            executed in this call.
+        method:
+          type: string
+          description: Key-retrieval method used.
+          enum:
+            - keychain
+            - argon2id_passphrase
+
+    # -------------------------------------------------------------------------
+    # Error envelope (RFC 7807 application/problem+json)
+    # -------------------------------------------------------------------------
+
+    ProblemType:
+      type: string
+      description: >-
+        Discriminator for the ErrorEnvelope. Each snake_case REST code maps
+        to a PascalCase MCP error_type in the MCP protocol surface.
+        REST ↔ MCP canonical code mapping:
+          unseal_required          ↔ UnsealRequired
+          rate_limit_exceeded      ↔ RateLimitExceeded
+          reveal_denied            ↔ RevealDenied
+          handle_not_found         ↔ HandleNotFound
+          namespace_not_bound      ↔ NamespaceNotBound
+          oob_confirmation_required ↔ OobConfirmationRequired
+          oob_confirmation_timeout ↔ OobConfirmationTimeout
+          already_bound            ↔ AlreadyBound
+          schema_validation_failed ↔ SchemaValidationFailed
+          duplicate_name           ↔ DuplicateName
+          duplicate_fingerprint    ↔ DuplicateFingerprint
+          category_not_registered  ↔ CategoryNotRegistered
+          category_mismatch        ↔ CategoryMismatch
+          policy_tag_required      ↔ PolicyTagRequired
+          operator_confirmation_required ↔ OperatorConfirmationRequired
+          agent_sealed             ↔ AgentSealed
+          agent_shutting_down      ↔ AgentShuttingDown
+          namespace_not_found      ↔ NamespaceNotFound
+          session_not_found        ↔ SessionNotFound
+          restore_plan_expired     ↔ RestorePlanExpired
+          restore_conflict         ↔ RestoreConflict
+          backup_failed            ↔ BackupFailed
+          unseal_authentication_failed ↔ UnsealAuthenticationFailed
+          proxy_tool_not_supported_for_category
+            ↔ ProxyToolNotSupportedForCategory
+          expose_forbidden_for_sensitivity
+            ↔ ExposeForbiddenForSensitivity
+          argon2id_parameters_below_minimum
+            ↔ Argon2idParametersBelowMinimum
+          unseal_preconditions_failed
+            ↔ UnsealPreconditionsFailed
+          oob_signature_missing
+            ↔ OobSignatureMissing
+          oob_signature_invalid
+            ↔ OobSignatureInvalid
+          mlock_required_failed
+            ↔ MlockRequiredFailed
+          entropy_unseeded
+            ↔ EntropyUnseeded
+          vault_state_corrupted
+            ↔ VaultStateCorrupted
+          already_initialized
+            ↔ AlreadyInitialized
+          unseal_rollback_failed
+            ↔ UnsealRollbackFailed
+          invalid_value_format
+            ↔ InvalidValueFormat
+      enum:
+        - already_initialized
+        - unseal_required
+        - rate_limit_exceeded
+        - reveal_denied
+        - handle_not_found
+        - namespace_not_bound
+        - oob_confirmation_required
+        - oob_confirmation_timeout
+        - already_bound
+        - schema_validation_failed
+        - duplicate_name
+        - duplicate_fingerprint
+        - category_not_registered
+        - category_mismatch
+        - policy_tag_required
+        - operator_confirmation_required
+        - agent_sealed
+        - agent_shutting_down
+        - namespace_not_found
+        - session_not_found
+        - restore_plan_expired
+        - restore_conflict
+        - backup_failed
+        - unseal_authentication_failed
+        - proxy_tool_not_supported_for_category
+        - expose_forbidden_for_sensitivity
+        - argon2id_parameters_below_minimum
+        - unseal_preconditions_failed
+        - oob_signature_missing
+        - oob_signature_invalid
+        - mlock_required_failed
+        - entropy_unseeded
+        - vault_state_corrupted
+        - already_initialized
+        - unseal_rollback_failed
+        - invalid_value_format
+
+    ErrorEnvelope:
+      type: object
+      description: >
+        RFC 7807 Problem Details object. All error responses from the
+        Companion Socket API use `Content-Type: application/problem+json`
+        and conform to this schema.
+      required:
+        - type
+        - title
+        - status
+        - detail
+      properties:
+        type:
+          $ref: "#/components/schemas/ProblemType"
+        title:
+          type: string
+          description: Short human-readable summary of the problem type.
+          example: Handle not found
+        status:
+          type: integer
+          description: HTTP status code.
+          example: 404
+        detail:
+          type: string
+          description: >
+            Human-readable explanation of this specific occurrence. Should
+            include actionable remediation hints.
+          example: >-
+            No Secret with handle vault://acme-backend/ssh/bastion-prod
+            exists in namespace acme-backend. Verify the handle with
+            vault.list.
+        instance:
+          type: string
+          description: >
+            URI reference identifying the specific occurrence. Typically
+            the request path that produced the error.
+        hint:
+          type: string
+          description: >
+            Concise remediation suggestion suitable for display in a CLI.
+        fields:
+          type: array
+          description: >
+            Present for `schema_validation_failed`. Lists the CUE field
+            constraints that were violated.
+          items:
+            type: object
+            required:
+              - field
+              - constraint
+            properties:
+              field:
+                type: string
+              constraint:
+                type: string
+              received:
+                type: string

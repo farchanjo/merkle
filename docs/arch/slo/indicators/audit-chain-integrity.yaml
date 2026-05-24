@@ -1,0 +1,24 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: audit-chain-integrity
+  displayName: Audit Chain Integrity
+  labels:
+    boundedContext: auditCompliance
+spec:
+  description: >
+    Binary gauge reflecting continuous verifiability of the Merkle-style hash
+    chain. The chain is considered intact when the background Chain Verifier
+    traverses every Audit Entry without encountering a broken_at_entry
+    condition or an hmac_mismatch. The indicator is 1 (intact) or 0 (broken).
+    Integrity is a binary property: either 100% of entries are verifiable or
+    the SLO is breached. There is no partial credit. Any verifier failure is
+    a P1 incident with immediate operational freeze on Secret writes. The
+    metric source is the merkle_chain_integrity_ok gauge.
+  thresholdMetric:
+    metricSource:
+      type: Prometheus
+      metricSourceRef: local-metrics
+      spec:
+        query: merkle_chain_integrity_ok

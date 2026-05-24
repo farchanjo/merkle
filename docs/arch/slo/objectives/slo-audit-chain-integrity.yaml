@@ -1,0 +1,32 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-audit-chain-integrity
+  displayName: Audit Chain Integrity 100%
+  labels:
+    boundedContext: auditCompliance
+spec:
+  description: >
+    The Merkle-style audit hash chain must be 100% verifiable at all times.
+    There is no error budget for chain integrity: any broken_at_entry condition
+    or hmac_mismatch encountered by the continuous background Chain Verifier
+    constitutes an immediate P1 incident. When a breach is detected, Secret
+    writes are frozen until the chain is repaired or attested by the operator.
+    The merkle_chain_integrity_ok gauge must remain at 1 in every 1-minute
+    timeslice over the 30-day rolling Timeslices window. This SLO has no
+    rolling window tolerance — a single timeslice with gauge value 0 breaches
+    the objective.
+  service: vault-agent
+  indicator:
+    metadataRef: audit-chain-integrity
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Timeslices
+  objectives:
+    - displayName: "100% of timeslices with chain integrity gauge = 1"
+      op: gte
+      target: 1.0
+      timeSliceTarget: 1.0
+      timeSliceWindow: 1m

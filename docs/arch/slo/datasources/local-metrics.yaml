@@ -1,0 +1,20 @@
+---
+apiVersion: openslo/v1
+kind: DataSource
+metadata:
+  name: local-metrics
+  displayName: Merkle Local Prometheus Metrics
+  labels:
+    boundedContext: operations
+spec:
+  type: Prometheus
+  connectionDetails:
+    - name: url
+      value: "http://127.0.0.1:9117"
+  description: >
+    Local Prometheus exposition endpoint exposed by the Merkle vault agent on
+    the loopback interface. Enabled via `[metrics] enabled = true`
+    in config.toml.
+    All SLI measurements for the vault-agent, mcp-adapter, and companion-socket
+    services are sourced from this endpoint. The endpoint is never exposed on
+    external interfaces; access is restricted to the local host by the OS.

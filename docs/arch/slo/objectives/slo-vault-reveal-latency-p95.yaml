@@ -1,0 +1,25 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-vault-reveal-latency-p95
+  displayName: vault.reveal p95 Latency < 200 ms
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    No more than 5% of vault.reveal calls may exceed 200 ms at the p95
+    percentile in any 30-day rolling window. The OOB Confirmation round-trip
+    is subtracted from the measurement window. A rolling 1-hour window exceeding
+    10% slow requests constitutes a fast-burn alert condition.
+  service: mcp-adapter
+  indicator:
+    metadataRef: vault-reveal-latency-p95
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "95% of vault.reveal requests complete within 200 ms"
+      op: gte
+      target: 0.95

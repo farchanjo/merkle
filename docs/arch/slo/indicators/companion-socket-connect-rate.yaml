@@ -1,0 +1,38 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: companion-socket-connect-rate
+  displayName: Companion Socket Connect Success Rate
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Ratio of accepted Unix domain socket connection handshakes from authorized
+    peer processes to attempted connections, over a 30-day rolling window during
+    agent-up time only. Authorization failures — connections from unknown PIDs
+    or processes not in the Allowed Consumers list — count as neither success
+    nor failure and are tracked separately as policy events. Only
+    transport-layer failures (socket errors, agent-side panics,
+    backlog exhaustion) count against
+    the SLO. The metric source is merkle_companion_socket_connects_total labeled
+    by outcome, using the accepted and rejected labels; rejected connections are
+    excluded from both numerator and denominator.
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_companion_socket_connects_total{outcome="accepted"}[30d])
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_companion_socket_connects_total{outcome=~"accepted|rejected"}[30d])
+          # yamllint enable rule:line-length

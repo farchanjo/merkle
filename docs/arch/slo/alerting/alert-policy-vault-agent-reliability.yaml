@@ -1,0 +1,25 @@
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: vault-agent-reliability
+  displayName: Vault Agent Reliability Alert Policy
+  labels:
+    boundedContext: operations
+spec:
+  description: >
+    Aggregated alert policy for the vault-agent service. Covers availability
+    fast-burn, audit chain integrity breach, backup RPO violation, unseal
+    repeat failure, and OOB Notifier health. All conditions route to the
+    local-operator notification target.
+  alertWhenNoData: false
+  alertWhenBreaching: true
+  alertWhenResolved: true
+  conditions:
+    - conditionRef: availability-fast-burn
+    - conditionRef: audit-chain-broken
+    - conditionRef: backup-overdue
+    - conditionRef: unseal-failure-second-in-month
+    - conditionRef: oob-notifier-down
+  notificationTargets:
+    - targetRef: local-operator

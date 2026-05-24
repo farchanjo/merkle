@@ -1,0 +1,38 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: vault-ssh-exec-overhead-p95
+  displayName: vault.ssh.exec Agent Overhead p95
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fraction of vault.ssh.exec requests where the agent-side overhead completes
+    within 50 ms at the p95 percentile. Agent overhead is defined as the total
+    measured wall-clock time minus the remote SSH command execution time. The
+    remote command round-trip (SSH handshake, remote execution, and result
+    delivery) is subtracted from the measurement window, leaving only the
+    in-agent path: credential resolution, policy check, Audit Entry write, and
+    SSH Bridge dispatch. The metric source is
+    merkle_rpc_duration_seconds_bucket labeled by op="vault.ssh.exec".
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_duration_seconds_bucket{op="vault.ssh.exec",le="0.05"}[30d])
+          # yamllint enable rule:line-length
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_duration_seconds_count{op="vault.ssh.exec"}[30d])
+          # yamllint enable rule:line-length

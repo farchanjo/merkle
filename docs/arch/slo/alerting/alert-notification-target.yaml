@@ -1,0 +1,18 @@
+---
+apiVersion: openslo/v1
+kind: AlertNotificationTarget
+metadata:
+  name: local-operator
+  displayName: Local Operator (Prometheus Alertmanager)
+  labels:
+    boundedContext: operations
+spec:
+  target: alertmanager
+  description: >
+    Routes alerts to a locally-running Prometheus Alertmanager instance. For
+    operators who do not run Alertmanager, alerts are delivered via the merkle
+    doctor exit code (non-zero) and the structured log emitted to
+    ~/.local/state/merkle/agent.log. This target is the reference destination
+    for all Merkle alert policies. Integration with desktop notifications,
+    PagerDuty, or other channels is the operator's responsibility and is not
+    managed by Merkle.

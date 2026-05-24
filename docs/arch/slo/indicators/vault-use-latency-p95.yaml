@@ -1,0 +1,35 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: vault-use-latency-p95
+  displayName: vault.use p95 Latency
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fraction of vault.use requests completed within 100 ms at the p95
+    percentile. Covers the full issuance and Audit Entry write path.
+    Out-of-band Confirmation wait time is subtracted from the measurement
+    window: the clock pauses while the agent waits for an OOB acknowledgment
+    and resumes when the ack is received or the attempt is abandoned. The
+    metric source is merkle_rpc_duration_seconds_bucket labeled by
+    op="vault.use".
+  ratioMetric:
+    counter: true
+    good:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          # yamllint disable rule:line-length
+          query: >
+            increase(merkle_rpc_duration_seconds_bucket{op="vault.use",le="0.1"}[30d])
+          # yamllint enable rule:line-length
+    total:
+      metricSource:
+        type: Prometheus
+        metricSourceRef: local-metrics
+        spec:
+          query: >
+            increase(merkle_rpc_duration_seconds_count{op="vault.use"}[30d])

@@ -1,0 +1,32 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-durability-crash
+  displayName: Data Durability — Crash Loss Bounded to 10 Mutations
+  labels:
+    boundedContext: secretStorage
+spec:
+  description: >
+    On an unclean process termination (SIGKILL or panic), the WAL fsync policy
+    and checkpoint frequency must bound potential data loss to no more than the
+    last 10 mutations committed since the most recent SQLite checkpoint. This
+    invariant is always-on and has no rolling measurement window in the
+    traditional sense. Verification is performed by merkle doctor --durability
+    and WAL configuration audit. Modeled as a Timeslices SLO with a 1-minute
+    timeslice window and a target of 1.0 because OpenSLO v1 requires a numeric
+    time window; the real enforcement mechanism is the WAL configuration audit,
+    not a time-series ratio.
+  service: vault-agent
+  indicator:
+    metadataRef: durability-invariants-ok
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Timeslices
+  objectives:
+    - displayName: "Crash loss bounded to last 10 mutations — 100% timeslices"
+      op: gte
+      target: 1.0
+      timeSliceTarget: 1.0
+      timeSliceWindow: 1m

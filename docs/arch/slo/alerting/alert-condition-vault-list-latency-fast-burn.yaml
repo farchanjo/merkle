@@ -1,0 +1,24 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: vault-list-latency-fast-burn
+  displayName: vault.list Latency Fast-Burn (14.4x in 1h)
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fires when the vault.list slow-request fraction exceeds 14.4x the allowed
+    error rate over a rolling 1-hour window. The 30-day budget allows at most
+    5% slow requests (requests exceeding 50 ms). A 14.4x burn rate over 1 hour
+    consumes approximately 2% of the monthly budget and signals a sustained
+    latency regression requiring immediate attention. Uses the standard SRE
+    fast-burn threshold as defined by the Alerting on SLOs chapter of the SRE
+    workbook. Refer to runbook scenario 17 (MCP Latency Regression) for
+    response procedure.
+  severity: warning
+  condition:
+    kind: burnrate
+    threshold: 14.4
+    lookbackWindow: 1h
+    alertAfter: 5m

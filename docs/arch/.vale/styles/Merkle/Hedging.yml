@@ -1,0 +1,17 @@
+---
+# Merkle/Hedging.yml
+# Discourages weak hedging language in architecture and design prose.
+# These words weaken precise technical statements and are rarely needed
+# in ADRs, domain narratives, or threat-model documents.
+# Severity: suggestion — does not block; surfaces for author review.
+extends: existence
+message: "Avoid '%s' in design prose; state the claim directly."
+level: suggestion
+ignorecase: true
+tokens:
+  - very
+  - really
+  - 'just'
+  - simply
+  - basically
+  - actually

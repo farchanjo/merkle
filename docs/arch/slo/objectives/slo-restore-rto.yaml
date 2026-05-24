@@ -1,0 +1,29 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-restore-rto
+  displayName: Restore Time (RTO) < 60 s
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    A vault restore operation must complete in under 60 seconds for a vault
+    containing fewer than 1,000 secrets on local NVMe storage. This is the
+    Recovery Time Objective (RTO): the maximum tolerable time from the moment
+    the operator initiates a restore to the moment the vault is accessible.
+    The target applies per restore attempt; it is not a rolling aggregate.
+    Measured from merkle restore invocation to vault accessibility confirmation.
+    Modeled as a per-occurrence latency SLO using Occurrences budgeting over
+    a 30-day window.
+  service: vault-agent
+  indicator:
+    metadataRef: restore-rto
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "100% of restore operations complete within 60 s"
+      op: gte
+      target: 1.0

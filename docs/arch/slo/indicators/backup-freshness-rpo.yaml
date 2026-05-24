@@ -1,0 +1,23 @@
+---
+apiVersion: openslo/v1
+kind: SLI
+metadata:
+  name: backup-freshness-rpo
+  displayName: Backup Freshness (RPO)
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    Binary indicator reflecting whether the elapsed time since the last
+    successful backup is within the RPO bound of max(24h, 10 mutations),
+    evaluated continuously against host-up time. Triggered by the Anacron
+    Trigger, Change-Triggered Backup, and Sleep Hook. The indicator is
+    good when merkle_backup_age_seconds is less than or equal to 86400
+    (24 hours). Intervals where the host is powered off or sleeping are
+    excluded from the measurement window; only host-up time is counted.
+  thresholdMetric:
+    metricSource:
+      type: Prometheus
+      metricSourceRef: local-metrics
+      spec:
+        query: merkle_backup_age_seconds <= bool 86400

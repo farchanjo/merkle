@@ -1,0 +1,918 @@
+---
+asyncapi: "2.6.0"
+
+info:
+  title: Merkle Audit and OOB Notifier Event Contracts
+  version: "0.2.0"
+  description: >-
+    AsyncAPI contract for two event-driven surfaces of the Merkle
+    local-first MCP vault.
+
+    AuditCompliance bounded context publishes tamper-evident
+    Merkle-style hash-chain events whenever an Audit Entry is
+    appended to the append-only log or the Chain Verifier completes
+    a verification pass.  Every Audit Entry stores two hash fields:
+    prev_hash (BLAKE3 of the predecessor) and current_hash
+    (BLAKE3(serialize(entry_without_hashes) || prev_hash)).
+    Tampering with any entry invalidates all following entries.
+    HMAC-BLAKE3 signatures allow external receivers to authenticate
+    events without the vault encryption key hierarchy.
+
+    OOB Notifier driven port carries Reveal challenge lifecycles
+    between the Vault Agent and the companion device.  A challenge
+    is issued when sensitivity=high triggers the two-flag Operator
+    Confirmation model (ADR-0011): slash_command=true AND
+    oob_ack=true are both required before plaintext is loaded.
+
+    Transport: Unix domain socket (Companion Socket) exposed by the
+    Vault Agent to local processes.  Audit channels are publish-only
+    from the Vault Agent side; oob/challenge/resolved is subscribed
+    by the Vault Agent (companion device publishes back).
+
+    References:
+      ADR-0009 Merkle-style audit hash chain
+      ADR-0011 Slash-only Reveal with OOB for high-sensitivity
+      ADR-0015 Companion Socket peer-credential authentication
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  companion-socket:
+    url: "{socket_path}"
+    protocol: ws
+    description: >-
+      Unix domain socket (Companion Socket) exposed by the Vault
+      Agent.  Default path is $XDG_RUNTIME_DIR/merkle/companion.sock
+      on Linux and $TMPDIR/merkle/companion.sock on macOS.  Transport
+      framing uses newline-delimited JSON over the socket stream.
+
+      Peer authentication uses platform-specific Unix credential
+      passing: SCM_CREDENTIALS ancillary data on Linux (SO_PASSCRED
+      socket option) and LOCAL_PEERCRED getsockopt on macOS/Darwin.
+      The Vault Agent reads the peer PID and process name at
+      accept(2) time and verifies against the Namespace Policy
+      allowed_consumers glob list.  Anonymous or unverifiable
+      connections are rejected immediately before any data is read.
+      See ADR-0011 and ADR-0015 for the full peer-credential
+      security model and the companion device enrollment protocol.
+
+      External audit receivers connect via the HTTPS webhook URL in
+      config.toml; authentication uses the HMAC-BLAKE3 field on each
+      AuditEntry payload.
+    variables:
+      socket_path:
+        default: "/tmp/merkle/companion.sock"
+        description: >-
+          Filesystem path to the Companion Socket.  Override via
+          MERKLE_COMPANION_SOCKET environment variable or config.toml.
+    security:
+      - companion-socket-peer: []
+    bindings:
+      ws:
+        bindingVersion: "0.1.0"
+
+defaultContentType: application/json
+
+channels:
+  audit/entry/appended:
+    description: >-
+      Published by the AuditCompliance bounded context immediately
+      after each Audit Entry is committed to the append-only SQLite
+      audit log.  Consumers use this channel to stream audit events
+      to external compliance receivers, SIEM pipelines, or the
+      remote sync worker.
+
+      The Vault Agent is the sole publisher.  Every Secret operation
+      (unseal, put, get, use, reveal, rotate, delete, restore) emits
+      exactly one event on this channel.  Payload includes the
+      two-field BLAKE3 Hash Chain fields (prev_hash, current_hash)
+      and an optional HMAC-BLAKE3 detached signature.
+
+      Append-only invariant: once published, an event is never
+      retracted or modified.
+    publish:
+      operationId: auditEntryAppended
+      summary: Audit Entry committed to the Hash Chain
+      description: >-
+        Emitted after INSERT into the append-only audit table.  The
+        current_hash field allows the subscriber to verify chain
+        continuity without querying the database: each event's
+        prev_hash must equal the current_hash of the preceding event.
+      tags:
+        - name: audit
+        - name: hash-chain
+        - name: compliance
+      traits:
+        - $ref: "#/components/messageTraits/EventEnvelope"
+      message:
+        $ref: "#/components/messages/AuditEntryAppended"
+
+  audit/chain/verified:
+    description: >-
+      Published by the Chain Verifier (DomainService) at the
+      conclusion of a full or range-based verification pass.
+      Consumers include the Doctor command, the remote sync worker
+      (which verifies before delivering a batch), and compliance
+      dashboards.
+
+      The Chain Verifier is read-only; it never writes to the Audit
+      Entry table.  A verification pass that detects a gap in
+      sequence reports it as a chain break, not a skipped entry.
+    publish:
+      operationId: auditChainVerified
+      summary: Chain Verifier completed a Hash Chain validation pass
+      description: >-
+        Emitted when verify_all or verify_range returns.  The outcome
+        field signals intact, broken_at_entry, or hmac_mismatch.
+        When broken_at_entry, the broken_at_id field carries the
+        UUIDv7 of the first offending entry.
+      tags:
+        - name: audit
+        - name: hash-chain
+        - name: integrity
+      traits:
+        - $ref: "#/components/messageTraits/EventEnvelope"
+      message:
+        $ref: "#/components/messages/AuditChainVerified"
+
+  oob/challenge/issued:
+    description: >-
+      Published by the OOB Notifier driven port when a Reveal
+      challenge is dispatched to the companion device for operator
+      authorization.  This occurs when the operator issues
+      /merkle-reveal (slash_command=true set by the client), the
+      target Secret has sensitivity=high, and the two-flag Operator
+      Confirmation model (ADR-0011) requires oob_ack=true.
+
+      The companion device subscribes to receive and display the
+      challenge.  The challenge_id field is the correlation key
+      linking this event to the corresponding oob/challenge/resolved
+      event.  The timeout for operator response defaults to 60 s.
+    publish:
+      operationId: oobChallengeIssued
+      summary: OOB Reveal challenge dispatched to companion device
+      description: >-
+        Emitted when the Vault Agent sends a high-sensitivity Reveal
+        confirmation request via a channel entirely outside the MCP
+        transport.  The companion device must respond with an approval
+        or denial before expires_at.
+      tags:
+        - name: oob
+        - name: reveal
+        - name: operator-confirmation
+      traits:
+        - $ref: "#/components/messageTraits/EventEnvelope"
+      message:
+        $ref: "#/components/messages/OobChallengeIssued"
+
+  oob/challenge/resolved:
+    description: >-
+      Subscribed by the Vault Agent; published by the companion device
+      (or the OOB Notifier on the device's behalf) when the operator
+      approves, denies, or allows the challenge to expire.  The Vault
+      Agent subscribes to collect the oob_ack signal.
+
+      The challenge_id correlates with the oob/challenge/issued
+      event.  The device_signature field allows the Vault Agent to
+      verify the response originates from the authentic companion
+      device without relying on MCP transport integrity.
+
+      Outcome values:
+        approved — operator acknowledged; oob_ack=true is now valid
+        denied   — operator explicitly rejected the challenge
+        expired  — 60-second timeout elapsed without a response
+    subscribe:
+      operationId: oobChallengeResolved
+      summary: Companion device returns operator approval or denial
+      description: >-
+        Emitted after the operator takes a physical action on the
+        companion device (click Approve/Deny on a desktop notification,
+        press Enter at a terminal prompt, or confirm at the localhost
+        browser page).  The Vault Agent reads this event to finalize
+        the oob_ack flag in the RevealRequest.
+      tags:
+        - name: oob
+        - name: reveal
+        - name: operator-confirmation
+      traits:
+        - $ref: "#/components/messageTraits/EventEnvelope"
+      message:
+        $ref: "#/components/messages/OobChallengeResolved"
+
+components:
+  messages:
+    AuditEntryAppended:
+      name: AuditEntryAppended
+      title: Audit Entry Appended
+      summary: An Audit Entry was committed to the Merkle Hash Chain.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/AuditEntryPayload"
+      examples:
+        - name: reveal-success
+          summary: Successful reveal of a medium-sensitivity Secret
+          headers:
+            x-merkle-event-version: "1"
+            x-merkle-vault-id: "0192ac11-7000-7000-8000-000000000001"
+          payload:
+            event_type: "audit.entry.appended"
+            schema_version: "1"
+            vault_id: "0192ac11-7000-7000-8000-000000000001"
+            entry:
+              id: "0192ac11-7000-7000-8000-000000000042"
+              ts: "2026-05-22T14:30:00.123456Z"
+              session_id: "0192ac11-7000-7000-8000-000000000050"
+              namespace_id: "0192ac11-7000-7000-8000-000000000010"
+              op: "reveal"
+              handle: "vault://acme-backend/token/deploy-prod"
+              purpose: "CI deployment"
+              outcome: "allow"
+              caller_pid: 12345
+              caller_program: "claude"
+              prev_hash: >-
+                blake3:0000000000000000000000000000000000000000\
+                000000000000000000000000
+              current_hash: >-
+                blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
+                b2c3d4e5f6a1b2c3d4e5f6a1b2
+              hmac: "<computed-blake3-hmac>"
+
+    AuditChainVerified:
+      name: AuditChainVerified
+      title: Audit Chain Verified
+      summary: Chain Verifier completed a Hash Chain validation pass.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/AuditChainVerifiedPayload"
+      examples:
+        - name: chain-intact
+          summary: Full chain verification passed with no anomalies
+          headers:
+            x-merkle-event-version: "1"
+            x-merkle-vault-id: "0192ac11-7000-7000-8000-000000000001"
+          payload:
+            event_type: "audit.chain.verified"
+            schema_version: "1"
+            vault_id: "0192ac11-7000-7000-8000-000000000001"
+            verification:
+              outcome: "intact"
+              entries_checked: 1000
+              head_hash: >-
+                blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
+                b2c3d4e5f6a1b2c3d4e5f6a1b2
+              range_from_id: "0192ac11-7000-7000-8000-000000000001"
+              range_to_id: "0192ac11-7000-7000-8000-000000000042"
+              anomalies_detected: 0
+              triggered_by: "doctor"
+              verified_at: "2026-05-22T14:35:00Z"
+        - name: chain-broken
+          summary: Tampered entry detected at sequence 500
+          headers:
+            x-merkle-event-version: "1"
+            x-merkle-vault-id: "0192ac11-7000-7000-8000-000000000001"
+          payload:
+            event_type: "audit.chain.verified"
+            schema_version: "1"
+            vault_id: "0192ac11-7000-7000-8000-000000000001"
+            verification:
+              outcome: "broken_at_entry"
+              entries_checked: 500
+              broken_at_id: "0192ac11-7000-7000-8000-000000000320"
+              head_hash: >-
+                blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
+                b2c3d4e5f6a1b2c3d4e5f6a1b2
+              anomalies_detected: 1
+              triggered_by: "doctor"
+              verified_at: "2026-05-22T14:35:00Z"
+
+    OobChallengeIssued:
+      name: OobChallengeIssued
+      title: OOB Challenge Issued
+      summary: OOB Reveal challenge dispatched to companion device.
+      contentType: application/json
+      correlationId:
+        description: >-
+          challenge_id links each issued challenge to its resolved
+          response.  Use this value to join oob/challenge/issued with
+          oob/challenge/resolved events in audit pipelines.
+        location: "$message.payload#/challenge/challenge_id"
+      payload:
+        $ref: "#/components/schemas/OobChallengeIssuedPayload"
+      examples:
+        - name: high-sensitivity-reveal
+          summary: Desktop notification for a high-sensitivity Secret
+          headers:
+            x-merkle-event-version: "1"
+            x-merkle-vault-id: "0192ac11-7000-7000-8000-000000000001"
+          payload:
+            event_type: "oob.challenge.issued"
+            schema_version: "1"
+            vault_id: "0192ac11-7000-7000-8000-000000000001"
+            challenge:
+              challenge_id: "0192ac11-7000-7000-8000-000000000099"
+              namespace_id: "0192ac11-7000-7000-8000-000000000010"
+              secret_handle: "vault://acme-backend/password/db-admin"
+              sensitivity: "high"
+              oob_channel: "desktop-notif"
+              expires_at: "2026-05-22T14:31:00Z"
+              # yamllint disable-line rule:line-length
+              request_nonce: "4a7f3d9e2b1c8f0a4a7f3d9e2b1c8f0a4a7f3d9e2b1c8f0a4a7f3d9e2b1c8f0a"
+
+    OobChallengeResolved:
+      name: OobChallengeResolved
+      title: OOB Challenge Resolved
+      summary: Companion device returned operator approval or denial.
+      contentType: application/json
+      correlationId:
+        description: >-
+          challenge_id matches the value emitted in the corresponding
+          oob/challenge/issued event, enabling exact pairing of issued
+          and resolved events for downstream correlation or audit
+          queries.
+        location: "$message.payload#/resolution/challenge_id"
+      payload:
+        $ref: "#/components/schemas/OobChallengeResolvedPayload"
+      examples:
+        - name: approved
+          summary: Operator acknowledged on a desktop notification
+          headers:
+            x-merkle-event-version: "1"
+            x-merkle-vault-id: "0192ac11-7000-7000-8000-000000000001"
+          payload:
+            event_type: "oob.challenge.resolved"
+            schema_version: "1"
+            vault_id: "0192ac11-7000-7000-8000-000000000001"
+            resolution:
+              challenge_id: "0192ac11-7000-7000-8000-000000000099"
+              outcome: "approved"
+              authorized_at: "2026-05-22T14:30:45Z"
+              device_signature: >-
+                a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+        - name: expired
+          summary: Operator did not respond within 60 seconds
+          headers:
+            x-merkle-event-version: "1"
+            x-merkle-vault-id: "0192ac11-7000-7000-8000-000000000001"
+          payload:
+            event_type: "oob.challenge.resolved"
+            schema_version: "1"
+            vault_id: "0192ac11-7000-7000-8000-000000000001"
+            resolution:
+              challenge_id: "0192ac11-7000-7000-8000-000000000099"
+              outcome: "expired"
+
+  messageTraits:
+    EventEnvelope:
+      headers:
+        type: object
+        required:
+          - x-merkle-event-version
+          - x-merkle-vault-id
+        properties:
+          x-merkle-event-version:
+            type: string
+            description: Schema version of the event envelope.
+            enum:
+              - "1"
+          x-merkle-vault-id:
+            type: string
+            description: >-
+              UUIDv7 identifying the Merkle vault that emitted the
+              event.
+            pattern: >-
+              ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89\
+              abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+
+  schemas:
+    # -- Shared envelope types -----------------------------------------------
+
+    EventBase:
+      type: object
+      description: >-
+        Common wrapper present on every event payload.  Specific event
+        channels extend this base by adding a typed data field.
+      required:
+        - event_type
+        - schema_version
+        - vault_id
+      properties:
+        event_type:
+          type: string
+          description: Identifies the channel this event belongs to.
+          enum:
+            - "audit.entry.appended"
+            - "audit.chain.verified"
+            - "oob.challenge.issued"
+            - "oob.challenge.resolved"
+        schema_version:
+          type: string
+          description: >-
+            Version of the payload schema.  Increment when adding
+            required fields or changing field semantics.
+          enum:
+            - "1"
+        vault_id:
+          type: string
+          description: >-
+            UUIDv7 of the Merkle vault that emitted the event.
+          pattern: >-
+            ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89ab\
+            AB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+
+    # -- Scalar / value types ------------------------------------------------
+
+    UuidV7:
+      type: string
+      description: UUIDv7 — time-ordered unique identifier.
+      pattern: >-
+        ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB]\
+        [0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+      examples:
+        - "0192ac11-7000-7000-8000-000000000042"
+
+    Blake3Hash:
+      type: string
+      description: >-
+        BLAKE3 digest prefixed with "blake3:" followed by 64 lowercase
+        hex characters.  The genesis entry uses the sentinel value
+        "blake3:0000...0000" (64 zeros).
+      pattern: "^blake3:[0-9a-f]{64}$"
+      examples:
+        - "blake3:0000000000000000000000000000000000000000\
+0000000000000000000000000"
+        - "blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
+b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
+    HmacValue:
+      type: string
+      description: >-
+        Hex-encoded HMAC-BLAKE3 detached tag (64 lowercase hex chars).
+        Computed over the canonical serialization of the AuditEntry
+        payload using the per-vault HMAC key.  The HMAC key is distinct
+        from the Master Key and Namespace DEKs; loaded into Vault Agent
+        protected memory at Unseal time.
+
+        Examples in this document use illustrative placeholders; real
+        values are computed at runtime by the Vault Agent HMAC worker.
+      pattern: "^[0-9a-f]{64}$"
+
+    AuditOp:
+      type: string
+      description: >-
+        Closed enum of all auditable vault operations.  Append-only;
+        new operations require an ADR before adding a variant.
+        Total: 30 values (cross_env_warning and disaster_recovery added
+        in W2.A).  Aligns with #AuditOp in
+        docs/arch/schemas/audit_compliance/audit_entry.cue.
+      enum:
+        - unseal
+        - put
+        - get
+        - use
+        - use_token_resolved
+        - reveal
+        - rotate
+        - delete
+        - restore
+        - backup
+        - list
+        - search
+        - describe
+        - doctor
+        - audit_query
+        - bind
+        - http_request
+        - ssh_exec
+        - ssh_copy
+        - port_forward
+        - spawn
+        - write_tempfile
+        - http_download
+        - http_upload
+        - crypto_sign
+        - crypto_decrypt
+        - namespace_create
+        - category_create
+        - cross_env_warning
+        - disaster_recovery
+
+    AuditOutcome:
+      type: string
+      description: >-
+        Authorization decision for the operation.  allow — operation
+        proceeded; deny — blocked by policy or missing confirmation;
+        error — operation attempted but failed with a system error.
+        Aligns with #AuditOutcome in
+        docs/arch/schemas/audit_compliance/audit_entry.cue (3 values).
+      enum:
+        - allow
+        - deny
+        - error
+
+    Sensitivity:
+      type: string
+      description: >-
+        Closed enum controlling the OOB Confirmation requirement for
+        Reveal.  high requires both slash_command=true AND oob_ack=true
+        (ADR-0011).  medium and low require only slash_command=true.
+      enum:
+        - low
+        - medium
+        - high
+
+    OobChannel:
+      type: string
+      description: >-
+        The out-of-band confirmation mechanism used to reach the
+        operator.  Must be a channel entirely outside the MCP transport.
+      enum:
+        - desktop-notif
+        - terminal-prompt
+        - localhost-confirm
+
+    OobChallengeOutcome:
+      type: string
+      description: >-
+        Result of the operator interaction with the OOB challenge.
+        approved — operator acknowledged; sets oob_ack=true.
+        denied   — operator explicitly rejected.
+        expired  — 60-second timeout elapsed without operator action.
+      enum:
+        - approved
+        - denied
+        - expired
+
+    VerifyOutcome:
+      type: string
+      description: >-
+        Result of a Chain Verifier pass.  Matches #VerifyOutcome in
+        docs/arch/schemas/audit_compliance/chain_verifier.cue.
+      enum:
+        - intact
+        - broken_at_entry
+        - hmac_mismatch
+
+    # -- AuditEntry core schema ----------------------------------------------
+
+    AuditEntry:
+      type: object
+      description: >-
+        Append-only record of a single vault operation.  Aligns with
+        #AuditEntry in docs/arch/schemas/audit_compliance/audit_entry.cue.
+
+        Hash chain fields:
+          prev_hash    — BLAKE3 digest of the predecessor entry.
+                         Absent only for the genesis entry.
+          current_hash — BLAKE3(serialize(entry_without_hashes)
+                         || prev_hash).  Ties content and chain
+                         linkage in a single field.
+
+        Tamper-evidence guarantee: modifying any field of any entry
+        invalidates current_hash of that entry and prev_hash of all
+        subsequent entries.
+      required:
+        - id
+        - ts
+        - session_id
+        - namespace_id
+        - op
+        - outcome
+        - current_hash
+      properties:
+        id:
+          $ref: "#/components/schemas/UuidV7"
+          description: UUIDv7 primary key; time-ordered unique identity.
+        ts:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 UTC wall-clock timestamp with microsecond precision.
+            Timestamps within the chain are monotonically non-decreasing;
+            the Vault Agent clamps backward clock drift to last-seen + 1 µs.
+        session_id:
+          type: string
+          description: >-
+            Identifier of the MCP Session that triggered this operation.
+            Used for session-level audit correlation.
+        namespace_id:
+          $ref: "#/components/schemas/UuidV7"
+          description: UUIDv7 of the Namespace in which the Secret resides.
+        op:
+          $ref: "#/components/schemas/AuditOp"
+        handle:
+          type: string
+          description: >-
+            Opaque Handle URI (vault://<namespace>/<category>/<name>)
+            of the Secret involved.  Absent for namespace-level ops.
+          pattern: >-
+            ^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/\
+            [a-z][a-z0-9-]{1,62}[a-z0-9]$
+        purpose:
+          type: string
+          description: Caller-supplied justification for the operation.
+        outcome:
+          $ref: "#/components/schemas/AuditOutcome"
+        denial_reason:
+          type: string
+          description: >-
+            Human-readable explanation of why the operation was denied.
+            Present only when outcome is "deny"; absent otherwise.
+        caller_pid:
+          type: integer
+          minimum: 1
+          description: OS process identifier of the initiating process.
+        caller_program:
+          type: string
+          description: >-
+            Verified process name of the caller (e.g., "claude",
+            "merkle-cli").
+        seq:
+          type: integer
+          minimum: 1
+          description: >-
+            Database-local monotonic sequence number for ordering within
+            a store.  NOT part of the hash chain computation and MUST NOT
+            be used as a global identity.  Absent for entries not yet
+            assigned a sequence by the store.
+        prev_hash:
+          $ref: "#/components/schemas/Blake3Hash"
+          description: >-
+            BLAKE3 digest of the immediately preceding entry's
+            current_hash.  Absent only for the genesis entry.
+        current_hash:
+          $ref: "#/components/schemas/Blake3Hash"
+          description: >-
+            BLAKE3(serialize(entry_without_hashes) || prev_hash).
+            Ties the entry content and chain linkage in a single field.
+        hmac:
+          $ref: "#/components/schemas/HmacValue"
+          description: >-
+            Optional detached HMAC-BLAKE3 tag for remote sync
+            authentication.  Absent until the remote sync worker
+            processes the entry; present when the signature has been
+            computed and attached.  Examples in this document use
+            illustrative placeholders; real values are computed at
+            runtime by the Vault Agent HMAC worker.
+
+    # -- Channel payload schemas --------------------------------------------
+
+    AuditEntryPayload:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required:
+            - entry
+          properties:
+            entry:
+              $ref: "#/components/schemas/AuditEntry"
+
+    AuditChainVerifiedPayload:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required:
+            - verification
+          properties:
+            verification:
+              $ref: "#/components/schemas/ChainVerificationResult"
+
+    ChainVerificationResult:
+      type: object
+      description: >-
+        Output of a Chain Verifier pass.  Aligns with #VerifyResult in
+        docs/arch/schemas/audit_compliance/chain_verifier.cue.
+      required:
+        - outcome
+        - entries_checked
+      properties:
+        outcome:
+          $ref: "#/components/schemas/VerifyOutcome"
+        entries_checked:
+          type: integer
+          minimum: 0
+          description: >-
+            Total number of entries examined in this verification pass.
+        head_hash:
+          $ref: "#/components/schemas/Blake3Hash"
+          description: >-
+            current_hash of the last entry examined.  Allows incremental
+            verification: the next pass asserts that its first entry's
+            prev_hash equals this value.
+        range_from_id:
+          $ref: "#/components/schemas/UuidV7"
+          description: >-
+            UUIDv7 of the earliest entry in this pass (inclusive).
+            Present for range-based verification; absent for verify_all.
+        range_to_id:
+          $ref: "#/components/schemas/UuidV7"
+          description: >-
+            UUIDv7 of the latest entry in this pass (inclusive).
+            Present for range-based verification; absent for verify_all.
+        broken_at_id:
+          $ref: "#/components/schemas/UuidV7"
+          description: >-
+            UUIDv7 of the first entry where a hash discrepancy was
+            detected.  Present only when outcome is broken_at_entry.
+        anomalies_detected:
+          type: integer
+          minimum: 0
+          description: >-
+            Count of entries flagged during this pass.  Zero for an
+            intact chain.
+        triggered_by:
+          type: string
+          description: >-
+            What initiated this verification pass.  Examples: "doctor",
+            "sync_worker", "cli_audit_verify", "scheduled_cron".
+        verified_at:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 UTC timestamp when the verification pass completed.
+
+    OobChallengeIssuedPayload:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required:
+            - challenge
+          properties:
+            challenge:
+              $ref: "#/components/schemas/OobChallenge"
+
+    OobChallenge:
+      type: object
+      description: >-
+        Reveal challenge dispatched to the companion device by the OOB
+        Notifier driven port.  The operator must approve or deny before
+        expires_at; default timeout is 60 seconds (ADR-0011).
+
+        challenge_id is the correlation key linking this event to the
+        corresponding oob/challenge/resolved event.
+
+        The approval URL is delivered via the OOB channel itself
+        (desktop notification, terminal prompt, localhost browser),
+        NOT via this event.  Omitting the approval URL from the event
+        payload prevents leakage via Companion Socket subscribers
+        (see ADR-0011 amendment).
+      required:
+        - challenge_id
+        - namespace_id
+        - secret_handle
+        - sensitivity
+        - oob_channel
+        - expires_at
+        - request_nonce
+      properties:
+        challenge_id:
+          $ref: "#/components/schemas/UuidV7"
+          description: >-
+            UUIDv7 uniquely identifying this OOB challenge.  Used as
+            the correlationId to join issued and resolved events.
+        namespace_id:
+          type: string
+          format: uuid
+          description: >-
+            UUIDv7 of the Namespace in which the target Secret resides.
+            Required by downstream policy evaluators to scope the
+            confirmation to the correct namespace boundary.
+          # yamllint disable-line rule:line-length
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        secret_handle:
+          type: string
+          description: >-
+            Opaque Handle URI of the Secret for which the Reveal was
+            requested (vault://<namespace>/<category>/<name>).
+            Plaintext is never included; only the Handle is exposed.
+          pattern: >-
+            ^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/\
+            [a-z][a-z0-9-]{1,62}[a-z0-9]$
+        sensitivity:
+          $ref: "#/components/schemas/Sensitivity"
+          description: >-
+            Sensitivity classification of the Secret.  high is the
+            only value that triggers OOB challenges under current
+            policy (ADR-0011).
+        oob_channel:
+          $ref: "#/components/schemas/OobChannel"
+          description: >-
+            The out-of-band channel used to present this challenge.
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 UTC timestamp after which the challenge is invalid
+            and will yield outcome=expired.  Default: issued_at + 60s.
+        request_nonce:
+          type: string
+          description: >-
+            32-byte random nonce encoded as 64 lowercase hex characters.
+            Provides request-specific binding for the device_signature
+            on the resolved event, preventing replay attacks across
+            challenge sessions (ADR-0011 amendment).
+          pattern: "^[0-9a-f]{64}$"
+
+    OobChallengeResolvedPayload:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required:
+            - resolution
+          properties:
+            resolution:
+              $ref: "#/components/schemas/OobResolution"
+
+    OobResolution:
+      type: object
+      description: >-
+        Resolution record returned by the companion device after the
+        operator takes a physical action (or the timeout expires).
+        The Vault Agent reads this event to finalize the oob_ack flag
+        in the RevealRequest (ADR-0011).
+
+        challenge_id must match the value from the corresponding
+        oob/challenge/issued event.
+
+        Constraint: when outcome is "expired", device_signature MUST be
+        absent (null branch of the oneOf).  Aligns with the disjunction
+        in docs/arch/schemas/access_mediation/oob_resolution.cue.
+      required:
+        - challenge_id
+        - outcome
+      properties:
+        challenge_id:
+          $ref: "#/components/schemas/UuidV7"
+          description: >-
+            UUIDv7 that correlates this resolution with the issued
+            challenge.  Must match exactly one oob/challenge/issued
+            event.
+        outcome:
+          $ref: "#/components/schemas/OobChallengeOutcome"
+        authorized_at:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 UTC timestamp when the operator took action.
+            Present when outcome is "approved"; absent for "denied" and
+            "expired".
+        device_signature:
+          description: >-
+            Ed25519 device attestation signature, hex-encoded as 64
+            lowercase hex characters (32-byte signature).  Vault Agent
+            rejects approved-outcome resolutions with null, zero, or
+            unverifiable signatures.
+
+            Canonical text to sign per ADR-0011 Amendment:
+              sig = Ed25519_sign(device_priv,
+                SHA256(challenge_id || request_nonce || outcome ||
+                authorized_at))
+            where || denotes concatenation of the UTF-8 encoded string
+            representations of each field, and SHA256 produces a
+            32-byte digest passed as the Ed25519 message input.
+            Source of truth:
+            docs/arch/schemas/access_mediation/oob_resolution.cue.
+
+            MUST be absent (null) when outcome is "expired" — no
+            operator action occurred, so no device attestation can be
+            produced.  The oneOf enforces this constraint at the schema
+            level.
+          oneOf:
+            - type: string
+              pattern: "^[0-9a-f]{64}$"
+            - type: "null"
+
+  securitySchemes:
+    companion-socket-peer:
+      type: plain
+      description: >-
+        The Companion Socket authenticates connecting processes using
+        platform-specific Unix peer-credential mechanisms per ADR-0011
+        and ADR-0015.
+
+        Linux: the Vault Agent sets SO_PASSCRED on the listening socket
+        and reads SCM_CREDENTIALS ancillary data at accept(2) time to
+        obtain the peer PID, UID, and GID without any cooperation from
+        the connecting process.
+
+        macOS/Darwin: the Vault Agent calls getsockopt(LOCAL_PEERCRED)
+        after accept(2) to retrieve the peer's xucred structure
+        containing the effective UID and GID.
+
+        In both cases the Vault Agent resolves the peer PID to a process
+        name via /proc/<pid>/comm (Linux) or proc_pidpath(3) (macOS) and
+        verifies it against the Namespace Policy allowed_consumers glob
+        list.  Anonymous connections and connections from processes not
+        matching the glob are rejected immediately before any data is
+        read.
+
+        For remote audit receivers connecting over HTTPS webhook, the
+        HMAC-BLAKE3 signature on each AuditEntry payload serves as the
+        authentication token.  The receiver verifies the hmac field
+        against the shared per-vault HMAC key provisioned at vault
+        initialization.
+
+        OOB channel events are further protected by the device_signature
+        field on resolved events, allowing the Vault Agent to reject
+        spoofed resolutions from processes that lack the enrolled
+        Companion Device private key.

@@ -1,0 +1,22 @@
+---
+apiVersion: openslo/v1
+kind: Service
+metadata:
+  name: companion-socket
+  displayName: Merkle Companion Socket
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    The Unix domain socket (or Windows named pipe) exposed by the Vault Agent
+    to local consumer processes. It authenticates connecting processes by PID
+    and process name against the Allowed Consumers list from the Namespace
+    Policy, resolves Use Tokens to plaintext for authorized callers, and
+    discards the plaintext after delivery. Authorization failures (unknown PID,
+    blocked consumer) are not counted in the SLO denominator; they are policy
+    events tracked separately. The service is measured during agent-up time
+    only.
+
+  # SLOs owned by this service
+  # ---------------------------------------------------------------------------
+  # slo-companion-socket-connect-rate  99.9% authorized connection success rate

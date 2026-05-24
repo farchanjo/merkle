@@ -1,0 +1,43 @@
+---
+extends: default
+
+rules:
+  document-start: disable
+  line-length:
+    max: 200
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+    level: warning
+  truthy:
+    check-keys: false
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+    level: warning
+  comments-indentation:
+    level: warning
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+    check-multi-line-strings: false
+    level: warning
+  empty-lines:
+    max: 2
+    level: warning
+  trailing-spaces:
+    level: warning
+  new-line-at-end-of-file:
+    level: warning
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: false
+    level: warning
+  braces:
+    level: warning
+  brackets:
+    level: warning
+
+ignore: |
+  cue.mod/pkg/
+  cue.mod/usr/
+  cue.mod/gen/

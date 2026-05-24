@@ -1,0 +1,19 @@
+---
+apiVersion: openslo/v1
+kind: AlertCondition
+metadata:
+  name: vault-use-latency-fast-burn
+  displayName: vault.use Latency Fast-Burn (10% slow in 1h)
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    Fires when more than 10% of vault.use requests exceed 100 ms in any rolling
+    1-hour window. This is the fast-burn threshold for latency SLOs; the
+    30-day budget allows at most 5% slow requests globally.
+  severity: warning
+  condition:
+    kind: burnrate
+    threshold: 2
+    lookbackWindow: 1h
+    alertAfter: 5m

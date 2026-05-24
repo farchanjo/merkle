@@ -1,0 +1,28 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-agent-availability
+  displayName: Vault Agent Availability 99.5%
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    The vault agent must be available for 99.5% of agent-up time over a 30-day
+    rolling window. Agent-up time excludes host-sleep, hibernation,
+    and cold-start intervals; the agent cannot be held accountable for
+    host lifecycle events. An error budget of 0.5% translates to 216
+    minutes of allowable downtime per month. A sustained burn rate of
+    6x — equivalent to 30 minutes of downtime per day — depletes the
+    budget in 5 days and triggers an immediate reliability review.
+  service: vault-agent
+  indicator:
+    metadataRef: agent-availability
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "99.5% availability over 30 days"
+      op: gte
+      target: 0.995

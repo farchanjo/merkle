@@ -1,0 +1,30 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-restore-success-rate
+  displayName: Restore Success Rate 99.0%
+  labels:
+    boundedContext: backupRecovery
+spec:
+  description: >
+    At least 99.0% of restore attempts must succeed (process exits 0 and the
+    vault is accessible after the operation) over a 30-day rolling window.
+    Failures caused by corrupt backup files are excluded from the denominator;
+    only restores from structurally valid archives are counted. Any restore
+    failure triggers an immediate review; the immediate-review trigger is per
+    failure, not per budget period. The primary measurement source is the
+    merkle_restore_total{outcome} Prometheus counter; the structured JSON log
+    from merkle restore --log-format json serves as a secondary forensic
+    source.
+  service: vault-agent
+  indicator:
+    metadataRef: restore-success-rate
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "99.0% of restore attempts succeed"
+      op: gte
+      target: 0.99

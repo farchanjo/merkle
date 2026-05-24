@@ -1,0 +1,27 @@
+---
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: slo-vault-ssh-exec-overhead-p95
+  displayName: vault.ssh.exec Agent Overhead p95 < 50 ms
+  labels:
+    boundedContext: accessMediation
+spec:
+  description: >
+    No more than 5% of vault.ssh.exec calls may incur agent-side overhead
+    exceeding 50 ms at the p95 percentile in any 30-day rolling window. Agent
+    overhead excludes the remote SSH command execution time: the clock covers
+    only the in-agent path comprising credential resolution, policy check, Audit
+    Entry write, and SSH Bridge dispatch. Remote command time is not attributed
+    to the agent and is subtracted from the measured duration.
+  service: mcp-adapter
+  indicator:
+    metadataRef: vault-ssh-exec-overhead-p95
+  timeWindow:
+    - duration: 30d
+      isRolling: true
+  budgetingMethod: Occurrences
+  objectives:
+    - displayName: "95% of vault.ssh.exec agent overhead within 50 ms"
+      op: gte
+      target: 0.95
