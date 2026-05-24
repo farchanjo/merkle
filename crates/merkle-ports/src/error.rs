@@ -23,6 +23,9 @@ pub enum StorageError {
     /// An opaque backend error from the underlying storage engine.
     #[error("backend: {0}")]
     Backend(#[from] BoxedError),
+    /// FTS5 index is inconsistent with the secrets table (ADR-0027 doctor).
+    #[error("fts5 inconsistent: {0}")]
+    Fts5Inconsistent(String),
 }
 
 /// Errors returned by [`crate::Keychain`] implementations.

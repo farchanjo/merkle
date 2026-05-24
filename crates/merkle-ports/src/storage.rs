@@ -29,6 +29,51 @@ pub struct SecretFilter {
     pub limit: Option<u32>,
 }
 
+/// Parameters for a weighted BM25 ranked search (ADR-0027).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankedSearchParams {
+    /// FTS5 MATCH expression (required — must be non-empty).
+    pub fts_query: String,
+    /// Maximum results per page.
+    pub limit: u32,
+    /// Zero-based offset for page-level pagination of ranked results.
+    pub offset: u32,
+}
+
+/// A per-field highlight snippet returned by FTS5 `highlight()` / `snippet()`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHighlight {
+    /// FTS5 column that produced the highlight
+    /// (`name`, `tags`, `description`, `category`, `namespace_label`).
+    pub field: String,
+    /// Extracted text with matched terms wrapped in `<b>` tags.
+    pub snippet: String,
+}
+
+/// A single secret enriched with BM25 ranking metadata (ADR-0027).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankedSecret {
+    /// The underlying secret aggregate (public metadata only — no private blob).
+    pub secret: ss::Secret,
+    /// Raw BM25 score (negative; more negative = better match).
+    pub score: f64,
+    /// 1-based rank within this page. Global rank = `offset + bm25_rank - 1`.
+    pub bm25_rank: u32,
+    /// Per-field highlight snippets (at most one per FTS5 column).
+    pub highlights: Vec<SearchHighlight>,
+}
+
+/// Result of a ranked search query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankedSearchResult {
+    /// Ranked results for this page.
+    pub items: Vec<RankedSecret>,
+    /// Total number of secrets matching the query (all pages).
+    pub total: u32,
+    /// `true` when there are additional results beyond `offset + limit`.
+    pub has_more: bool,
+}
+
 /// Driven port for all persistent storage operations.
 ///
 /// A single [`Storage`] implementation covers all bounded-context writes so
@@ -51,6 +96,26 @@ pub trait Storage: Send + Sync {
         namespace_id: &NamespaceId,
         filter: SecretFilter,
     ) -> Result<Vec<ss::Secret>, StorageError>;
+
+    /// Execute a weighted BM25 ranked FTS5 search (ADR-0027).
+    ///
+    /// Results are ordered by `bm25_score ASC` (most-negative = best match).
+    /// Pagination via `offset`; `total` covers all matches.
+    async fn search_secrets(
+        &self,
+        namespace_id: &NamespaceId,
+        params: RankedSearchParams,
+    ) -> Result<RankedSearchResult, StorageError>;
+
+    /// Check FTS5 schema consistency (ADR-0027 doctor check).
+    ///
+    /// Returns `Ok(())` when every secret has a matching FTS5 row, no FTS5 row
+    /// references a deleted secret, and the virtual-table column list matches
+    /// the authoritative spec `(name, tags, description, category, namespace_label)`.
+    ///
+    /// Returns [`StorageError::Fts5Inconsistent`] with a human-readable detail
+    /// when any invariant is violated.
+    async fn check_fts5_consistency(&self) -> Result<(), StorageError>;
 
     /// Hard-delete a secret by its [`SecretId`].
     async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), StorageError>;
