@@ -49,6 +49,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod errors;
+pub mod prompts;
 pub mod session;
 pub mod tools;
 
@@ -56,11 +57,19 @@ use std::sync::Arc;
 
 use merkle_companion_client::CompanionSocketClient;
 use rmcp::{
-    ServerHandler, handler::server::router::tool::ToolRouter, model::ServerInfo, tool_handler,
+    ErrorData, ServerHandler,
+    handler::server::router::tool::ToolRouter,
+    model::{
+        GetPromptRequestParam, GetPromptResult, ListPromptsResult, PaginatedRequestParam,
+        ServerInfo,
+    },
+    service::RequestContext,
+    tool_handler,
 };
 use tokio::sync::RwLock;
 use tracing::info;
 
+pub use prompts::MerklePrompts;
 pub use session::SessionState;
 
 /// MCP server that exposes all 29 Vault Agent capabilities as MCP tools.
@@ -117,7 +126,10 @@ impl ServerHandler for MerkleMcpServer {
         use rmcp::model::{Implementation, ProtocolVersion, ServerCapabilities};
         ServerInfo {
             protocol_version: ProtocolVersion::default(),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .build(),
             server_info: Implementation {
                 name: "merkle".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
@@ -132,5 +144,21 @@ impl ServerHandler for MerkleMcpServer {
 
     async fn on_initialized(&self, _context: rmcp::service::NotificationContext<rmcp::RoleServer>) {
         info!("MCP client initialized — Merkle vault adapter ready");
+    }
+
+    async fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(MerklePrompts::list(request))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<GetPromptResult, ErrorData> {
+        MerklePrompts::get(request)
     }
 }
