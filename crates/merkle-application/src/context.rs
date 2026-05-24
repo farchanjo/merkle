@@ -30,12 +30,15 @@ use merkle_types::UuidV7;
 ///
 /// # Audit log
 ///
-/// `audit_log` is the in-memory append-only chain shared across all command
-/// handlers within a single unseal session. The `seq` counter increments
-/// monotonically so that each `AuditEntry` gets a unique sequence number that
-/// satisfies the `UNIQUE` constraint in the audit_entries table. On seal the
-/// log is reset to an empty `AuditLog::new()` so the next unseal session
-/// starts fresh from seq=0.
+/// `audit_log` is the in-memory mirror of the persisted append-only chain. The
+/// `seq` counter is **globally monotonic across unseal sessions** (ADR-0009
+/// line 209) and satisfies the `UNIQUE` constraint on `audit_entries.seq`.
+///
+/// At agent boot the chain head MUST be restored from `storage.pinned_head()`
+/// via [`AppContext::restore_audit_chain`] before the first command runs;
+/// otherwise the next append collides with the persisted history. On seal the
+/// log is similarly re-restored from the pinned head (not cleared) so the next
+/// unseal session continues the same monotonic sequence.
 #[derive(Clone)]
 pub struct AppContext {
     /// Persistence port: secrets, namespaces, audit log, policies, backups,
@@ -67,11 +70,14 @@ pub struct AppContext {
     /// zeroed by `seal_vault`.
     pub hmac_key: Arc<RwLock<Option<[u8; 32]>>>,
 
-    /// In-memory audit hash chain for the current unseal session.
+    /// In-memory mirror of the persisted audit hash chain.
     ///
-    /// Shared across all command handlers so that the `seq` counter advances
-    /// monotonically. The log is reset to `AuditLog::new()` by `seal_vault`
-    /// so consecutive unseal sessions each start at seq=0.
+    /// Shared across all command handlers so the `seq` counter advances
+    /// monotonically across the entire vault lifetime (ADR-0009). Must be
+    /// restored from `storage.pinned_head()` at boot via
+    /// [`AppContext::restore_audit_chain`] and again after every seal so the
+    /// next append produces `seq = head_seq + 1`, never colliding with a
+    /// persisted row.
     pub audit_log: Arc<RwLock<AuditLog>>,
 
     /// Active SSH port-forward subprocesses keyed by session id (ADR-0023).
@@ -108,6 +114,34 @@ impl AppContext {
             audit_log: Arc::new(RwLock::new(AuditLog::new())),
             active_port_forwards: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Restore the in-memory `audit_log` head from the persisted `PinnedHead`.
+    ///
+    /// Per ADR-0009 (line 209) the audit chain `seq` counter is globally
+    /// monotonic across the vault lifetime. The persisted `pinned_head`
+    /// row is the source of truth that survives daemon restarts and
+    /// seal/unseal cycles. Agent binaries MUST call this method once after
+    /// `AppContext::new` returns and before serving the first command;
+    /// otherwise the first audit append will collide with the persisted
+    /// history on `UNIQUE(audit_entries.seq)`.
+    ///
+    /// When `pinned_head` is absent (fresh DB, pre-init), the log stays
+    /// empty so the genesis entry written by the init ceremony starts at
+    /// `seq=0` per ADR-0021.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::AppError::Storage`] when the storage port fails to
+    /// read the pinned head row.
+    pub async fn restore_audit_chain(&self) -> Result<(), crate::AppError> {
+        let pinned = self.storage.pinned_head().await?;
+        let mut log = self.audit_log.write().await;
+        *log = match pinned {
+            Some(head) => AuditLog::restore_head(head.head_hash, head.head_seq),
+            None => AuditLog::new(),
+        };
+        Ok(())
     }
 
     /// Return `true` when the vault is currently `Unsealed`.

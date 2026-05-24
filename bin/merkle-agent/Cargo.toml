@@ -4,7 +4,7 @@ version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
 license.workspace     = true
-description  = "Merkle Vault Agent: long-running daemon that hosts the Companion Socket driving port, MCP adapter, domain core, audit log, backup scheduler, and tempfile reaper."
+description  = "Merkle Vault Agent: long-running daemon that hosts the Companion Socket driving port, domain core, audit log, backup scheduler, and tempfile reaper. MCP served by the standalone merkle-mcp binary."
 
 [[bin]]
 name = "merkle-agent"
@@ -20,10 +20,8 @@ merkle-adapter-keychain         = { workspace = true }
 merkle-adapter-crypto           = { workspace = true }
 merkle-adapter-oob              = { workspace = true }
 merkle-adapter-external-services = { workspace = true }
-merkle-adapter-mcp              = { workspace = true }
 merkle-adapter-companion-socket = { workspace = true }
-# rmcp with transport-io enables tokio::io::stdin/stdout for the MCP stdio transport.
-rmcp                            = { workspace = true, features = ["transport-io"] }
+merkle-companion-client         = { workspace = true }
 merkle-domain-identity          = { workspace = true }
 merkle-ports                    = { workspace = true }
 merkle-types                    = { workspace = true }

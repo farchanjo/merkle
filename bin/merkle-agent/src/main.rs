@@ -1,6 +1,6 @@
 //! Merkle Vault Agent — long-running daemon hosting the Companion Socket
-//! driving port, MCP adapter bridge, domain core, audit log, backup
-//! scheduler, and tempfile reaper.
+//! driving port, domain core, audit log, backup scheduler, and tempfile
+//! reaper. MCP is served by the standalone `merkle-mcp` binary (ADR-0024).
 //!
 //! See:
 //! - `docs/arch/adr/0002-adopt-agent-plus-mcp-adapter-topology.md`

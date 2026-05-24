@@ -77,4 +77,26 @@ impl AuditLog {
         self.head = Some(hash);
         self.entries.push(entry);
     }
+
+    /// Rebuild an `AuditLog` whose head matches a previously persisted
+    /// `PinnedHead`, without loading the full entry history into memory.
+    ///
+    /// Use this at agent boot to restore the seq + head invariants from the
+    /// SQLite-backed `audit_entries` table so that subsequent
+    /// [`crate::AuditWriter::append`] calls produce monotonic seq values that
+    /// don't collide with persisted rows.
+    ///
+    /// The returned log has no entries in its in-memory `entries` vec — only
+    /// the `head` and `head_seq` fields are populated. `iter` and `len` will
+    /// therefore reflect the in-process appends only, not the on-disk history.
+    /// The chain hash invariant is preserved because every new entry hashes
+    /// off the restored head.
+    #[must_use]
+    pub fn restore_head(head: Blake3Hash, head_seq: u64) -> Self {
+        Self {
+            head: Some(head),
+            head_seq,
+            entries: Vec::new(),
+        }
+    }
 }

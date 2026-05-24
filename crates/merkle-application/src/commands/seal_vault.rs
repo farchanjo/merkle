@@ -57,10 +57,20 @@ impl SealVaultCommand {
             *hmac_guard = None;
         }
 
-        // Reset the in-memory audit log — the next unseal session starts fresh.
+        // Restore the in-memory audit log from the persisted PinnedHead so the
+        // next unseal session continues the globally-monotonic seq counter (ADR-0009
+        // line 209). Fall back to an empty log only when no pinned head exists yet
+        // (pre-init or fresh DB) — that case is exercised by the init ceremony.
         {
+            let pinned = ctx.storage.pinned_head().await?;
             let mut log = ctx.audit_log.write().await;
-            *log = merkle_domain_audit_compliance::AuditLog::new();
+            *log = match pinned {
+                Some(head) => merkle_domain_audit_compliance::AuditLog::restore_head(
+                    head.head_hash,
+                    head.head_seq,
+                ),
+                None => merkle_domain_audit_compliance::AuditLog::new(),
+            };
         }
 
         // Transition the identity aggregate to Sealed.

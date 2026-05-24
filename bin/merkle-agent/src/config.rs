@@ -461,20 +461,17 @@ fn home_dir() -> PathBuf {
 /// XDG data home — `$XDG_DATA_HOME` or `$HOME/.local/share` per
 /// <https://specifications.freedesktop.org/basedir-spec/>.
 fn xdg_data_home() -> PathBuf {
-    std::env::var("XDG_DATA_HOME")
-        .map_or_else(|_| home_dir().join(".local/share"), PathBuf::from)
+    std::env::var("XDG_DATA_HOME").map_or_else(|_| home_dir().join(".local/share"), PathBuf::from)
 }
 
 /// XDG state home — `$XDG_STATE_HOME` or `$HOME/.local/state`.
 fn xdg_state_home() -> PathBuf {
-    std::env::var("XDG_STATE_HOME")
-        .map_or_else(|_| home_dir().join(".local/state"), PathBuf::from)
+    std::env::var("XDG_STATE_HOME").map_or_else(|_| home_dir().join(".local/state"), PathBuf::from)
 }
 
 /// XDG config home — `$XDG_CONFIG_HOME` or `$HOME/.config`.
 fn xdg_config_home() -> PathBuf {
-    std::env::var("XDG_CONFIG_HOME")
-        .map_or_else(|_| home_dir().join(".config"), PathBuf::from)
+    std::env::var("XDG_CONFIG_HOME").map_or_else(|_| home_dir().join(".config"), PathBuf::from)
 }
 
 /// XDG runtime dir — `$XDG_RUNTIME_DIR` or a per-user fallback under
@@ -518,11 +515,7 @@ mod tests {
     fn default_audit_paths_land_under_xdg_state_home() {
         let log = default_audit_log_path();
         let head = default_audit_head_path();
-        assert!(
-            log.ends_with("merkle/audit.jsonl"),
-            "log={}",
-            log.display()
-        );
+        assert!(log.ends_with("merkle/audit.jsonl"), "log={}", log.display());
         assert!(
             head.ends_with("merkle/audit_head.json"),
             "head={}",
@@ -539,11 +532,7 @@ mod tests {
     #[test]
     fn default_socket_path_lands_under_xdg_runtime_dir() {
         let p = default_socket_path();
-        assert!(
-            p.ends_with("merkle/agent.sock"),
-            "socket={}",
-            p.display()
-        );
+        assert!(p.ends_with("merkle/agent.sock"), "socket={}", p.display());
         let bare = home_dir().join("run");
         assert!(
             !p.starts_with(&bare),

@@ -14,7 +14,8 @@
 //! - Metrics HTTP server: wired.
 //! - Companion Socket task: real `CompanionSocketServer` from
 //!   `merkle-adapter-companion-socket`.
-//! - MCP task: real `MerkleMcpServer` from `merkle-adapter-mcp` over stdio.
+//! - MCP: served by the standalone `merkle-mcp` binary (ADR-0024 PR5).
+//!   The agent no longer binds stdio for MCP.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,14 +25,12 @@ use merkle_adapter_companion_socket::CompanionSocketServer;
 use merkle_adapter_crypto::RustCryptoAdapter;
 use merkle_adapter_external_services::ExternalServicesAdapter;
 use merkle_adapter_keychain::{FileKeystoreAdapter, OsKeychainAdapter};
-use merkle_adapter_mcp::MerkleMcpServer;
 use merkle_adapter_oob::OobNotifierAdapter;
 use merkle_adapter_oob::fixture::FileFixtureOobNotifier;
 use merkle_adapter_sqlite::SqliteStorage;
 use merkle_application::AppContext;
 use merkle_domain_identity::VaultIdentity;
 use merkle_ports::{Crypto, ExternalServices, Keychain, OobNotifier, Storage};
-use rmcp::ServiceExt as _;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -79,16 +78,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5b. MCP server — real stdio transport
-    let mcp_shutdown = shutdown.clone();
-    let mcp_ctx = Arc::clone(&app_ctx);
-    let mcp_handle = tokio::spawn(async move {
-        if let Err(e) = mcp_task(mcp_ctx, mcp_shutdown).await {
-            tracing::error!(error = %e, "MCP task failed");
-        }
-    });
-
-    // 5c. Backup scheduler
+    // 5b. Backup scheduler
     let backup_ctx = Arc::clone(&app_ctx);
     let backup_shutdown = shutdown.clone();
     let backup_handle = tokio::spawn(async move {
@@ -97,7 +87,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5d. Chain verifier
+    // 5c. Chain verifier
     let verifier_ctx = Arc::clone(&app_ctx);
     let verifier_shutdown = shutdown.clone();
     let verifier_handle = tokio::spawn(async move {
@@ -106,7 +96,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5e. Tempfile reaper
+    // 5d. Tempfile reaper
     let reaper_ctx = Arc::clone(&app_ctx);
     let reaper_shutdown = shutdown.clone();
     let reaper_handle = tokio::spawn(async move {
@@ -115,7 +105,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5f. Idle re-lock supervisor
+    // 5e. Idle re-lock supervisor
     let idle_ctx = Arc::clone(&app_ctx);
     let idle_shutdown = shutdown.clone();
     let idle_timeout = cfg
@@ -128,7 +118,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5g. Prometheus metrics server
+    // 5f. Prometheus metrics server
     let metrics_cfg = cfg.metrics.clone();
     let metrics_shutdown = shutdown.clone();
     let metrics_handle = tokio::spawn(async move {
@@ -162,7 +152,6 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
 
     let result_handles = vec![
         wrap_join(companion_handle),
-        wrap_join(mcp_handle),
         wrap_join(backup_handle),
         wrap_join(verifier_handle),
         wrap_join(reaper_handle),
@@ -226,6 +215,15 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
     let ctx = Arc::new(AppContext::new(
         storage, keychain, crypto, oob, external, identity,
     ));
+
+    // Restore the audit chain head from the persisted PinnedHead so the first
+    // append after boot continues the globally-monotonic seq (ADR-0009 line 209).
+    // Skipping this step would cause every fresh process to retry seq=0 and
+    // collide with the genesis row on UNIQUE(audit_entries.seq).
+    ctx.restore_audit_chain()
+        .await
+        .context("failed to restore audit chain head from pinned_head")?;
+
     info!("application context ready");
     Ok(ctx)
 }
@@ -372,32 +370,6 @@ async fn companion_socket_task(
         }
         () = shutdown.cancelled() => {
             info!("companion socket task cancelled");
-        }
-    }
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// MCP task (Phase 5)
-// ---------------------------------------------------------------------------
-
-/// Run the MCP stdio server until `shutdown` fires or the MCP client disconnects.
-async fn mcp_task(ctx: Arc<AppContext>, shutdown: CancellationToken) -> anyhow::Result<()> {
-    let transport = rmcp::transport::io::stdio();
-    let server = MerkleMcpServer::new(ctx);
-
-    tokio::select! {
-        result = async {
-            server.serve(transport).await
-                .context("MCP server failed to start")?
-                .waiting().await
-                .context("MCP server exited with error")
-        } => {
-            result?;
-        }
-        () = shutdown.cancelled() => {
-            info!("MCP task cancelled");
         }
     }
 
