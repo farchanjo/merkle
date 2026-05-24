@@ -10,9 +10,14 @@ use serde::Deserialize;
 pub struct CliConfig {
     /// Path to the Companion Socket.
     ///
+    /// MUST match `merkle-agent`'s `companion_socket.path` default
+    /// (`bin/merkle-agent/src/config.rs::default_socket_path`); a
+    /// mismatch silently breaks the CLI with "agent unreachable".
+    ///
     /// Defaults to:
-    /// - macOS: `$TMPDIR/merkle/companion.sock`
-    /// - Linux: `$XDG_RUNTIME_DIR/merkle/companion.sock` or `/run/merkle/companion.sock`
+    /// - macOS: `$TMPDIR/merkle-$USER/merkle/agent.sock`
+    /// - Linux: `$XDG_RUNTIME_DIR/merkle/agent.sock`
+    ///   (fallback: `$TMPDIR/merkle-$USER/merkle/agent.sock`)
     #[serde(default)]
     pub socket_path: Option<PathBuf>,
 
@@ -75,20 +80,57 @@ fn config_path() -> PathBuf {
 }
 
 /// Platform-specific default socket path.
+///
+/// MUST stay in lock-step with `merkle-agent`'s default in
+/// `bin/merkle-agent/src/config.rs::default_socket_path`. Both functions
+/// build `<xdg_runtime_dir>/merkle/agent.sock`; the divergence (CLI used
+/// `companion.sock`; agent uses `agent.sock`) caused `merkle init` to
+/// fail with "agent unreachable" even when the agent was healthy.
 fn default_socket_path() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        // On macOS, `$TMPDIR` is a per-user temp directory.
-        let tmpdir = std::env::var("TMPDIR")
-            .map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from);
-        tmpdir.join("merkle").join("companion.sock")
+    xdg_runtime_dir().join("merkle/agent.sock")
+}
+
+/// XDG runtime dir, aligned with the agent helper of the same name.
+///
+/// Resolution order:
+/// 1. `$XDG_RUNTIME_DIR` (Linux: `/run/user/<uid>`).
+/// 2. `$TMPDIR/merkle-$USER` (macOS per-user temp; Linux fallback).
+/// 3. `/tmp/merkle-merkle` (last-resort fallback).
+fn xdg_runtime_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(p);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Linux: prefer XDG_RUNTIME_DIR, fall back to /run/merkle.
-        std::env::var("XDG_RUNTIME_DIR").map_or_else(
-            |_| PathBuf::from("/run/merkle/companion.sock"),
-            |runtime| PathBuf::from(runtime).join("merkle").join("companion.sock"),
-        )
+    let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_owned());
+    let uid = std::env::var("USER").unwrap_or_else(|_| "merkle".to_owned());
+    PathBuf::from(tmp).join(format!("merkle-{uid}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_socket_path;
+
+    // Regression guard: the CLI default MUST end in `merkle/agent.sock` —
+    // the agent binds that exact filename. A divergence (e.g. the legacy
+    // `companion.sock`) silently breaks every CLI command with the
+    // misleading "agent unreachable: client error (Connect)" message even
+    // when the agent is healthy.
+    #[test]
+    fn default_socket_filename_is_agent_sock() {
+        let p = default_socket_path();
+        assert!(
+            p.ends_with("merkle/agent.sock"),
+            "CLI default socket must end in merkle/agent.sock, got {}",
+            p.display()
+        );
+    }
+
+    #[test]
+    fn default_socket_never_uses_legacy_companion_sock() {
+        let p = default_socket_path();
+        let s = p.display().to_string();
+        assert!(
+            !s.contains("companion.sock"),
+            "regression: CLI still pointing at legacy companion.sock — {s}"
+        );
     }
 }
