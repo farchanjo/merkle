@@ -33,7 +33,7 @@ use merkle_domain_audit_compliance::{AuditEntry, AuditQuery, PinnedHead};
 use merkle_domain_backup_recovery::backup::Backup;
 use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::{Namespace, Secret};
-use merkle_ports::{SecretFilter, Storage, StorageError};
+use merkle_ports::{RankedSearchParams, RankedSearchResult, SecretFilter, Storage, StorageError};
 use merkle_types::{Handle, NamespaceId, NamespaceLabel, SecretId};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -136,6 +136,20 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self))]
     async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), StorageError> {
         secrets::delete_secret(&self.pool, secret_id).await
+    }
+
+    #[instrument(skip(self, params), fields(fts_query = %params.fts_query, limit = params.limit, offset = params.offset))]
+    async fn search_secrets(
+        &self,
+        namespace_id: &NamespaceId,
+        params: RankedSearchParams,
+    ) -> Result<RankedSearchResult, StorageError> {
+        secrets::search_secrets(&self.pool, namespace_id, params).await
+    }
+
+    #[instrument(skip(self))]
+    async fn check_fts5_consistency(&self) -> Result<(), StorageError> {
+        secrets::check_fts5_consistency(&self.pool).await
     }
 
     #[instrument(skip(self, ns), fields(label = %ns.label))]

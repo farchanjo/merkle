@@ -1,7 +1,11 @@
-//! `put_secret` / `get_secret_by_handle` / `list_secrets` / `delete_secret`.
+//! `put_secret` / `get_secret_by_handle` / `list_secrets` / `delete_secret`
+//! / `search_secrets` / `check_fts5_consistency`.
 
 use merkle_domain_secret_storage::{Secret, secret_version::SecretVersion};
-use merkle_ports::{SecretFilter, StorageError};
+use merkle_ports::{
+    RankedSearchParams, RankedSearchResult, RankedSecret, SearchHighlight, SecretFilter,
+    StorageError,
+};
 use merkle_types::{Handle, NamespaceId, SecretId};
 use sqlx::{Row, SqlitePool};
 
@@ -55,11 +59,30 @@ async fn upsert_version_with_parent(
 // Public operations
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Flatten a JSON tags array `[{"key":"env","value":"prod"},...]`
+/// to the space-separated `"env:prod ..."` string stored in `tags_text`.
+fn flatten_tags_json(tags_json: &str) -> String {
+    let tags: Vec<merkle_types::Tag> = serde_json::from_str(tags_json).unwrap_or_default();
+    tags.iter()
+        .map(|t| format!("{}:{}", t.key, t.value))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+// ---------------------------------------------------------------------------
+// Public operations
+// ---------------------------------------------------------------------------
+
 /// Upsert a [`Secret`] and all its [`SecretVersion`]s atomically.
 pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(), StorageError> {
     let id_blob = id_to_blob!(secret.id);
     let ns_blob = id_to_blob!(secret.namespace_id);
     let handle_str = secret.handle.to_string();
+    let name_str = secret.handle.secret_name().to_string();
     let category_str = secret.category.to_string();
     let sensitivity_str = secret.sensitivity.to_string();
     let public_metadata_json = serde_json::to_string(&secret.public_metadata)
@@ -68,6 +91,13 @@ pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(),
     let tags_json = serde_json::to_string(&secret.tags)
         .map_err(AdapterError::Json)
         .map_err(StorageError::from)?;
+    let tags_text = flatten_tags_json(&tags_json);
+    let description = secret
+        .public_metadata
+        .description
+        .as_deref()
+        .unwrap_or("")
+        .to_owned();
     let current_version_id_blob = uuid_to_blob(secret.current_version_id().inner());
     let created_at = secret.created_at.to_string();
 
@@ -79,23 +109,30 @@ pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(),
 
     sqlx::query(
         r"INSERT INTO secrets
-            (id, namespace_id, handle, category, sensitivity,
-             public_metadata_json, tags_json, current_version_id, created_at)
-          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+            (id, namespace_id, handle, name, category, sensitivity,
+             public_metadata_json, tags_json, tags_text, description,
+             current_version_id, created_at)
+          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
           ON CONFLICT(id) DO UPDATE SET
               handle               = excluded.handle,
+              name                 = excluded.name,
               sensitivity          = excluded.sensitivity,
               public_metadata_json = excluded.public_metadata_json,
               tags_json            = excluded.tags_json,
+              tags_text            = excluded.tags_text,
+              description          = excluded.description,
               current_version_id   = excluded.current_version_id",
     )
     .bind(&id_blob)
     .bind(&ns_blob)
     .bind(&handle_str)
+    .bind(&name_str)
     .bind(&category_str)
     .bind(&sensitivity_str)
     .bind(&public_metadata_json)
     .bind(&tags_json)
+    .bind(&tags_text)
+    .bind(&description)
     .bind(&current_version_id_blob)
     .bind(&created_at)
     .execute(&mut *tx)
@@ -286,6 +323,223 @@ pub(crate) async fn delete_secret(
 
     if result.rows_affected() == 0 {
         return Err(StorageError::NotFound);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Ranked BM25 search (ADR-0027)
+// ---------------------------------------------------------------------------
+
+/// Ranked query template per ADR-0027 §Index Schema.
+///
+/// Weight vector `(10.0, 5.0, 3.0, 2.0, 1.0)` maps positionally to the
+/// `CREATE VIRTUAL TABLE secrets_fts` column declaration order:
+///   name (pos 0, weight 10.0), tags_text (pos 1, weight 5.0),
+///   description (pos 2, weight 3.0), category (pos 3, weight 2.0),
+///   namespace_label (pos 4, weight 1.0).
+///
+/// `ORDER BY bm25_score ASC` because SQLite BM25 returns negative values;
+/// most-negative = best match.
+const RANKED_SQL: &str = r"
+    SELECT
+        s.id, s.namespace_id, s.handle, s.category, s.sensitivity,
+        s.public_metadata_json, s.tags_json, s.current_version_id, s.created_at,
+        bm25(secrets_fts, 10.0, 5.0, 3.0, 2.0, 1.0)     AS bm25_score,
+        highlight(secrets_fts, 0, '<b>', '</b>')           AS hl_name,
+        highlight(secrets_fts, 1, '<b>', '</b>')           AS hl_tags,
+        snippet(secrets_fts, 2, '<b>', '</b>', '...', 20) AS hl_description,
+        highlight(secrets_fts, 3, '<b>', '</b>')           AS hl_category,
+        highlight(secrets_fts, 4, '<b>', '</b>')           AS hl_namespace_label
+    FROM secrets s
+    JOIN secrets_fts f ON f.rowid = s.rowid
+    WHERE
+        s.namespace_id = ?1
+        AND secrets_fts MATCH ?2
+    ORDER BY bm25_score ASC
+    LIMIT ?3
+    OFFSET ?4
+";
+
+/// Count query (for `total` and `has_more`) — same filter, no projection.
+const COUNT_SQL: &str = r"
+    SELECT COUNT(*) AS cnt
+    FROM secrets s
+    JOIN secrets_fts f ON f.rowid = s.rowid
+    WHERE
+        s.namespace_id = ?1
+        AND secrets_fts MATCH ?2
+";
+
+/// Build the highlight list for a single result row; skips empty snippets.
+fn build_highlights(row: &sqlx::sqlite::SqliteRow) -> Vec<SearchHighlight> {
+    let fields = [
+        ("name", "hl_name"),
+        ("tags", "hl_tags"),
+        ("description", "hl_description"),
+        ("category", "hl_category"),
+        ("namespace_label", "hl_namespace_label"),
+    ];
+    fields
+        .iter()
+        .filter_map(|(field, col)| {
+            let snippet: Option<String> = row.try_get(*col).ok()?;
+            let snippet = snippet?;
+            if snippet.is_empty() {
+                None
+            } else {
+                Some(SearchHighlight {
+                    field: (*field).to_owned(),
+                    snippet,
+                })
+            }
+        })
+        .collect()
+}
+
+/// Execute a weighted BM25 ranked FTS5 search (ADR-0027).
+pub(crate) async fn search_secrets(
+    pool: &SqlitePool,
+    namespace_id: &NamespaceId,
+    params: RankedSearchParams,
+) -> Result<RankedSearchResult, StorageError> {
+    let ns_blob = id_to_blob!(namespace_id);
+
+    // Count total matches for has_more / total fields.
+    let count_row = sqlx::query(COUNT_SQL)
+        .bind(&ns_blob)
+        .bind(&params.fts_query)
+        .fetch_one(pool)
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let total: i64 = count_row
+        .try_get("cnt")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let total = u32::try_from(total).unwrap_or(u32::MAX);
+
+    let has_more = total > params.offset.saturating_add(params.limit);
+
+    let rows = sqlx::query(RANKED_SQL)
+        .bind(&ns_blob)
+        .bind(&params.fts_query)
+        .bind(i64::from(params.limit))
+        .bind(i64::from(params.offset))
+        .fetch_all(pool)
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    for (page_idx, row) in rows.iter().enumerate() {
+        let id_bytes: Vec<u8> = row
+            .try_get("id")
+            .map_err(AdapterError::Sqlx)
+            .map_err(StorageError::from)?;
+        let versions = load_versions_for_secret(pool, &id_bytes).await?;
+        let secret = row_to_secret(row, &versions).map_err(StorageError::from)?;
+
+        let score: f64 = row
+            .try_get("bm25_score")
+            .map_err(AdapterError::Sqlx)
+            .map_err(StorageError::from)?;
+
+        let highlights = build_highlights(row);
+
+        items.push(RankedSecret {
+            secret,
+            score,
+            bm25_rank: u32::try_from(page_idx + 1).unwrap_or(u32::MAX),
+            highlights,
+        });
+    }
+
+    Ok(RankedSearchResult {
+        items,
+        total,
+        has_more,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// FTS5 consistency check (ADR-0027 doctor)
+// ---------------------------------------------------------------------------
+
+/// Authoritative column list per ADR-0027 §Index Schema (declaration order).
+/// `tags_text` is the materialized column name that maps to the `tags` weight
+/// position (5.0). Using a real column name keeps content table back-reads valid.
+const EXPECTED_FTS5_COLUMNS: [&str; 5] = [
+    "name",
+    "tags_text",
+    "description",
+    "category",
+    "namespace_label",
+];
+
+/// Check FTS5 schema consistency: column list, orphan detection, privacy audit.
+pub(crate) async fn check_fts5_consistency(pool: &SqlitePool) -> Result<(), StorageError> {
+    // 1. Validate column list against the authoritative spec.
+    let col_rows = sqlx::query("SELECT name FROM pragma_table_info('secrets_fts') ORDER BY cid")
+        .fetch_all(pool)
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    let actual_cols: Vec<String> = col_rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+
+    let expected: Vec<String> = EXPECTED_FTS5_COLUMNS
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+
+    if actual_cols != expected {
+        return Err(StorageError::Fts5Inconsistent(format!(
+            "column mismatch: expected {expected:?}, got {actual_cols:?}"
+        )));
+    }
+
+    // 2. Ensure every secret has a matching FTS5 row.
+    let orphan_row = sqlx::query(
+        "SELECT COUNT(*) AS cnt FROM secrets s
+         WHERE NOT EXISTS (SELECT 1 FROM secrets_fts f WHERE f.rowid = s.rowid)",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+    let orphan_cnt: i64 = orphan_row
+        .try_get("cnt")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    if orphan_cnt > 0 {
+        return Err(StorageError::Fts5Inconsistent(format!(
+            "{orphan_cnt} secret(s) have no matching FTS5 row"
+        )));
+    }
+
+    // 3. Privacy audit: the FTS5 shadow content table only stores tokens; the
+    //    content=secrets directive means original text is read from the secrets
+    //    table at query time. There is no separate plaintext stored in FTS5
+    //    shadow tables for a content table — only term/rowid mappings.
+    //    We additionally assert no private column names appear as FTS5 columns.
+    let forbidden = [
+        "private_blob",
+        "ciphertext",
+        "nonce",
+        "aead_tag",
+        "associated_data",
+    ];
+    for col in &actual_cols {
+        if forbidden.contains(&col.as_str()) {
+            return Err(StorageError::Fts5Inconsistent(format!(
+                "private field '{col}' is indexed in secrets_fts (privacy violation)"
+            )));
+        }
     }
 
     Ok(())
