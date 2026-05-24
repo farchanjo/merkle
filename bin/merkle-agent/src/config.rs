@@ -146,7 +146,7 @@ impl KeystoreConfig {
         if let Ok(env_path) = std::env::var("MERKLE_KEYSTORE_PATH") {
             return PathBuf::from(env_path);
         }
-        dirs_base().join("share/merkle/keystore.age")
+        xdg_data_home().join("merkle/keystore.age")
     }
 }
 
@@ -169,16 +169,16 @@ pub struct StorageConfig {
 fn default_database_url() -> String {
     format!(
         "sqlite://{}",
-        dirs_base().join("share/merkle/vault.db").display()
+        xdg_data_home().join("merkle/vault.db").display()
     )
 }
 
 fn default_audit_log_path() -> PathBuf {
-    dirs_base().join("state/merkle/audit.jsonl")
+    xdg_state_home().join("merkle/audit.jsonl")
 }
 
 fn default_audit_head_path() -> PathBuf {
-    dirs_base().join("state/merkle/audit_head.json")
+    xdg_state_home().join("merkle/audit_head.json")
 }
 
 impl Default for StorageConfig {
@@ -204,7 +204,7 @@ pub struct CompanionSocketConfig {
 }
 
 fn default_socket_path() -> PathBuf {
-    dirs_base().join("run/merkle/agent.sock")
+    xdg_runtime_dir().join("merkle/agent.sock")
 }
 
 fn default_max_connections() -> u32 {
@@ -415,7 +415,7 @@ impl Default for LoggingConfig {
 /// cannot be resolved.
 pub fn load() -> Result<AgentConfig, ::config::ConfigError> {
     let config_path = std::env::var("MERKLE_CONFIG").map_or_else(
-        |_| dirs_base().join("config/merkle/config.toml"),
+        |_| xdg_config_home().join("merkle/config.toml"),
         PathBuf::from,
     );
 
@@ -453,9 +453,39 @@ pub fn load_from_str(toml: &str) -> Result<AgentConfig, ::config::ConfigError> {
     cfg.try_deserialize()
 }
 
-/// Return the XDG / platform base directory (`$HOME` on Unix).
-fn dirs_base() -> PathBuf {
+/// `$HOME` (or `.` when unset).
+fn home_dir() -> PathBuf {
     std::env::var("HOME").map_or_else(|_| PathBuf::from("."), PathBuf::from)
+}
+
+/// XDG data home — `$XDG_DATA_HOME` or `$HOME/.local/share` per
+/// <https://specifications.freedesktop.org/basedir-spec/>.
+fn xdg_data_home() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map_or_else(|_| home_dir().join(".local/share"), PathBuf::from)
+}
+
+/// XDG state home — `$XDG_STATE_HOME` or `$HOME/.local/state`.
+fn xdg_state_home() -> PathBuf {
+    std::env::var("XDG_STATE_HOME")
+        .map_or_else(|_| home_dir().join(".local/state"), PathBuf::from)
+}
+
+/// XDG config home — `$XDG_CONFIG_HOME` or `$HOME/.config`.
+fn xdg_config_home() -> PathBuf {
+    std::env::var("XDG_CONFIG_HOME")
+        .map_or_else(|_| home_dir().join(".config"), PathBuf::from)
+}
+
+/// XDG runtime dir — `$XDG_RUNTIME_DIR` or a per-user fallback under
+/// `$TMPDIR`/`/tmp`. Used for the Companion Socket (UDS).
+fn xdg_runtime_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(p);
+    }
+    let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_owned());
+    let uid = std::env::var("USER").unwrap_or_else(|_| "merkle".to_owned());
+    PathBuf::from(tmp).join(format!("merkle-{uid}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +495,62 @@ fn dirs_base() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_database_url_lands_under_xdg_data_home() {
+        // Spec: docstring promises `~/.local/share/merkle/vault.db`. The
+        // previous implementation produced `~/share/merkle/...` — bug fix
+        // regression guard.
+        let url = default_database_url();
+        assert!(url.starts_with("sqlite://"), "url={url}");
+        let expected_suffix = "/merkle/vault.db";
+        assert!(url.ends_with(expected_suffix), "url={url}");
+        // Must include the `.local/share` or `XDG_DATA_HOME` segment — never
+        // the bare `~/share/...` produced by the old `dirs_base()`.
+        let raw_share = format!("{}/share/merkle/", home_dir().display());
+        assert!(
+            !url.contains(&raw_share),
+            "regression: default url falls back to bare $HOME/share/merkle ({url})"
+        );
+    }
+
+    #[test]
+    fn default_audit_paths_land_under_xdg_state_home() {
+        let log = default_audit_log_path();
+        let head = default_audit_head_path();
+        assert!(
+            log.ends_with("merkle/audit.jsonl"),
+            "log={}",
+            log.display()
+        );
+        assert!(
+            head.ends_with("merkle/audit_head.json"),
+            "head={}",
+            head.display()
+        );
+        let bare = home_dir().join("state");
+        assert!(
+            !log.starts_with(&bare),
+            "regression: audit log under bare $HOME/state ({})",
+            log.display()
+        );
+    }
+
+    #[test]
+    fn default_socket_path_lands_under_xdg_runtime_dir() {
+        let p = default_socket_path();
+        assert!(
+            p.ends_with("merkle/agent.sock"),
+            "socket={}",
+            p.display()
+        );
+        let bare = home_dir().join("run");
+        assert!(
+            !p.starts_with(&bare),
+            "regression: socket under bare $HOME/run ({})",
+            p.display()
+        );
+    }
 
     #[test]
     fn default_config_is_valid() {

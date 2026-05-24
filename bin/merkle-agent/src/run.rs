@@ -186,10 +186,19 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
         database_url = %cfg.storage.database_url,
         "opening sqlite storage"
     );
+    ensure_parent_dir(&cfg.storage.database_url).await?;
+    ensure_path_parent(&cfg.storage.audit_log_path).await?;
+    ensure_path_parent(&cfg.storage.audit_head_path).await?;
+    ensure_path_parent(&cfg.companion_socket.path).await?;
     let storage: Arc<dyn Storage> = Arc::new(
         SqliteStorage::open(&cfg.storage.database_url)
             .await
-            .context("failed to open SQLite database")?,
+            .with_context(|| {
+                format!(
+                    "failed to open SQLite database at {}",
+                    cfg.storage.database_url
+                )
+            })?,
     );
     info!("sqlite storage ready");
 
@@ -385,6 +394,41 @@ fn wrap_join(handle: tokio::task::JoinHandle<()>) -> tokio::task::JoinHandle<any
     tokio::spawn(async move { handle.await.map_err(anyhow::Error::from) })
 }
 
+/// Pre-create the parent directory of a generic filesystem path.
+async fn ensure_path_parent(path: &std::path::Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create parent dir {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+/// Ensure the parent directory of a `sqlite://...` URL or filesystem path
+/// exists. SQLite refuses to create the database file when the directory
+/// tree is missing — pre-creating it gives a first-run-friendly default.
+async fn ensure_parent_dir(database_url: &str) -> anyhow::Result<()> {
+    let path_str = database_url
+        .strip_prefix("sqlite://")
+        .or_else(|| database_url.strip_prefix("sqlite:"))
+        .unwrap_or(database_url);
+    // sqlite::memory: and ?mode=memory are no-ops.
+    if path_str.contains(":memory:") || path_str.starts_with("file::memory:") {
+        return Ok(());
+    }
+    let path = std::path::Path::new(path_str);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create parent dir {}", parent.display()))?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Initial VaultIdentity builder (Phase 4 stub)
 // ---------------------------------------------------------------------------
@@ -408,4 +452,42 @@ fn build_initial_identity() -> VaultIdentity {
     );
 
     VaultIdentity::new(keychain_ref, recovery_pubkey)
+}
+
+#[cfg(test)]
+mod ensure_parent_dir_tests {
+    use super::{ensure_parent_dir, ensure_path_parent};
+
+    #[tokio::test]
+    async fn ensure_path_parent_creates_missing_chain() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nested = tmp.path().join("a/b/c/audit.jsonl");
+        ensure_path_parent(&nested).await.expect("ensure parent");
+        assert!(nested.parent().expect("parent").is_dir());
+    }
+
+    #[tokio::test]
+    async fn creates_missing_parent_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nested = tmp.path().join("a/b/c/vault.db");
+        let url = format!("sqlite://{}", nested.display());
+        ensure_parent_dir(&url).await.expect("ensure parent");
+        assert!(nested.parent().expect("parent").is_dir());
+    }
+
+    #[tokio::test]
+    async fn is_idempotent_when_parent_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let url = format!("sqlite://{}/vault.db", tmp.path().display());
+        ensure_parent_dir(&url).await.expect("first call");
+        ensure_parent_dir(&url).await.expect("second call");
+    }
+
+    #[tokio::test]
+    async fn memory_url_is_noop() {
+        ensure_parent_dir("sqlite::memory:").await.expect("memory");
+        ensure_parent_dir("file::memory:?cache=shared")
+            .await
+            .expect("file memory");
+    }
 }
