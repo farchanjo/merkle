@@ -1,4 +1,8 @@
-//! `BindNamespaceCommand` — create or bind a namespace to a working directory.
+//! `BindNamespaceCommand` — get-or-create a namespace and bind it to a session.
+//!
+//! Per ADR-0026 the command is idempotent: when the label already exists in
+//! storage the existing namespace is resolved and returned without a new INSERT
+//! or audit entry. Only the first bind for a given label writes to storage.
 
 use merkle_domain_secret_storage::namespace::Namespace as NsDomain;
 use merkle_types::{AuditOp, AuditOutcome, NamespaceId, NamespaceLabel};
@@ -30,7 +34,11 @@ pub struct BindNamespaceOutput {
 }
 
 impl BindNamespaceCommand {
-    /// Execute bind-namespace.
+    /// Execute bind-namespace (idempotent get-or-create, ADR-0026).
+    ///
+    /// Returns the existing namespace when the label is already present in
+    /// storage — no INSERT, no audit entry. Appends an audit entry only on
+    /// first creation.
     ///
     /// # Errors
     ///
@@ -44,16 +52,26 @@ impl BindNamespaceCommand {
             return Err(AppError::InvalidInput("dek_version must be >= 1".into()));
         }
 
-        info!(label = %self.label, "bind_namespace: creating namespace");
+        // Resolve existing namespace; skip INSERT + audit on re-bind.
+        if let Some(existing) = ctx.storage.get_namespace_by_label(&self.label).await? {
+            info!(
+                namespace_id = %existing.id,
+                label = %self.label,
+                "bind_namespace: resolved existing namespace (idempotent)"
+            );
+            return Ok(BindNamespaceOutput {
+                namespace_id: existing.id,
+                label: existing.label,
+            });
+        }
 
+        // First bind for this label: create, persist, and audit.
         let mut ns = NsDomain::new(self.label.clone(), self.dek_version);
         ns.cwd_hash = self.cwd_hash.clone();
-
         let ns_id = ns.id;
 
         ctx.storage.put_namespace(&ns).await?;
 
-        // Audit.
         let hmac_key = ctx.require_hmac_key().await?;
         let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
@@ -68,7 +86,7 @@ impl BindNamespaceCommand {
         ctx.storage.append_audit_entry(&entry).await?;
         ctx.storage.update_pinned_head(&pinned).await?;
 
-        info!(namespace_id = %ns_id, label = %self.label, "bind_namespace: namespace bound");
+        info!(namespace_id = %ns_id, label = %self.label, "bind_namespace: namespace created and bound");
         Ok(BindNamespaceOutput {
             namespace_id: ns_id,
             label: self.label.clone(),

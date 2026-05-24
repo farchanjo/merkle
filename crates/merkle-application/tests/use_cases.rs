@@ -1171,3 +1171,111 @@ async fn query_audit_verify_chain_returns_false_on_tampered_chain() {
          entries than are present (truncation detected)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0026 regression tests — idempotent bind + get-or-create
+// ---------------------------------------------------------------------------
+
+/// REGRESSION (ADR-0026 §Validation #2): binding the same label twice via
+/// `BindNamespaceCommand` must return the same `namespace_id` on both calls
+/// and must NOT insert a second row in the `namespaces` table.
+///
+/// Before the fix, the second `execute` hit the SQLite UNIQUE constraint on
+/// `label` and returned `AppError::Storage`, poisoning the session.
+#[tokio::test]
+async fn bind_namespace_same_label_twice_is_idempotent() {
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    let label: NamespaceLabel = "acme".parse().expect("valid label");
+
+    // First bind — must succeed and create the namespace.
+    let first = BindNamespaceCommand {
+        label: label.clone(),
+        cwd_hash: None,
+        dek_version: 1,
+    }
+    .execute(&ctx)
+    .await
+    .expect("first bind must succeed");
+
+    // Second bind with the same label — must also succeed and resolve the
+    // existing namespace, NOT insert a duplicate row.
+    let second = BindNamespaceCommand {
+        label: label.clone(),
+        cwd_hash: None,
+        dek_version: 1,
+    }
+    .execute(&ctx)
+    .await
+    .expect("second bind with same label must succeed (idempotent, ADR-0026)");
+
+    // Both calls must resolve to the identical namespace_id.
+    assert_eq!(
+        first.namespace_id, second.namespace_id,
+        "idempotent bind must return the same namespace_id on both calls"
+    );
+
+    // Exactly one row must exist in storage for this label.
+    let namespaces = ctx
+        .storage
+        .list_namespaces()
+        .await
+        .expect("list_namespaces must succeed");
+    let acme_rows: Vec<_> = namespaces
+        .iter()
+        .filter(|ns| ns.label.as_str() == "acme")
+        .collect();
+    assert_eq!(
+        acme_rows.len(),
+        1,
+        "exactly one namespace row must exist for label 'acme'; got {} (ADR-0026: no duplicate insert)",
+        acme_rows.len()
+    );
+}
+
+/// REGRESSION (ADR-0026 §Validation #2, audit aspect): the second bind of an
+/// existing label must NOT append a new audit entry. Only the first bind writes
+/// an audit entry.
+#[tokio::test]
+async fn bind_namespace_second_bind_does_not_emit_audit_entry() {
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    let label: NamespaceLabel = "audit-idempotent".parse().expect("valid label");
+
+    let bind = |l: NamespaceLabel| {
+        let ctx_ref = &ctx;
+        async move {
+            BindNamespaceCommand {
+                label: l,
+                cwd_hash: None,
+                dek_version: 1,
+            }
+            .execute(ctx_ref)
+            .await
+            .expect("bind must succeed")
+        }
+    };
+
+    bind(label.clone()).await; // first bind — emits audit entry
+    bind(label.clone()).await; // second bind — must NOT emit another audit entry
+
+    let query = QueryAuditQuery {
+        filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: false,
+    };
+    let out = query.execute(&ctx).await.expect("query_audit");
+
+    let bind_entries: Vec<_> = out
+        .entries
+        .iter()
+        .filter(|e| e.op == merkle_types::AuditOp::Bind)
+        .collect();
+    assert_eq!(
+        bind_entries.len(),
+        1,
+        "expected exactly 1 Bind audit entry (re-bind must not emit a second entry); got {}",
+        bind_entries.len()
+    );
+}
