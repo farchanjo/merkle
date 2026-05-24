@@ -102,6 +102,18 @@ impl DoctorQuery {
             detail: None,
         });
 
+        // Check 5: FTS5 schema consistency (ADR-0027).
+        let fts5_result = ctx.storage.check_fts5_consistency().await;
+        let fts5_ok = fts5_result.is_ok();
+        let fts5_detail = fts5_result.as_ref().err().map(ToString::to_string);
+        checks.push(DoctorCheckResult {
+            name: "fts5_consistency".into(),
+            ok: fts5_ok,
+            detail: fts5_detail.or_else(|| {
+                Some("columns: name, tags, description, category, namespace_label; weights: 10.0, 5.0, 3.0, 2.0, 1.0".into())
+            }),
+        });
+
         let all_ok = checks.iter().all(|c| c.ok);
 
         info!(
