@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- LaunchAgent — per-user (~/Library/LaunchAgents/).
+       For a system-wide daemon, install under /Library/LaunchDaemons/
+       and add <UserName>root</UserName> + adjust log paths. -->
+
+  <key>Label</key>
+  <string>dev.fapp.merkle.agent</string>
+
+  <!-- Wrapper that loads MERKLE_KEYSTORE_PASSPHRASE from the macOS
+       login Keychain (service dev.fapp.merkle.launchd, account passphrase)
+       before exec'ing the agent. Keeps the passphrase out of this plist. -->
+  <key>Program</key>
+  <string>/usr/local/bin/merkle-agent-launchd</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart on crash, but not on clean SIGTERM exit. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>ProcessType</key>
+  <string>Adaptive</string>
+
+  <!-- Log files under user-scoped ~/Library/Logs (created on first run).
+       Replace $HOME segment when installing for a different user. -->
+  <key>StandardOutPath</key>
+  <string>/Users/REPLACE_WITH_USER/Library/Logs/merkle-agent.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/REPLACE_WITH_USER/Library/Logs/merkle-agent.err.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/REPLACE_WITH_USER</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MERKLE_LOG</key>
+    <string>info</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>2048</integer>
+  </dict>
+</dict>
+</plist>

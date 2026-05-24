@@ -1,0 +1,41 @@
+#!/bin/sh
+# merkle-agent-launchd — launchd wrapper for /usr/local/bin/merkle-agent.
+#
+# Reads MERKLE_KEYSTORE_PASSPHRASE from the macOS login Keychain
+# (service: dev.fapp.merkle.launchd, account: passphrase) and exec's
+# the vault agent. Avoids plain-text secrets in the LaunchAgent plist.
+#
+# Install (after deploying merkle-agent per project CLAUDE.md):
+#   sudo install -m 755 -o root -g wheel \
+#     deploy/launchd/merkle-agent-launchd /usr/local/bin/merkle-agent-launchd
+#
+# Provision passphrase once (interactive — login keychain unlock required):
+#   security add-generic-password \
+#     -s 'dev.fapp.merkle.launchd' -a 'passphrase' \
+#     -w '<the-keystore-passphrase>' -U
+#
+# Update passphrase: same command with `-U`.
+# Remove:
+#   security delete-generic-password -s 'dev.fapp.merkle.launchd' -a 'passphrase'
+#
+# Exit codes:
+#   0   — agent exited cleanly (SIGTERM); launchd KeepAlive will NOT respawn.
+#   1+  — keychain fetch failed OR agent crashed; KeepAlive respawns after ThrottleInterval.
+
+set -eu
+
+PASS="$(/usr/bin/security find-generic-password \
+  -s 'dev.fapp.merkle.launchd' \
+  -a 'passphrase' \
+  -w 2>/dev/null || true)"
+
+if [ -z "$PASS" ]; then
+  echo "merkle-agent-launchd: keychain entry dev.fapp.merkle.launchd/passphrase not found" >&2
+  echo "  provision via: security add-generic-password -s 'dev.fapp.merkle.launchd' -a 'passphrase' -w '<pass>' -U" >&2
+  exit 1
+fi
+
+export MERKLE_KEYSTORE_PASSPHRASE="$PASS"
+export MERKLE_LOG="${MERKLE_LOG:-info}"
+
+exec /usr/local/bin/merkle-agent
