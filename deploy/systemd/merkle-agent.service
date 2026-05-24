@@ -1,0 +1,63 @@
+[Unit]
+Description=Merkle Vault Agent
+Documentation=https://github.com/farchanjo/mcp-vault
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/merkle-agent
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+
+# Runtime configuration — override in /etc/merkle/config.toml.
+Environment="MERKLE_CONFIG=/etc/merkle/config.toml"
+Environment="MERKLE_LOG=info"
+Environment="RUST_LOG=merkle_agent=info,merkle_application=info"
+
+# Drop privileges — create the merkle user/group before installing.
+User=merkle
+Group=merkle
+
+# Filesystem access — /var/lib/merkle holds the SQLite database and
+# blob store; /run/merkle holds the companion Unix socket.
+ReadWritePaths=/var/lib/merkle /run/merkle
+StateDirectory=merkle
+RuntimeDirectory=merkle
+RuntimeDirectoryMode=0750
+LogsDirectory=merkle
+CacheDirectory=merkle
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+# Allow network access for SSH bridge and HTTP bridge commands.
+IPAddressDeny=none
+
+# Capability restrictions — the agent does not need any elevated caps.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

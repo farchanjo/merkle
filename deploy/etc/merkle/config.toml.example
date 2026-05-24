@@ -1,0 +1,100 @@
+# merkle-agent — production configuration example
+#
+# Copy to /etc/merkle/config.toml (Linux / macOS system-wide install)
+# or to %ProgramFiles%\merkle\config.toml (Windows).
+#
+# All values shown here are the compiled-in defaults unless noted.
+# Comment out any line to fall back to the default.
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+[database]
+# SQLite database file path.
+# - Linux:   /var/lib/merkle/vault.db
+# - macOS:   /usr/local/var/merkle/vault.db
+# - Windows: C:\ProgramData\merkle\vault.db
+path = "/var/lib/merkle/vault.db"
+
+# Connection pool size. For most single-user installs 1 is sufficient.
+pool_size = 1
+
+# WAL journal mode improves concurrent read performance. Recommended.
+journal_mode = "wal"
+
+# ---------------------------------------------------------------------------
+# Agent HTTP / Companion Socket
+# ---------------------------------------------------------------------------
+
+[agent]
+# Unix domain socket path for the Companion Socket (Linux/macOS).
+# The socket is created at runtime; the directory must be writable by the
+# merkle user/group. Set to empty to disable the Companion Socket.
+companion_socket = "/run/merkle/companion.sock"
+
+# Bind address for the optional HTTP debug API.
+# Disable in production by setting to an empty string.
+# http_bind = "127.0.0.1:7878"
+http_bind = ""
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+
+[security]
+# Security profile: relaxed | balanced | paranoid
+# - relaxed:  suitable for development and single-user desktops.
+# - balanced: recommended for team / CI installs (default).
+# - paranoid: enforces OOB confirmation for all sensitive operations;
+#             requires companion device pairing.
+profile = "balanced"
+
+# Maximum age (seconds) of an MCP session token before forced re-auth.
+# 0 = no expiry (not recommended in production).
+session_token_ttl_secs = 3600
+
+# ---------------------------------------------------------------------------
+# SSH Bridge
+# ---------------------------------------------------------------------------
+
+[ssh]
+# Path to the system SSH binary used for port-forward subprocess (ADR-0023).
+# Defaults to the first `ssh` found on PATH.
+# ssh_binary = "/usr/bin/ssh"
+
+# Known-hosts mode: strict | accept-new | no-strict
+# - strict:     reject unknown hosts (recommended for production).
+# - accept-new: add new hosts automatically on first connect.
+# - no-strict:  disable host key checking (development only).
+known_hosts_mode = "strict"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+[log]
+# Log level: error | warn | info | debug | trace
+level = "info"
+
+# Log format: pretty | json
+# Use json for log aggregators (Loki, Splunk, CloudWatch).
+format = "pretty"
+
+# ---------------------------------------------------------------------------
+# Backup
+# ---------------------------------------------------------------------------
+
+[backup]
+# Anacron-style backup trigger (ADR-0010).
+# Maximum interval between backups in hours (0 = disable).
+max_interval_hours = 24
+
+# Number of backup versions to retain (ADR-0014).
+retain_count = 3
+
+# Backup destination directory.
+# Linux:   /var/lib/merkle/backups
+# macOS:   /usr/local/var/merkle/backups
+# Windows: C:\ProgramData\merkle\backups
+destination = "/var/lib/merkle/backups"

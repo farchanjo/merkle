@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WinSW (Windows Service Wrapper) configuration for merkle-agent.
+  https://github.com/winsw/winsw
+
+  Installation steps:
+    1. Download winsw.exe and rename to merkle-agent-service.exe
+    2. Place merkle-agent-service.exe and this file in the same directory
+       as merkle-agent.exe (e.g. C:\Program Files\merkle)
+    3. Run as Administrator: merkle-agent-service.exe install
+    4. Start the service:    merkle-agent-service.exe start
+    5. Verify status:        merkle-agent-service.exe status
+    6. To uninstall:         merkle-agent-service.exe uninstall
+
+  Log files are written to the directory specified by <logpath>.
+-->
+<service>
+
+    <!-- Service identity -->
+    <id>MerkleAgent</id>
+    <name>Merkle Vault Agent</name>
+    <description>
+        Merkle Vault Agent — MCP-compatible vault agent that mediates access
+        to secrets, SSH keys, and HTTP credentials for LLM callers.
+    </description>
+
+    <!-- Executable and working directory.
+         Adjust to the actual installation path if different. -->
+    <executable>%BASE%\merkle-agent.exe</executable>
+    <startarguments></startarguments>
+
+    <!-- Working directory for the agent process. -->
+    <workingdirectory>%BASE%</workingdirectory>
+
+    <!-- Environment variables injected into the agent process. -->
+    <env name="MERKLE_CONFIG" value="%BASE%\config.toml"/>
+    <env name="MERKLE_LOG" value="info"/>
+    <env name="RUST_LOG" value="merkle_agent=info,merkle_application=info"/>
+
+    <!-- Log rotation: roll logs daily, keep last 7. -->
+    <log mode="roll-by-time">
+        <pattern>yyyyMMdd</pattern>
+        <autoRollAtTime>00:00:00</autoRollAtTime>
+        <zipOlderThanNumDays>7</zipOlderThanNumDays>
+    </log>
+
+    <logpath>%BASE%\logs</logpath>
+
+    <!-- Restart on failure with a 5-second delay. -->
+    <onfailure action="restart" delay="5 sec"/>
+    <onfailure action="restart" delay="10 sec"/>
+    <onfailure action="none"/>
+
+    <!-- Graceful shutdown: send Ctrl+C first, then force-kill after 30s. -->
+    <stopparentprocessfirst>true</stopparentprocessfirst>
+    <stoptimeout>30 sec</stoptimeout>
+
+    <!-- Delay service start by 10 seconds after Windows boot to allow
+         dependent services (network, keychain) to come up. -->
+    <delayedAutoStart>true</delayedAutoStart>
+
+    <!-- Service account.
+         Default: LocalService (no network access).
+         For SSH bridge functionality switch to a dedicated service account
+         with the SeServiceLogonRight and appropriate network permissions. -->
+    <!--
+    <serviceaccount>
+        <domain>.\</domain>
+        <user>merkle-svc</user>
+        <password>REPLACE_WITH_ACTUAL_PASSWORD</password>
+        <allowservicelogon>true</allowservicelogon>
+    </serviceaccount>
+    -->
+
+</service>

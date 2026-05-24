@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- Identity -->
+    <key>Label</key>
+    <string>dev.fapp.merkle</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/merkle-agent</string>
+    </array>
+
+    <!-- Restart automatically if the agent crashes. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Start at login, not just on-demand. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Environment configuration. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MERKLE_CONFIG</key>
+        <string>/usr/local/etc/merkle/config.toml</string>
+
+        <key>MERKLE_LOG</key>
+        <string>info</string>
+
+        <key>RUST_LOG</key>
+        <string>merkle_agent=info,merkle_application=info</string>
+    </dict>
+
+    <!-- Redirect stdout/stderr to launchd-managed log files.
+         These paths are created automatically if they do not exist.
+         Rotate with: sudo log collect or newsyslog. -->
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/merkle/agent.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/merkle/agent.stderr.log</string>
+
+    <!-- Throttle respawn to at most once every 10 seconds. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Soft memory limit — agent will be restarted if it exceeds 512 MiB. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <!-- Run as the current user (LaunchAgents run in user session).
+         For a system-wide daemon move this plist to
+         /Library/LaunchDaemons/ and add a <key>UserName</key> entry. -->
+
+</dict>
+</plist>
