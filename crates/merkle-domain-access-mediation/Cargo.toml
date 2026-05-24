@@ -1,0 +1,23 @@
+[package]
+name         = "merkle-domain-access-mediation"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Access Mediation bounded context: RevealRequest, RevealAuthorization, UseToken, Tempfile, FIFO, ProxyExecutor, OobChallenge, OobResolution, CompanionSocketSession."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+serde        = { workspace = true, features = ["derive"] }
+thiserror    = { workspace = true }
+chrono       = { workspace = true }
+zeroize      = { workspace = true, features = ["derive"] }
+base64       = { workspace = true }
+hex          = { workspace = true }
+
+[dev-dependencies]
+serde_json   = { workspace = true }
+proptest     = { workspace = true }

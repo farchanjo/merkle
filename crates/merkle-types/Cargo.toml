@@ -1,0 +1,22 @@
+[package]
+name         = "merkle-types"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Foundation value objects shared across all Merkle bounded contexts: UuidV7, Blake3Hash, Sensitivity, AuditOp, AuditOutcome, Handle, NamespaceId, BoundedContextId."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde      = { workspace = true }
+uuid       = { workspace = true }
+blake3     = { workspace = true }
+thiserror  = { workspace = true }
+chrono     = { workspace = true }
+hex        = { workspace = true }
+regex      = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

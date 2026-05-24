@@ -1,0 +1,24 @@
+[package]
+name         = "merkle-domain-identity"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Identity and Sealing bounded context: VaultIdentity aggregate root, VaultRootKey, MasterKey, NamespaceDek, RecoveryKey, SealedState, UnsealProtocol."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+serde        = { workspace = true, features = ["derive"] }
+thiserror    = { workspace = true }
+zeroize      = { workspace = true, features = ["derive"] }
+secrecy      = { workspace = true }
+chrono       = { workspace = true }
+rand         = { workspace = true }
+hex          = { workspace = true }
+
+[dev-dependencies]
+serde_json   = { workspace = true }
+proptest     = { workspace = true }

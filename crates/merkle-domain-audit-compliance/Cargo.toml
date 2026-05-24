@@ -1,0 +1,21 @@
+[package]
+name         = "merkle-domain-audit-compliance"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Audit and Compliance bounded context: AuditWriter domain service, ChainVerifier domain service, AuditQueryModel read model, AuditEntry entity, HmacSignature value object."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+chrono       = { workspace = true }
+blake3       = { workspace = true }
+
+[dev-dependencies]
+proptest     = { workspace = true }

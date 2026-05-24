@@ -1,0 +1,20 @@
+[package]
+name         = "merkle-domain-policy-permissions"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Policy and Permissions bounded context: NamespacePolicy aggregate root, RevealPolicy, RateLimit, AllowedConsumers, TagsRules, RetentionPolicy, CrossNamespacePolicy, DevicePolicy, PolicyEvaluator."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+serde        = { workspace = true }
+thiserror    = { workspace = true }
+chrono       = { workspace = true }
+
+[dev-dependencies]
+serde_json   = { workspace = true }
+proptest     = { workspace = true }

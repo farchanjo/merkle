@@ -1,0 +1,20 @@
+[package]
+name         = "merkle-domain-backup-recovery"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Backup and Recovery bounded context: BackupManifest aggregate root, BackupScheduler domain service, RestorePlan, AnacronState."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+serde        = { workspace = true }
+thiserror    = { workspace = true }
+chrono       = { workspace = true }
+
+[dev-dependencies]
+serde_json   = { workspace = true }
+proptest     = { workspace = true }

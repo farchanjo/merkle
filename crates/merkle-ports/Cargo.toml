@@ -1,0 +1,24 @@
+[package]
+name         = "merkle-ports"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Hexagonal port trait definitions: StoragePort, KeychainPort, CryptoPort, OobNotifierPort, ExternalServicesPort. Pure abstractions — no infrastructure imports."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types                    = { path = "../merkle-types" }
+merkle-domain-identity          = { path = "../merkle-domain-identity" }
+merkle-domain-secret-storage    = { path = "../merkle-domain-secret-storage" }
+merkle-domain-access-mediation  = { path = "../merkle-domain-access-mediation" }
+merkle-domain-audit-compliance  = { path = "../merkle-domain-audit-compliance" }
+merkle-domain-backup-recovery   = { path = "../merkle-domain-backup-recovery" }
+merkle-domain-policy-permissions = { path = "../merkle-domain-policy-permissions" }
+async-trait = { workspace = true }
+thiserror   = { workspace = true }
+serde       = { workspace = true, features = ["derive"] }
+zeroize     = { workspace = true, features = ["derive"] }
+tokio       = { workspace = true, features = ["time"] }
