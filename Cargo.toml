@@ -150,7 +150,7 @@ merkle-companion-client              = { path = "crates/merkle-companion-client"
 merkle-application              = { path = "crates/merkle-application" }
 
 # Metrics
-prometheus       = { version = "0.13", features = ["process"] }
+prometheus       = { version = "0.14", features = ["process"] }
 
 # String utilities
 once_cell        = "1.21"
