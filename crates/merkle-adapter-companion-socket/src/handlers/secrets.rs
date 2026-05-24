@@ -15,10 +15,8 @@ use axum::{
     response::IntoResponse,
 };
 use merkle_application::commands::{
-    delete_secret::DeleteSecretCommand,
-    describe_secret::DescribeSecretCommand,
-    list_secrets::ListSecretsCommand,
-    put_secret::PutSecretCommand,
+    delete_secret::DeleteSecretCommand, describe_secret::DescribeSecretCommand,
+    list_secrets::ListSecretsCommand, put_secret::PutSecretCommand,
     rotate_secret::RotateSecretCommand,
 };
 use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation as DomainOperatorConfirmation;
@@ -32,8 +30,8 @@ use crate::{
     dto::{
         DeleteSecretRequest, DeleteSecretResponse, ListSecretVersionsResponse, ListSecretsParams,
         ListSecretsResponse, PublicMetadataDto, PutSecretRequest, PutSecretResponse,
-        RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse,
-        SecretDto, SecretVersionDto, TagDto,
+        RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse, SecretDto,
+        SecretVersionDto, TagDto,
     },
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
@@ -47,7 +45,10 @@ use crate::{
 /// Axum automatically percent-decodes path parameters before calling handlers.
 /// The `{handle_encoded}` name is a documentation hint that clients SHOULD
 /// percent-encode the vault:// URI when placing it in the URL path.
-#[expect(clippy::result_large_err, reason = "Problem is the canonical error type in this adapter; boxing adds unnecessary indirection")]
+#[expect(
+    clippy::result_large_err,
+    reason = "Problem is the canonical error type in this adapter; boxing adds unnecessary indirection"
+)]
 fn parse_handle_encoded(raw: &str) -> Result<Handle, Problem> {
     raw.parse::<Handle>().map_err(|_| Problem {
         kind: ProblemType::HandleNotFound,
@@ -55,7 +56,9 @@ fn parse_handle_encoded(raw: &str) -> Result<Handle, Problem> {
         status: 400,
         detail: format!("'{raw}' is not a valid vault:// URI."),
         instance: None,
-        hint: Some("Handles must be URL-encoded vault:// URIs, e.g. vault%3A%2F%2Fns%2Fssh%2Fkey.".into()),
+        hint: Some(
+            "Handles must be URL-encoded vault:// URIs, e.g. vault%3A%2F%2Fns%2Fssh%2Fkey.".into(),
+        ),
         fields: vec![],
     })
 }
@@ -232,24 +235,32 @@ pub async fn put_secret(
         .into_response();
     };
 
-    // Attempt to parse a NamespaceLabel from the secret name; on failure derive
-    // a synthetic label from the namespace UUID for Handle construction.
-    let ns_label: merkle_types::NamespaceLabel = if let Ok(l) = body.name.parse() {
-        l
-    } else if let Ok(l) = format!("ns-{ns_raw}").parse() {
-        l
-    } else {
-        return Problem {
-            kind: ProblemType::SchemaValidationFailed,
-            title: "Invalid name".into(),
-            status: 400,
-            detail: format!("'{}' cannot be converted to a namespace label.", body.name),
-            instance: None,
-            hint: None,
-            fields: vec![],
-        }
-        .into_response();
-    };
+    // Resolve the bound namespace label from storage so the handle URI first
+    // segment equals the label (e.g. "mcp-smoke"), NOT the secret name.
+    // Bug #1 (ADR-0025): the previous code tried to parse the secret name as a
+    // NamespaceLabel, producing "vault://<name>/<cat>/<name>" on success.
+    let ns_label: merkle_types::NamespaceLabel =
+        match ctx.storage.get_namespace_by_id(&namespace_id).await {
+            Ok(Some(ns)) => ns.label,
+            Ok(None) => {
+                return Problem {
+                    kind: ProblemType::NamespaceNotFound,
+                    title: "Namespace not found".into(),
+                    status: 404,
+                    detail: format!("No namespace with id '{namespace_id}' exists."),
+                    instance: None,
+                    hint: Some(
+                        "Run vault.bind to create a namespace before storing secrets.".into(),
+                    ),
+                    fields: vec![],
+                }
+                .into_response();
+            }
+            Err(err) => {
+                return app_error_to_problem(merkle_application::AppError::Storage(err))
+                    .into_response();
+            }
+        };
 
     let Ok(secret_name) = body.name.parse::<merkle_types::SecretName>() else {
         return Problem {
@@ -420,10 +431,7 @@ pub async fn list_secret_versions(
                     size_bytes: u64::try_from(v.blob.ciphertext.len()).unwrap_or(0),
                 })
                 .collect();
-            let resp = ListSecretVersionsResponse {
-                handle,
-                versions,
-            };
+            let resp = ListSecretVersionsResponse { handle, versions };
             (StatusCode::OK, Json(resp)).into_response()
         }
         Err(err) => app_error_to_problem(err).into_response(),

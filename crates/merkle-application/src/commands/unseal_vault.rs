@@ -35,8 +35,23 @@ pub struct UnsealVaultCommand {
 /// Output of a successful `UnsealVaultCommand`.
 #[derive(Debug)]
 pub struct UnsealVaultOutput {
-    /// Opaque confirmation that the vault transitioned to `Unsealed`.
+    /// Confirmation that the vault is now in the `Unsealed` state.
+    ///
+    /// Always `true` on a successful return — included for explicit DTO
+    /// shape consumers (Companion Socket `UnsealResponse`).
     pub unsealed: bool,
+
+    /// Discriminates the two success paths:
+    ///
+    /// - `false` — this call performed the actual `Sealed → Unsealed`
+    ///   transition (key fetched, VRK derived, audit entry appended).
+    /// - `true` — the vault was already unsealed; this call was a no-op
+    ///   and the early-return path executed without re-fetching key material.
+    ///
+    /// Per ADR-0025 §Bug #5, callers that care about user-facing messaging
+    /// (CLI, MCP tool result text) MUST branch on this field — never on
+    /// [`Self::unsealed`] alone.
+    pub was_already_unsealed: bool,
 }
 
 impl UnsealVaultCommand {
@@ -60,7 +75,12 @@ impl UnsealVaultCommand {
         {
             let mut identity = ctx.identity.write().await;
             if identity.is_unsealed() {
-                return Ok(UnsealVaultOutput { unsealed: true });
+                // No-op path: vault was already unsealed; flag so callers can
+                // distinguish from the actual sealed→unsealed transition.
+                return Ok(UnsealVaultOutput {
+                    unsealed: true,
+                    was_already_unsealed: true,
+                });
             }
             // Use begin_unseal_with_guard and immediately commit the guard's
             // internal state — we can't hold the guard across await points, so
@@ -135,13 +155,11 @@ impl UnsealVaultCommand {
             .retrieve(keychain_ref.service(), keychain_ref.account())
             .await
             .map_err(AppError::Keychain)?;
-        let master_key_arr: [u8; 32] = master_key_bytes
-            .try_into()
-            .map_err(|_| AppError::InvalidInput("master key has wrong length (hmac phase)".into()))?;
+        let master_key_arr: [u8; 32] = master_key_bytes.try_into().map_err(|_| {
+            AppError::InvalidInput("master key has wrong length (hmac phase)".into())
+        })?;
         let vrk_bytes = ctx.crypto.blake3_keyed(&master_key_arr, b"vault-root-key");
-        let hmac_key_bytes = ctx
-            .crypto
-            .blake3_keyed(vrk_bytes.as_bytes(), b"hmac-key");
+        let hmac_key_bytes = ctx.crypto.blake3_keyed(vrk_bytes.as_bytes(), b"hmac-key");
 
         {
             let mut hmac_guard = ctx.hmac_key.write().await;
@@ -156,17 +174,19 @@ impl UnsealVaultCommand {
             ns_id,
         )
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(
-                &mut log,
-                params,
-                hmac_key_bytes.as_bytes(),
-            )
-            .map_err(|e| AppError::Domain(e.to_string()))?;
+        let (entry, pinned) = merkle_domain_audit_compliance::AuditWriter::append(
+            &mut log,
+            params,
+            hmac_key_bytes.as_bytes(),
+        )
+        .map_err(|e| AppError::Domain(e.to_string()))?;
         ctx.storage.append_audit_entry(&entry).await?;
         ctx.storage.update_pinned_head(&pinned).await?;
 
         info!("unseal_vault: vault is now Unsealed");
-        Ok(UnsealVaultOutput { unsealed: true })
+        Ok(UnsealVaultOutput {
+            unsealed: true,
+            was_already_unsealed: false,
+        })
     }
 }

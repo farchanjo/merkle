@@ -147,3 +147,20 @@ flowchart TD
 * Related: [0002-adopt-agent-plus-mcp-adapter-topology.md](0002-adopt-agent-plus-mcp-adapter-topology.md)
 * Related: [0007-handle-default-exposure-model.md](0007-handle-default-exposure-model.md)
 * Related: [0012-eleven-built-in-categories-plus-cue-schema-for-custom.md](0012-eleven-built-in-categories-plus-cue-schema-for-custom.md)
+
+## Implementation Note — 2026-05-24
+
+The canonical CWD-bound namespace identity — BLAKE3 of the canonical
+`std::env::current_dir()` path, hex-encoded and truncated to 16 characters,
+prefixed with `cwd-` — is materialised **internally** by the MCP Adapter's
+`vault.bind` tool (`crates/merkle-adapter-mcp/src/tools/identity.rs`).
+
+Callers do NOT pass a `cwd_hash` parameter through the MCP transport. The
+MCP tool reads the process working directory at bind time, derives the hash,
+and forwards it to `BindNamespaceCommand` inside the Companion Socket
+request. The `cwd_hash` field visible in internal request structs is an
+implementation detail of the adapter, not a user-facing MCP parameter.
+
+Cross-reference: [ADR-0025](0025-post-phase-2-cosmetic-cleanup.md) §Bug #6
+documents the docstring fix that clarifies this boundary for future
+maintainers.

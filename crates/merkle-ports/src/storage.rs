@@ -40,10 +40,17 @@ pub trait Storage: Send + Sync {
     async fn put_secret(&self, secret: &ss::Secret) -> Result<(), StorageError>;
 
     /// Retrieve a [`Secret`](ss::Secret) by its opaque handle, or `None` if absent.
-    async fn get_secret_by_handle(&self, handle: &Handle) -> Result<Option<ss::Secret>, StorageError>;
+    async fn get_secret_by_handle(
+        &self,
+        handle: &Handle,
+    ) -> Result<Option<ss::Secret>, StorageError>;
 
     /// List secrets in a namespace, applying the supplied filter.
-    async fn list_secrets(&self, namespace_id: &NamespaceId, filter: SecretFilter) -> Result<Vec<ss::Secret>, StorageError>;
+    async fn list_secrets(
+        &self,
+        namespace_id: &NamespaceId,
+        filter: SecretFilter,
+    ) -> Result<Vec<ss::Secret>, StorageError>;
 
     /// Hard-delete a secret by its [`SecretId`].
     async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), StorageError>;
@@ -52,13 +59,35 @@ pub trait Storage: Send + Sync {
     async fn put_namespace(&self, ns: &ss::Namespace) -> Result<(), StorageError>;
 
     /// Fetch a [`Namespace`](ss::Namespace) by its human-readable label, or `None`.
-    async fn get_namespace_by_label(&self, label: &NamespaceLabel) -> Result<Option<ss::Namespace>, StorageError>;
+    async fn get_namespace_by_label(
+        &self,
+        label: &NamespaceLabel,
+    ) -> Result<Option<ss::Namespace>, StorageError>;
+
+    /// List all persisted namespaces in the vault.
+    ///
+    /// Returns rows ordered by `created_at` ascending (storage-defined).
+    /// Pagination is NOT applied at this layer; callers truncate as needed.
+    /// Required by ADR-0025 §Bug #2.
+    async fn list_namespaces(&self) -> Result<Vec<ss::Namespace>, StorageError>;
+
+    /// Fetch a [`Namespace`](ss::Namespace) by its opaque [`NamespaceId`], or `None`.
+    ///
+    /// Added for Bug #1 (ADR-0025): the companion-socket `put_secret` handler
+    /// must resolve the human-readable label from the `namespace_id` received
+    /// in the request path so that the handle URI first segment equals the bound
+    /// label (e.g. `vault://mcp-smoke/…`), not the secret name.
+    async fn get_namespace_by_id(
+        &self,
+        id: &NamespaceId,
+    ) -> Result<Option<ss::Namespace>, StorageError>;
 
     /// Append an immutable [`AuditEntry`](ac::AuditEntry) to the audit log.
     async fn append_audit_entry(&self, entry: &ac::AuditEntry) -> Result<(), StorageError>;
 
     /// Query the audit log according to the supplied [`AuditQuery`](ac::AuditQuery).
-    async fn read_audit(&self, query: &ac::AuditQuery) -> Result<Vec<ac::AuditEntry>, StorageError>;
+    async fn read_audit(&self, query: &ac::AuditQuery)
+    -> Result<Vec<ac::AuditEntry>, StorageError>;
 
     /// Read the current [`PinnedHead`](ac::PinnedHead) record, or `None` on first boot.
     async fn pinned_head(&self) -> Result<Option<ac::PinnedHead>, StorageError>;
@@ -70,17 +99,28 @@ pub trait Storage: Send + Sync {
     async fn put_backup(&self, backup: &br::backup::Backup) -> Result<(), StorageError>;
 
     /// List all backups associated with a namespace.
-    async fn list_backups(&self, namespace_id: &NamespaceId) -> Result<Vec<br::backup::Backup>, StorageError>;
+    async fn list_backups(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Vec<br::backup::Backup>, StorageError>;
 
     /// Upsert a [`NamespacePolicy`](pp::NamespacePolicy) aggregate.
     async fn put_namespace_policy(&self, policy: &pp::NamespacePolicy) -> Result<(), StorageError>;
 
     /// Retrieve the active [`NamespacePolicy`](pp::NamespacePolicy) for a namespace, or `None`.
-    async fn get_namespace_policy(&self, namespace_id: &NamespaceId) -> Result<Option<pp::NamespacePolicy>, StorageError>;
+    async fn get_namespace_policy(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Option<pp::NamespacePolicy>, StorageError>;
 
     /// Upsert a [`CompanionDevice`](am::companion_device::CompanionDevice) enrollment record.
-    async fn put_companion_device(&self, device: &am::companion_device::CompanionDevice) -> Result<(), StorageError>;
+    async fn put_companion_device(
+        &self,
+        device: &am::companion_device::CompanionDevice,
+    ) -> Result<(), StorageError>;
 
     /// Return all enrolled companion devices.
-    async fn list_companion_devices(&self) -> Result<Vec<am::companion_device::CompanionDevice>, StorageError>;
+    async fn list_companion_devices(
+        &self,
+    ) -> Result<Vec<am::companion_device::CompanionDevice>, StorageError>;
 }

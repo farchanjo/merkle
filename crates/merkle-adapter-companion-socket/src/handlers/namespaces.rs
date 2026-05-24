@@ -1,11 +1,6 @@
 //! Handler for `GET /v1/namespaces`.
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -20,6 +15,8 @@ use crate::{
 /// Returns the list of Namespaces that exist in the vault database.
 #[instrument(skip(ctx))]
 pub async fn list_namespaces(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
+    // `ListNamespacesQuery::default()` sets `label: None`, which now triggers a
+    // full `Storage::list_namespaces` scan (ADR-0025 §Bug #2, 2026-05-24).
     let query = merkle_application::queries::list_namespaces::ListNamespacesQuery::default();
 
     match query.execute(&ctx).await {

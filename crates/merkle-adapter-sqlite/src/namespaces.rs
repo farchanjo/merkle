@@ -1,18 +1,15 @@
-//! `put_namespace` / `get_namespace_by_label` SQL operations.
+//! `put_namespace` / `get_namespace_by_label` / `get_namespace_by_id` SQL operations.
 
 use merkle_domain_secret_storage::Namespace;
 use merkle_ports::StorageError;
-use merkle_types::NamespaceLabel;
+use merkle_types::{NamespaceId, NamespaceLabel};
 use sqlx::SqlitePool;
 
 use crate::error::AdapterError;
 use crate::mappers::{id_to_blob, row_to_namespace, uuid_to_blob};
 
 /// Upsert a [`Namespace`] row (INSERT OR REPLACE).
-pub(crate) async fn put_namespace(
-    pool: &SqlitePool,
-    ns: &Namespace,
-) -> Result<(), StorageError> {
+pub(crate) async fn put_namespace(pool: &SqlitePool, ns: &Namespace) -> Result<(), StorageError> {
     let id_blob = id_to_blob!(ns.id);
     let policy_id_blob: Option<Vec<u8>> = ns.policy_id.map(uuid_to_blob);
     let label = ns.label.as_str().to_owned();
@@ -42,6 +39,23 @@ pub(crate) async fn put_namespace(
     Ok(())
 }
 
+/// List all [`Namespace`] rows, ordered by `created_at` ascending.
+pub(crate) async fn list_namespaces(pool: &SqlitePool) -> Result<Vec<Namespace>, StorageError> {
+    let rows = sqlx::query(
+        "SELECT id, label, cwd_hash, policy_id, dek_version, created_at
+         FROM namespaces
+         ORDER BY created_at ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    rows.iter()
+        .map(|r| row_to_namespace(r).map_err(StorageError::from))
+        .collect()
+}
+
 /// Fetch a [`Namespace`] by its label, returning `None` if absent.
 pub(crate) async fn get_namespace_by_label(
     pool: &SqlitePool,
@@ -54,6 +68,31 @@ pub(crate) async fn get_namespace_by_label(
          FROM namespaces WHERE label = ?1",
     )
     .bind(label_str)
+    .fetch_optional(pool)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    row.map(|r| row_to_namespace(&r).map_err(StorageError::from))
+        .transpose()
+}
+
+/// Fetch a [`Namespace`] by its opaque ID (BLOB primary key), returning `None` if absent.
+///
+/// Added for Bug #1 (ADR-0025): lets the companion-socket handler resolve the
+/// human-readable label from the `namespace_id` path parameter so the handle
+/// URI first segment is the bound label, not the secret name.
+pub(crate) async fn get_namespace_by_id(
+    pool: &SqlitePool,
+    id: &NamespaceId,
+) -> Result<Option<Namespace>, StorageError> {
+    let id_blob = id_to_blob!(*id);
+
+    let row = sqlx::query(
+        "SELECT id, label, cwd_hash, policy_id, dek_version, created_at
+         FROM namespaces WHERE id = ?1",
+    )
+    .bind(id_blob)
     .fetch_optional(pool)
     .await
     .map_err(AdapterError::Sqlx)

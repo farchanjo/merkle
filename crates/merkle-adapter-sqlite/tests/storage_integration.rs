@@ -14,8 +14,8 @@ use merkle_domain_secret_storage::{
 };
 use merkle_ports::{SecretFilter, Storage};
 use merkle_types::{
-    AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, CategoryName, CompanionDeviceClass,
-    Handle, HmacSignature, NamespaceId, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
+    AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, CategoryName, CompanionDeviceClass, Handle,
+    HmacSignature, NamespaceId, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
     SecurityProfile, Sensitivity, UuidV7,
 };
 use std::path::PathBuf;
@@ -82,11 +82,7 @@ fn dummy_hmac() -> HmacSignature {
     HmacSignature::compute(&[0u8; 32], b"test")
 }
 
-fn make_audit_entry(
-    seq: u64,
-    ns_id: NamespaceId,
-    prev_hash: Option<Blake3Hash>,
-) -> AuditEntry {
+fn make_audit_entry(seq: u64, ns_id: NamespaceId, prev_hash: Option<Blake3Hash>) -> AuditEntry {
     use merkle_types::hash::GENESIS;
     let ph = prev_hash.unwrap_or(GENESIS);
 
@@ -155,10 +151,7 @@ async fn round_trip_put_and_get_secret_by_handle() {
 async fn get_secret_by_handle_returns_none_when_missing() {
     let db = open_memory().await;
     let handle = make_handle("ghost-ns", "ssh", "nonexistent");
-    let result = db
-        .get_secret_by_handle(&handle)
-        .await
-        .expect("no DB error");
+    let result = db.get_secret_by_handle(&handle).await.expect("no DB error");
     assert!(result.is_none());
 }
 
@@ -222,10 +215,7 @@ async fn delete_secret_removes_it() {
 
     db.delete_secret(&secret_id).await.expect("delete_secret");
 
-    let result = db
-        .get_secret_by_handle(&handle)
-        .await
-        .expect("no DB error");
+    let result = db.get_secret_by_handle(&handle).await.expect("no DB error");
     assert!(result.is_none(), "secret must be gone after delete");
 }
 
@@ -237,10 +227,14 @@ async fn append_audit_entry_preserves_seq_and_chain() {
     let entry0 = make_audit_entry(0, ns_id, None);
     let hash0 = entry0.current_hash;
 
-    db.append_audit_entry(&entry0).await.expect("append entry 0");
+    db.append_audit_entry(&entry0)
+        .await
+        .expect("append entry 0");
 
     let entry1 = make_audit_entry(1, ns_id, Some(hash0));
-    db.append_audit_entry(&entry1).await.expect("append entry 1");
+    db.append_audit_entry(&entry1)
+        .await
+        .expect("append entry 1");
 
     let q = AuditQuery::default();
     let entries = db.read_audit(&q).await.expect("read_audit");
@@ -289,7 +283,9 @@ async fn update_pinned_head_overwrites() {
         AuditEntryId::new(),
         Rfc3339Timestamp::now(),
     );
-    db.update_pinned_head(&new_head).await.expect("update_pinned_head");
+    db.update_pinned_head(&new_head)
+        .await
+        .expect("update_pinned_head");
 
     let fetched = db
         .pinned_head()
@@ -311,7 +307,9 @@ async fn namespace_policy_round_trip() {
     let mut policy = NamespacePolicy::defaults_for(SecurityProfile::Balanced);
     policy.namespace_id = ns.id;
 
-    db.put_namespace_policy(&policy).await.expect("put_namespace_policy");
+    db.put_namespace_policy(&policy)
+        .await
+        .expect("put_namespace_policy");
 
     let fetched = db
         .get_namespace_policy(&ns.id)
@@ -327,10 +325,7 @@ async fn namespace_policy_round_trip() {
 async fn get_namespace_policy_returns_none_when_absent() {
     let db = open_memory().await;
     let ns_id = NamespaceId::new();
-    let result = db
-        .get_namespace_policy(&ns_id)
-        .await
-        .expect("no DB error");
+    let result = db.get_namespace_policy(&ns_id).await.expect("no DB error");
     assert!(result.is_none());
 }
 
@@ -390,6 +385,32 @@ async fn list_companion_devices_returns_all() {
     assert_eq!(devices.len(), 3);
 }
 
+/// ADR-0025 §Bug #2 — `list_namespaces` returns all persisted rows.
+#[tokio::test]
+async fn list_namespaces_returns_all_persisted_rows() {
+    let db = open_memory().await;
+
+    let labels = ["alpha", "beta", "gamma"];
+    for lbl in labels {
+        let ns = make_namespace(lbl);
+        db.put_namespace(&ns).await.expect("put_namespace");
+    }
+
+    let items = db.list_namespaces().await.expect("list_namespaces");
+
+    assert_eq!(items.len(), 3, "expected 3 namespaces, got {}", items.len());
+
+    // Order-tolerant: compare via a HashSet of label strings.
+    let returned_labels: std::collections::HashSet<String> =
+        items.iter().map(|ns| ns.label.to_string()).collect();
+    let expected_labels: std::collections::HashSet<String> =
+        labels.iter().map(|s| (*s).to_owned()).collect();
+    assert_eq!(
+        returned_labels, expected_labels,
+        "returned labels do not match inserted labels"
+    );
+}
+
 #[tokio::test]
 async fn backup_round_trip() {
     let db = open_memory().await;
@@ -398,16 +419,15 @@ async fn backup_round_trip() {
     db.put_namespace(&ns).await.expect("put_namespace");
 
     let hmac = dummy_hmac();
-    let artifact = BackupArtifact::new(
-        PathBuf::from("/tmp/merkle-bk-test.merkle.age"),
-        1,
-        hmac,
-    );
+    let artifact = BackupArtifact::new(PathBuf::from("/tmp/merkle-bk-test.merkle.age"), 1, hmac);
     let backup = Backup::new(
         ns.id,
         UuidV7::new(),
         BackupTrigger::Manual,
-        [BackupRecipient::MasterPubkey, BackupRecipient::RecoveryPublicKey],
+        [
+            BackupRecipient::MasterPubkey,
+            BackupRecipient::RecoveryPublicKey,
+        ],
         artifact,
         hmac,
         1024,

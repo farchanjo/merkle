@@ -1,12 +1,7 @@
 //! Handlers for `GET /v1/agent/status`, `POST /v1/agent/init`,
 //! `POST /v1/agent/unseal`, and `POST /v1/agent/seal`.
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use merkle_domain_identity::UnsealPreconditions;
 use merkle_types::SecurityProfile;
 use std::sync::Arc;
@@ -67,9 +62,7 @@ pub async fn init(
     body: Option<Json<InitVaultRequest>>,
 ) -> impl IntoResponse {
     let req = body.map(|Json(b)| b).unwrap_or_default();
-    let security_profile = req
-        .security_profile
-        .unwrap_or(SecurityProfile::Balanced);
+    let security_profile = req.security_profile.unwrap_or(SecurityProfile::Balanced);
 
     let cmd = merkle_application::commands::init_vault::InitVaultCommand {
         interactive: false,
@@ -93,7 +86,10 @@ pub async fn init(
 ///
 /// Transitions the agent from Sealed to Unsealed state.
 #[instrument(skip(ctx))]
-#[expect(clippy::used_underscore_binding, reason = "axum extractor accepted but intentionally unused")]
+#[expect(
+    clippy::used_underscore_binding,
+    reason = "axum extractor accepted but intentionally unused"
+)]
 pub async fn unseal(
     State(ctx): State<Arc<AppContext>>,
     _body: Option<Json<UnsealRequest>>,
@@ -112,9 +108,13 @@ pub async fn unseal(
 
     match cmd.execute(&ctx).await {
         Ok(output) => {
+            // ADR-0025 §Bug #5: propagate the new `was_already_unsealed`
+            // discriminator so CLI/MCP callers print the correct status text.
+            // Previously this aliased `output.unsealed` (always true on success),
+            // making every unseal response read as "already unsealed".
             let resp = UnsealResponse {
                 sealed: !output.unsealed,
-                already_unsealed: output.unsealed,
+                already_unsealed: output.was_already_unsealed,
                 method: None,
             };
             (StatusCode::OK, Json(resp)).into_response()
@@ -132,7 +132,9 @@ pub async fn seal(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
 
     match cmd.execute(&ctx).await {
         Ok(output) => {
-            let resp = SealResponse { sealed: output.sealed };
+            let resp = SealResponse {
+                sealed: output.sealed,
+            };
             (StatusCode::OK, Json(resp)).into_response()
         }
         Err(err) => app_error_to_problem(err).into_response(),

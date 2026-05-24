@@ -22,10 +22,13 @@ const SECRET_PAYLOAD: &[u8] = b"chain-test-secret-value";
 
 #[tokio::test]
 #[ignore = "requires compiled binaries — run with: cargo build --bins && cargo test -p merkle-e2e -- --ignored"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "end-to-end test: spawns agent, performs operations, tampers, verifies — \
+              splitting into helpers would obscure the test narrative"
+)]
 async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("warn")
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("warn").try_init();
 
     // -----------------------------------------------------------------------
     // Spawn agent (no OOB fixture needed for this test).
@@ -38,13 +41,22 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
     // Perform initial unseal so operations go through.
     // -----------------------------------------------------------------------
     let unseal_out = runner
-        .run_with_stdin(&["unseal", "--passphrase"], Some(b"chain-test-passphrase\n"))
+        .run_with_stdin(
+            &["unseal", "--passphrase"],
+            Some(b"chain-test-passphrase\n"),
+        )
         .await?;
-    println!("[unseal] exit={} stderr={}", unseal_out.exit_code, unseal_out.stderr);
+    println!(
+        "[unseal] exit={} stderr={}",
+        unseal_out.exit_code, unseal_out.stderr
+    );
 
     // Bind namespace.
     let bind_out = runner.run(&["bind", NAMESPACE]).await?;
-    println!("[bind] exit={} stderr={}", bind_out.exit_code, bind_out.stderr);
+    println!(
+        "[bind] exit={} stderr={}",
+        bind_out.exit_code, bind_out.stderr
+    );
 
     // -----------------------------------------------------------------------
     // 10 mixed operations: 4 puts + 3 lists + 3 describes.
@@ -99,7 +111,10 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
     // -----------------------------------------------------------------------
     let original_head: Option<String> = if audit_head_path.exists() {
         let content = std::fs::read_to_string(&audit_head_path).ok();
-        println!("[tamper] original audit_head = {:?}", content.as_deref().map(|s| &s[..s.len().min(80)]));
+        println!(
+            "[tamper] original audit_head = {:?}",
+            content.as_deref().map(|s| &s[..s.len().min(80)])
+        );
         content
     } else {
         println!("[tamper] audit_head.json does not exist yet — writing bogus file");
@@ -167,7 +182,10 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
     // -----------------------------------------------------------------------
     // Shutdown.
     // -----------------------------------------------------------------------
-    agent.kill_graceful().await.expect("agent graceful shutdown");
+    agent
+        .kill_graceful()
+        .await
+        .expect("agent graceful shutdown");
     println!("[shutdown] agent exited cleanly");
 
     Ok(())

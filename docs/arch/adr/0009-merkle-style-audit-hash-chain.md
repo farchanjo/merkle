@@ -221,3 +221,20 @@ Cross-reference: [0006-age-encryption-for-backups-and-recovery.md](0006-age-encr
 [0018-full-coverage-validation-as-architectural-contract.md](0018-full-coverage-validation-as-architectural-contract.md) — the TLA+
 hash-chain integrity spec and the AsyncAPI audit-event schema machine-verify
 the invariants recorded in this ADR.
+
+## Implementation Note — 2026-05-24
+
+`GET /v1/audit?verify_chain=true` MUST invoke `ChainVerifier::verify()` over
+the returned entries and populate the response `chain_valid` field with the
+boolean result before sending the response. Returning `null` (i.e., leaving
+the field unset) is a contract violation: the OpenAPI schema declares
+`chain_valid` as `type: boolean`, and downstream callers — including the MCP
+`vault.audit.query` tool — pattern-match on `true`/`false` to surface audit
+integrity status to the operator.
+
+The root-cause location is `crates/merkle-application/src/queries/query_audit.rs`,
+where the `verify_chain` flag was parsed but `ChainVerifier::verify()` was not
+called. The fix wires the verifier call and maps the outcome to the response DTO.
+
+Cross-reference: [ADR-0025](0025-post-phase-2-cosmetic-cleanup.md) §Bug #3
+documents this gap, its root cause, fix location, and the required TDD test.

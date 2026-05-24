@@ -14,21 +14,18 @@ use merkle_adapter_sqlite::SqliteStorage;
 use merkle_application::{
     AppContext,
     commands::{
-        bind_namespace::BindNamespaceCommand,
-        init_vault::InitVaultCommand,
-        list_secrets::ListSecretsCommand,
-        put_secret::PutSecretCommand,
-        seal_vault::SealVaultCommand,
-        unseal_vault::UnsealVaultCommand,
+        bind_namespace::BindNamespaceCommand, init_vault::InitVaultCommand,
+        list_secrets::ListSecretsCommand, put_secret::PutSecretCommand,
+        seal_vault::SealVaultCommand, unseal_vault::UnsealVaultCommand,
     },
     queries::{
-        agent_status::AgentStatusQuery,
+        agent_status::AgentStatusQuery, list_namespaces::ListNamespacesQuery,
         query_audit::QueryAuditQuery,
     },
 };
 use merkle_domain_identity::{
-    KeychainEntry, KEYCHAIN_ACCOUNT_MASTER_KEY, KEYCHAIN_SERVICE,
-    RecoveryPublicKey, SealedState, UnsealPreconditions, VaultIdentity,
+    KEYCHAIN_ACCOUNT_MASTER_KEY, KEYCHAIN_SERVICE, KeychainEntry, RecoveryPublicKey, SealedState,
+    UnsealPreconditions, VaultIdentity,
 };
 use merkle_types::{
     AuditOutcome, CategoryName, NamespaceLabel, Rfc3339Timestamp, SecurityProfile, Sensitivity,
@@ -58,14 +55,7 @@ async fn make_ctx() -> AppContext {
     );
     let identity = VaultIdentity::new(keychain_ref, recovery_pubkey);
 
-    AppContext::new(
-        Arc::new(storage),
-        keychain,
-        crypto,
-        oob,
-        external,
-        identity,
-    )
+    AppContext::new(Arc::new(storage), keychain, crypto, oob, external, identity)
 }
 
 /// Master key bytes: the mock keychain stores these as-is for any service/account.
@@ -81,11 +71,7 @@ fn test_dek() -> [u8; 32] {
 /// Pre-load the MasterKey in the mock keychain so `unseal_vault` can retrieve it.
 async fn preload_master_key(ctx: &AppContext) {
     ctx.keychain
-        .store(
-            "dev.fapp.merkle",
-            "master-v1",
-            &master_key_bytes(),
-        )
+        .store("dev.fapp.merkle", "master-v1", &master_key_bytes())
         .await
         .expect("store master key");
 }
@@ -127,7 +113,9 @@ async fn test_put_and_list_secrets_round_trip() {
     let ns_id = ns_out.namespace_id;
 
     // Put a secret.
-    let handle = "vault://prod/ssh-key/bastion".parse().expect("parse handle");
+    let handle = "vault://prod/ssh-key/bastion"
+        .parse()
+        .expect("parse handle");
     let put_cmd = PutSecretCommand {
         namespace_id: ns_id,
         handle,
@@ -140,7 +128,10 @@ async fn test_put_and_list_secrets_round_trip() {
         dek_bytes: test_dek(),
         value_format: merkle_application::ValueFormat::Utf8,
     };
-    let put_out = put_cmd.execute(&ctx).await.expect("put_secret should succeed");
+    let put_out = put_cmd
+        .execute(&ctx)
+        .await
+        .expect("put_secret should succeed");
 
     // List secrets.
     let list_cmd = ListSecretsCommand {
@@ -149,10 +140,52 @@ async fn test_put_and_list_secrets_round_trip() {
         name_pattern: None,
         limit: None,
     };
-    let list_out = list_cmd.execute(&ctx).await.expect("list_secrets should succeed");
+    let list_out = list_cmd
+        .execute(&ctx)
+        .await
+        .expect("list_secrets should succeed");
 
     assert_eq!(list_out.secrets.len(), 1);
     assert_eq!(list_out.secrets[0].id, put_out.secret_id);
+}
+
+/// T02b — unseal_vault distinguishes "transitioned now" vs "was already unsealed".
+///
+/// Bug #5 (ADR-0025): both paths previously returned the same opaque flag,
+/// so the CLI printed "vault was already unsealed" even when the call actually
+/// performed the seal→unsealed transition (live smoke test 2026-05-24).
+#[tokio::test]
+async fn test_unseal_was_already_unsealed_distinguishes_paths() {
+    use merkle_application::commands::unseal_vault::UnsealVaultCommand;
+    use merkle_domain_identity::UnsealPreconditions;
+
+    let ctx = make_ctx().await;
+    preload_master_key(&ctx).await;
+    let cmd = UnsealVaultCommand {
+        preconditions: UnsealPreconditions {
+            security_profile: SecurityProfile::Balanced,
+            mlock_succeeded: true,
+            entropy_seeded: true,
+            keychain_reachable: true,
+        },
+    };
+
+    // First call: vault was sealed → must report `was_already_unsealed = false`.
+    let first = cmd.execute(&ctx).await.expect("first unseal");
+    assert!(first.unsealed, "vault must end up unsealed");
+    assert!(
+        !first.was_already_unsealed,
+        "first unseal transitioned sealed→unsealed; was_already_unsealed must be false"
+    );
+
+    // Second call: vault was already unsealed → must report
+    // `was_already_unsealed = true` and not re-run key fetch.
+    let second = cmd.execute(&ctx).await.expect("second unseal");
+    assert!(second.unsealed, "vault stays unsealed");
+    assert!(
+        second.was_already_unsealed,
+        "second unseal is a no-op; was_already_unsealed must be true"
+    );
 }
 
 /// T02 — unseal_vault + seal_vault state transitions.
@@ -223,7 +256,7 @@ async fn test_reveal_denied_high_sensitivity_no_oob() {
         handle,
         operator_confirmation: OperatorConfirmation {
             slash_command: true,
-            oob_ack: false,      // no OOB ack
+            oob_ack: false, // no OOB ack
             signed_config_flag: None,
         },
         challenge_id: None,
@@ -282,8 +315,12 @@ async fn test_query_audit_returns_entries() {
     // Query all audit entries — should have at least 2 (unseal + put).
     let query = QueryAuditQuery {
         filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: false,
     };
-    let out = query.execute(&ctx).await.expect("query_audit should succeed");
+    let out = query
+        .execute(&ctx)
+        .await
+        .expect("query_audit should succeed");
     assert!(
         out.entries.len() >= 2,
         "expected at least 2 audit entries, got {}",
@@ -332,7 +369,11 @@ async fn setup_ns_and_secret(
     ns_label: &str,
     handle_uri: &str,
     plaintext: &[u8],
-) -> (merkle_types::NamespaceId, merkle_types::Handle, merkle_types::SecretId) {
+) -> (
+    merkle_types::NamespaceId,
+    merkle_types::Handle,
+    merkle_types::SecretId,
+) {
     let ns_label: NamespaceLabel = ns_label.parse().expect("ns label");
     let ns_cmd = BindNamespaceCommand {
         label: ns_label,
@@ -386,7 +427,10 @@ async fn test_delete_secret_round_trip_and_audit() {
             signed_config_flag: None,
         },
     };
-    del_cmd.execute(&ctx).await.expect("delete_secret should succeed");
+    del_cmd
+        .execute(&ctx)
+        .await
+        .expect("delete_secret should succeed");
 
     // Verify the secret is gone.
     let fetched = ctx
@@ -399,6 +443,7 @@ async fn test_delete_secret_round_trip_and_audit() {
     // Verify audit entry was appended.
     let audit_q = merkle_application::queries::query_audit::QueryAuditQuery {
         filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: false,
     };
     let audit = audit_q.execute(&ctx).await.expect("query_audit");
     let has_delete = audit
@@ -443,6 +488,7 @@ async fn test_use_token_issues_opaque_token() {
     // Audit entry with op=use must exist.
     let audit_q = merkle_application::queries::query_audit::QueryAuditQuery {
         filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: false,
     };
     let audit = audit_q.execute(&ctx).await.expect("query_audit");
     let has_use = audit
@@ -471,8 +517,9 @@ async fn test_search_secrets_returns_results() {
 
     // Put two secrets.
     for i in 0..2_u8 {
-        let handle: merkle_types::Handle =
-            format!("vault://search-test/api-key/key-{i}").parse().expect("handle");
+        let handle: merkle_types::Handle = format!("vault://search-test/api-key/key-{i}")
+            .parse()
+            .expect("handle");
         let put_cmd = PutSecretCommand {
             namespace_id: ns_id,
             handle,
@@ -532,10 +579,17 @@ async fn test_crypto_sign_produces_verifiable_signature() {
         dek_bytes: test_dek(),
         message: message.to_vec(),
     };
-    let sign_out = sign_cmd.execute(&ctx).await.expect("crypto_sign should succeed");
+    let sign_out = sign_cmd
+        .execute(&ctx)
+        .await
+        .expect("crypto_sign should succeed");
 
     // Signature must be 128 hex chars (64 bytes).
-    assert_eq!(sign_out.signature_hex.len(), 128, "expected 128-char hex signature");
+    assert_eq!(
+        sign_out.signature_hex.len(),
+        128,
+        "expected 128-char hex signature"
+    );
 
     // Decode and verify the signature.
     let sig_bytes: Vec<u8> = hex::decode(&sign_out.signature_hex).expect("hex decode");
@@ -555,8 +609,7 @@ async fn test_doctor_reports_chain_integrity_ok() {
 
     // Perform several operations to build up the audit chain.
     for i in 0..3_u8 {
-        let ns_label: NamespaceLabel =
-            format!("doctor-{i}").parse().expect("ns label");
+        let ns_label: NamespaceLabel = format!("doctor-{i}").parse().expect("ns label");
         let ns_cmd = BindNamespaceCommand {
             label: ns_label,
             cwd_hash: None,
@@ -565,8 +618,14 @@ async fn test_doctor_reports_chain_integrity_ok() {
         ns_cmd.execute(&ctx).await.expect("bind namespace");
     }
 
-    let doctor_out = DoctorQuery.execute(&ctx).await.expect("doctor should succeed");
-    assert!(doctor_out.all_ok, "doctor: all checks should pass; got: {doctor_out:?}");
+    let doctor_out = DoctorQuery
+        .execute(&ctx)
+        .await
+        .expect("doctor should succeed");
+    assert!(
+        doctor_out.all_ok,
+        "doctor: all checks should pass; got: {doctor_out:?}"
+    );
     assert_eq!(doctor_out.sealed_state, "unsealed");
 
     let chain_check = doctor_out
@@ -598,10 +657,17 @@ async fn test_write_tempfile_returns_opaque_token() {
         handle,
         dek_bytes: test_dek(),
     };
-    let out = cmd.execute(&ctx).await.expect("write_tempfile should succeed");
+    let out = cmd
+        .execute(&ctx)
+        .await
+        .expect("write_tempfile should succeed");
 
     // Opaque token must be 64 hex chars (32 bytes).
-    assert_eq!(out.opaque_token.len(), 64, "opaque_token must be 64 hex chars");
+    assert_eq!(
+        out.opaque_token.len(),
+        64,
+        "opaque_token must be 64 hex chars"
+    );
 
     // Verify the file exists and has the correct content.
     let tmp_path = std::env::temp_dir().join(format!("merkle_{}.tmp", out.opaque_token));
@@ -633,7 +699,9 @@ async fn test_delete_high_sensitivity_denied_without_slash_command() {
     let ns_id = ns_out.namespace_id;
 
     // Put a High-sensitivity secret.
-    let handle: Handle = "vault://del-denied/ssh-key/prod-bastion".parse().expect("handle");
+    let handle: Handle = "vault://del-denied/ssh-key/prod-bastion"
+        .parse()
+        .expect("handle");
     let put_cmd = PutSecretCommand {
         namespace_id: ns_id,
         handle: handle.clone(),
@@ -664,7 +732,10 @@ async fn test_delete_high_sensitivity_denied_without_slash_command() {
         "delete of High-sensitivity secret without slash_command must be denied"
     );
     assert!(
-        matches!(result.unwrap_err(), merkle_application::AppError::PolicyDenied(_)),
+        matches!(
+            result.unwrap_err(),
+            merkle_application::AppError::PolicyDenied(_)
+        ),
         "expected PolicyDenied"
     );
 }
@@ -694,32 +765,27 @@ async fn test_init_then_unseal_succeeds_keychain_naming_aligned() {
         merkle_types::Rfc3339Timestamp::now(),
     );
     let identity = VaultIdentity::new(keychain_ref, recovery_pubkey);
-    let ctx = AppContext::new(
-        Arc::new(storage),
-        keychain,
-        crypto,
-        oob,
-        external,
-        identity,
-    );
+    let ctx = AppContext::new(Arc::new(storage), keychain, crypto, oob, external, identity);
 
     // 1. Run init — must succeed on a fresh (empty) keychain.
     let init_cmd = InitVaultCommand {
         interactive: false,
         security_profile: SecurityProfile::Relaxed,
     };
-    let init_out = init_cmd.execute(&ctx).await
+    let init_out = init_cmd
+        .execute(&ctx)
+        .await
         .expect("init must succeed on a fresh vault");
 
     // Banner must point to canonical ref.
     assert_eq!(
-        init_out.master_key_keychain_ref,
-        "dev.fapp.merkle/master-v1",
+        init_out.master_key_keychain_ref, "dev.fapp.merkle/master-v1",
         "init banner must report canonical service+account ref"
     );
 
     // 2. Verify the master key is stored under the canonical name.
-    let stored = ctx.keychain
+    let stored = ctx
+        .keychain
         .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY)
         .await;
     assert!(
@@ -737,7 +803,9 @@ async fn test_init_then_unseal_succeeds_keychain_naming_aligned() {
             keychain_reachable: true,
         },
     };
-    unseal_cmd.execute(&ctx).await
+    unseal_cmd
+        .execute(&ctx)
+        .await
         .expect("unseal must find master key written by init — Bug 4 regression");
 
     // 4. Agent must now be in Unsealed state.
@@ -778,14 +846,75 @@ async fn make_ctx_with_keychain_persistence_failure() -> AppContext {
     );
     let identity = VaultIdentity::new(keychain_ref, recovery_pubkey);
 
-    AppContext::new(
-        Arc::new(storage),
-        keychain,
-        crypto,
-        oob,
-        external,
-        identity,
-    )
+    AppContext::new(Arc::new(storage), keychain, crypto, oob, external, identity)
+}
+
+/// T14 — Bug #1 regression (ADR-0025): handle URI first segment must be the
+/// bound namespace label, not the secret name.
+///
+/// Live repro 2026-05-24: `vault.put { name: "smoke-api-key" }` returned
+/// `vault://smoke-api-key/token/smoke-api-key` because the companion-socket
+/// handler was parsing the secret name as the namespace label instead of
+/// resolving the actual bound label from storage.
+///
+/// This test exercises `PutSecretCommand` directly to confirm that the command
+/// echoes back exactly the `Handle` supplied by the caller — the label is NOT
+/// derived from the secret name at the application layer.
+#[tokio::test]
+async fn test_put_secret_handle_uri_uses_bound_namespace_label() {
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    // Bind a namespace whose label differs from the secret name.
+    let ns_label: NamespaceLabel = "test-bug-1".parse().expect("ns label");
+    let ns_cmd = BindNamespaceCommand {
+        label: ns_label.clone(),
+        cwd_hash: None,
+        dek_version: 1,
+    };
+    let ns_out = ns_cmd.execute(&ctx).await.expect("bind namespace");
+    let ns_id = ns_out.namespace_id;
+
+    // Construct the handle with the bound label — exactly what a correct handler
+    // must produce (segment 1 = label, NOT the secret name "my-token").
+    let secret_name: merkle_types::SecretName = "my-token".parse().expect("secret name");
+    let category: CategoryName = "token".parse().expect("category");
+    let handle = merkle_types::Handle::new(ns_label.clone(), category.clone(), secret_name);
+
+    let put_cmd = PutSecretCommand {
+        namespace_id: ns_id,
+        handle: handle.clone(),
+        category,
+        sensitivity: Sensitivity::Low,
+        tags: vec![],
+        expose_metadata: false,
+        plaintext: b"s3cr3t-value".to_vec(),
+        dek_version: 1,
+        dek_bytes: test_dek(),
+        value_format: merkle_application::ValueFormat::Utf8,
+    };
+    let put_out = put_cmd
+        .execute(&ctx)
+        .await
+        .expect("put_secret should succeed");
+
+    // The returned handle must be vault://test-bug-1/token/my-token — segment 1
+    // is the BOUND LABEL, not the secret name "my-token".
+    assert_eq!(
+        put_out.handle.to_string(),
+        "vault://test-bug-1/token/my-token",
+        "Bug #1: handle URI first segment must be the bound namespace label, not the secret name"
+    );
+    assert_eq!(
+        put_out.handle.namespace().as_str(),
+        "test-bug-1",
+        "namespace component must equal the bound label"
+    );
+    assert_ne!(
+        put_out.handle.namespace().as_str(),
+        "my-token",
+        "namespace component must NOT equal the secret name"
+    );
 }
 
 /// T-KEYCHAIN-PERSIST-01 — init aborts when keychain write does not persist.
@@ -819,5 +948,226 @@ async fn test_init_aborts_when_keychain_write_does_not_persist() {
             merkle_application::AppError::Keychain(KeychainError::PersistenceFailed { .. })
         ),
         "expected AppError::Keychain(PersistenceFailed), got {err:?}"
+    );
+}
+
+/// T-LIST-NAMESPACES-01 — ADR-0025 §Bug #2 regression guard.
+///
+/// `ListNamespacesQuery { label: None }` must return ALL bound namespaces via
+/// `Storage::list_namespaces`, not an empty vec.
+#[tokio::test]
+async fn list_namespaces_query_returns_full_list_when_label_is_none() {
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    // Bind two namespaces.
+    for ns_label in ["ns-alpha", "ns-beta"] {
+        let label: NamespaceLabel = ns_label.parse().expect("ns label");
+        let cmd = BindNamespaceCommand {
+            label,
+            cwd_hash: None,
+            dek_version: 1,
+        };
+        cmd.execute(&ctx).await.expect("bind namespace");
+    }
+
+    // Query with no label filter — must return both namespaces.
+    let out = ListNamespacesQuery { label: None }
+        .execute(&ctx)
+        .await
+        .expect("list_namespaces_query must succeed");
+
+    assert!(
+        out.namespaces.len() >= 2,
+        "expected at least 2 namespaces from list_namespaces, got {}",
+        out.namespaces.len()
+    );
+
+    let labels: std::collections::HashSet<String> = out
+        .namespaces
+        .iter()
+        .map(|ns| ns.label.to_string())
+        .collect();
+    assert!(
+        labels.contains("ns-alpha"),
+        "list must include ns-alpha; got {labels:?}"
+    );
+    assert!(
+        labels.contains("ns-beta"),
+        "list must include ns-beta; got {labels:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug #3 regression tests — verify_chain plumbing in QueryAuditQuery
+// ---------------------------------------------------------------------------
+
+/// T-AUDIT-CHAIN-01 — query_audit with verify_chain=true returns Some(true)
+/// on an intact chain.
+///
+/// Regression for Bug #3: `chain_valid` was always `None`; this test proves
+/// the BLAKE3 chain verifier is now invoked and reports the correct outcome.
+#[tokio::test]
+async fn query_audit_verify_chain_returns_true_on_intact_chain() {
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    // Produce several audit entries: bind + two puts.
+    let ns_label: NamespaceLabel = "chain-ok".parse().expect("ns label");
+    let ns_cmd = BindNamespaceCommand {
+        label: ns_label,
+        cwd_hash: None,
+        dek_version: 1,
+    };
+    let ns_out = ns_cmd.execute(&ctx).await.expect("bind namespace");
+    let ns_id = ns_out.namespace_id;
+
+    for i in 0..2_u8 {
+        let handle: merkle_types::Handle = format!("vault://chain-ok/api-key/key-{i}")
+            .parse()
+            .expect("handle");
+        let put_cmd = PutSecretCommand {
+            namespace_id: ns_id,
+            handle,
+            category: "api-key".parse::<CategoryName>().expect("category"),
+            sensitivity: Sensitivity::Low,
+            tags: vec![],
+            expose_metadata: false,
+            plaintext: format!("v{i}").into_bytes(),
+            dek_version: 1,
+            dek_bytes: test_dek(),
+            value_format: merkle_application::ValueFormat::Utf8,
+        };
+        put_cmd.execute(&ctx).await.expect("put_secret");
+    }
+
+    let query = QueryAuditQuery {
+        filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: true,
+    };
+    let out = query.execute(&ctx).await.expect("query_audit");
+
+    assert!(
+        out.entries.len() >= 3,
+        "expected at least 3 audit entries (unseal + bind + 2 puts), got {}",
+        out.entries.len()
+    );
+    assert_eq!(
+        out.chain_valid,
+        Some(true),
+        "chain_valid must be Some(true) for an intact chain"
+    );
+}
+
+/// T-AUDIT-CHAIN-02 — query_audit with verify_chain=false returns None.
+///
+/// Verifies the original behaviour: when the caller does not request chain
+/// verification, `chain_valid` stays `None` and no verifier work is done.
+#[tokio::test]
+async fn query_audit_no_verify_returns_none() {
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    let ns_label: NamespaceLabel = "chain-skip".parse().expect("ns label");
+    let ns_cmd = BindNamespaceCommand {
+        label: ns_label,
+        cwd_hash: None,
+        dek_version: 1,
+    };
+    ns_cmd.execute(&ctx).await.expect("bind namespace");
+
+    let query = QueryAuditQuery {
+        filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: false,
+    };
+    let out = query.execute(&ctx).await.expect("query_audit");
+
+    assert_eq!(
+        out.chain_valid, None,
+        "chain_valid must be None when verify_chain=false"
+    );
+}
+
+/// T-AUDIT-CHAIN-03 — tampered pinned head causes verify_chain to return Some(false).
+///
+/// Overwrites the persisted `PinnedHead` with a forged entry whose `head_seq`
+/// is higher than the actual number of stored entries.  The verifier's
+/// truncation-detection branch then fires and reports a non-intact chain,
+/// confirming `chain_valid = Some(false)`.
+#[tokio::test]
+async fn query_audit_verify_chain_returns_false_on_tampered_chain() {
+    use merkle_domain_audit_compliance::{AuditLog, PinnedHead};
+    use merkle_types::Blake3Hash;
+
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+
+    // Append a couple of entries to build up a real chain.
+    let ns_label: NamespaceLabel = "chain-tamper".parse().expect("ns label");
+    let ns_cmd = BindNamespaceCommand {
+        label: ns_label,
+        cwd_hash: None,
+        dek_version: 1,
+    };
+    let ns_out = ns_cmd.execute(&ctx).await.expect("bind namespace");
+    let ns_id = ns_out.namespace_id;
+
+    let handle: merkle_types::Handle = "vault://chain-tamper/api-key/secret-one"
+        .parse()
+        .expect("handle");
+    let put_cmd = PutSecretCommand {
+        namespace_id: ns_id,
+        handle,
+        category: "api-key".parse::<CategoryName>().expect("category"),
+        sensitivity: Sensitivity::Low,
+        tags: vec![],
+        expose_metadata: false,
+        plaintext: b"secret".to_vec(),
+        dek_version: 1,
+        dek_bytes: test_dek(),
+        value_format: merkle_application::ValueFormat::Utf8,
+    };
+    put_cmd.execute(&ctx).await.expect("put_secret");
+
+    // Fetch real head_seq from storage, then forge a pinned head with a
+    // higher seq to simulate truncation: entries appear to have been deleted
+    // from storage while the pinned head still claims they existed.
+    let real_head = ctx
+        .storage
+        .pinned_head()
+        .await
+        .expect("pinned_head query")
+        .expect("pinned head must exist after writes");
+
+    let fake_hash = Blake3Hash::hash(b"tampered-head");
+    let fake_seq = real_head.head_seq + 10; // claim 10 more entries existed
+
+    // Overwrite both the in-memory log and the persisted pinned head.
+    {
+        let mut log = ctx.audit_log.write().await;
+        *log = AuditLog::restore_head(fake_hash, fake_seq);
+    }
+    ctx.storage
+        .update_pinned_head(&PinnedHead::new(
+            fake_hash,
+            fake_seq,
+            real_head.head_id, // reuse real id; verifier only checks seq
+            merkle_types::Rfc3339Timestamp::now(),
+        ))
+        .await
+        .expect("update_pinned_head with forged head");
+
+    // Run with verify_chain=true — must detect truncation.
+    let query = QueryAuditQuery {
+        filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: true,
+    };
+    let out = query.execute(&ctx).await.expect("query_audit");
+
+    assert_eq!(
+        out.chain_valid,
+        Some(false),
+        "chain_valid must be Some(false) when the pinned head implies more \
+         entries than are present (truncation detected)"
     );
 }

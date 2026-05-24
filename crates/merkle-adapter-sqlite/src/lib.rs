@@ -24,8 +24,8 @@ mod error;
 mod mappers;
 mod namespaces;
 mod policies;
-mod secrets;
 pub mod schema;
+mod secrets;
 
 use async_trait::async_trait;
 use merkle_domain_access_mediation::companion_device::CompanionDevice;
@@ -35,8 +35,8 @@ use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::{Namespace, Secret};
 use merkle_ports::{SecretFilter, Storage, StorageError};
 use merkle_types::{Handle, NamespaceId, NamespaceLabel, SecretId};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
 use tracing::instrument;
 
@@ -75,7 +75,11 @@ impl SqliteStorage {
         // database. Use max_connections(1) to ensure all operations share the
         // same DB instance and the schema created by migrations is visible to
         // subsequent queries.
-        let pool_max = if database_url.contains(":memory:") { 1 } else { 5 };
+        let pool_max = if database_url.contains(":memory:") {
+            1
+        } else {
+            5
+        };
         let pool = SqlitePoolOptions::new()
             .max_connections(pool_max)
             .connect_with(opts)
@@ -116,10 +120,7 @@ impl Storage for SqliteStorage {
     }
 
     #[instrument(skip(self), fields(handle = %handle))]
-    async fn get_secret_by_handle(
-        &self,
-        handle: &Handle,
-    ) -> Result<Option<Secret>, StorageError> {
+    async fn get_secret_by_handle(&self, handle: &Handle) -> Result<Option<Secret>, StorageError> {
         secrets::get_secret_by_handle(&self.pool, handle).await
     }
 
@@ -150,6 +151,19 @@ impl Storage for SqliteStorage {
         namespaces::get_namespace_by_label(&self.pool, label).await
     }
 
+    #[instrument(skip(self))]
+    async fn list_namespaces(&self) -> Result<Vec<Namespace>, StorageError> {
+        namespaces::list_namespaces(&self.pool).await
+    }
+
+    #[instrument(skip(self), fields(id = %id))]
+    async fn get_namespace_by_id(
+        &self,
+        id: &NamespaceId,
+    ) -> Result<Option<Namespace>, StorageError> {
+        namespaces::get_namespace_by_id(&self.pool, id).await
+    }
+
     #[instrument(skip(self, entry), fields(seq = entry.seq))]
     async fn append_audit_entry(&self, entry: &AuditEntry) -> Result<(), StorageError> {
         audit::append_audit_entry(&self.pool, entry).await
@@ -176,18 +190,12 @@ impl Storage for SqliteStorage {
     }
 
     #[instrument(skip(self))]
-    async fn list_backups(
-        &self,
-        namespace_id: &NamespaceId,
-    ) -> Result<Vec<Backup>, StorageError> {
+    async fn list_backups(&self, namespace_id: &NamespaceId) -> Result<Vec<Backup>, StorageError> {
         backups::list_backups(&self.pool, namespace_id).await
     }
 
     #[instrument(skip(self, policy))]
-    async fn put_namespace_policy(
-        &self,
-        policy: &NamespacePolicy,
-    ) -> Result<(), StorageError> {
+    async fn put_namespace_policy(&self, policy: &NamespacePolicy) -> Result<(), StorageError> {
         policies::put_namespace_policy(&self.pool, policy).await
     }
 

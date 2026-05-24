@@ -27,13 +27,10 @@ pub async fn query_audit(
 ) -> impl IntoResponse {
     // Map HTTP query params → domain AuditQuery filter.
     let filter = DomainAuditQuery {
-        op: None,     // string→enum parse requires AuditOp FromStr; leave as no-filter for now
+        op: None, // string→enum parse requires AuditOp FromStr; leave as no-filter for now
         outcome: None,
         namespace_id: None,
-        handle: params
-            .handle
-            .as_deref()
-            .and_then(|h| h.parse().ok()),
+        handle: params.handle.as_deref().and_then(|h| h.parse().ok()),
         sensitivity: None,
         from: params
             .since
@@ -50,7 +47,10 @@ pub async fn query_audit(
         limit: Some(params.limit),
     };
 
-    let query = QueryAuditQuery { filter };
+    let query = QueryAuditQuery {
+        filter,
+        verify_chain: params.verify_chain,
+    };
 
     match query.execute(&ctx).await {
         Ok(output) => {
@@ -83,7 +83,7 @@ pub async fn query_audit(
                 Json(AuditResponse {
                     entries,
                     total,
-                    chain_valid: None,
+                    chain_valid: output.chain_valid,
                 }),
             )
                 .into_response()
