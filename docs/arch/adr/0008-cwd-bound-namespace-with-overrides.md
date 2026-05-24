@@ -164,3 +164,17 @@ implementation detail of the adapter, not a user-facing MCP parameter.
 Cross-reference: [ADR-0025](0025-post-phase-2-cosmetic-cleanup.md) §Bug #6
 documents the docstring fix that clarifies this boundary for future
 maintainers.
+
+## Follow-up — 2026-05-24 (ADR-0026)
+
+ADR-0008 §step 4 states that `vault.bind(label)` replaces the label for the
+duration of the session, implying that binding a previously-created namespace
+label across process restarts is valid. A live integration test exposed that
+this contract was violated: `BindNamespaceCommand` performed an unconditional
+INSERT that hit the `UNIQUE` constraint on `label` in the `namespaces` table,
+returning HTTP 500 instead of resolving the existing namespace. This left
+`SessionState` in an inconsistent half-bound state.
+
+See [ADR-0026](0026-idempotent-bind-and-session-state-atomicity.md) for the
+root-cause analysis and the idempotent get-or-create fix to `BindNamespaceCommand`
+and the two-phase commit restructuring of `vault_bind`.

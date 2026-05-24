@@ -215,3 +215,23 @@ platform requirement, not a code bug; tracked as a platform-setup task.
 All five in-scope bugs are remediated in targeted PRs governed by ADR-0025.
 The smoke test sequence (doctor → bind → put → list → describe →
 audit_query with verify_chain) must pass end-to-end after those PRs merge.
+
+## Follow-up — 2026-05-24 (ADR-0026)
+
+A second live smoke test run against the same deployed `merkle-agent` stack
+surfaced a new bug not catalogued in ADR-0025. The bug is a direct consequence
+of the incomplete PR2 reconciliation noted in §Note 1:
+
+`vault.bind` sets `SessionState.namespace_bound = true` before the
+`POST /v1/sessions` Companion Socket call, then only sets
+`SessionState.namespace_id` if the call succeeds. When the call fails because
+the namespace label already exists in SQLite (a `UNIQUE` constraint violation
+on the `label` column, returning HTTP 500), the session is left in a
+half-bound state. Subsequent `vault.list` and `vault.search` calls return
+`NamespaceNotBound`; subsequent `vault.bind` calls return `AlreadyBound`.
+The session is unrecoverable without a process restart.
+
+See [ADR-0026](0026-idempotent-bind-and-session-state-atomicity.md) for the
+full root-cause analysis, the idempotent fix to `BindNamespaceCommand`, and
+the two-phase commit restructuring of `vault_bind` that eliminates the
+half-bound state.
