@@ -74,28 +74,26 @@ async fn vault_reveal_requires_operator_confirmation() {
     );
 }
 
-/// `vault.bind` called twice on the same session must return `ALREADY_BOUND`
-/// (-32008). The second call is rejected at the session layer, before the
-/// socket is contacted.
+/// `vault.bind` called twice on the same session after a successful first bind
+/// must return `ALREADY_BOUND` (-32008). The second call is rejected at the
+/// session guard before the socket is contacted (ADR-0026 "at most once" invariant).
+///
+/// NOTE: the previous version of this test asserted that a second bind was
+/// rejected even when the first bind FAILED. That was the broken behaviour fixed
+/// by ADR-0026: a failed first bind must NOT lock the session. This test now
+/// uses a pre-bound server (direct state injection) to verify the guard fires
+/// only after a committed, successful bind.
 #[tokio::test]
-async fn vault_bind_rejects_double_bind() {
-    let server = unreachable_server();
+async fn vault_bind_rejects_double_bind_after_successful_first_bind() {
+    let server = pre_bound_unreachable_server().await;
 
-    // First bind fails with AGENT_UNREACHABLE (socket absent), but the
-    // SessionState records the label regardless — the guard fires first.
-    let _ = server
-        .vault_bind(Parameters(VaultBindInput {
-            label: "ns-one".to_owned(),
-        }))
-        .await;
-
-    // Second bind must be rejected before reaching the socket.
+    // Session is already successfully bound; a second bind must be rejected.
     let err = server
         .vault_bind(Parameters(VaultBindInput {
             label: "ns-two".to_owned(),
         }))
         .await
-        .expect_err("second bind must return AlreadyBound");
+        .expect_err("second bind after success must return AlreadyBound");
 
     assert_eq!(
         err.code.0,
@@ -399,6 +397,123 @@ async fn vault_ssh_exec_returns_agent_unreachable() {
         err.code.0,
         codes::AGENT_UNREACHABLE,
         "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0026 regression tests: idempotent bind + session-state atomicity
+// ---------------------------------------------------------------------------
+
+/// REGRESSION (ADR-0026): a `vault.bind` that fails at the Companion Socket
+/// layer must NOT set `namespace_bound = true` in `SessionState`.
+///
+/// Before the fix, Phase 1 set `namespace_bound = true` before the socket call.
+/// After the socket call failed, Phase 3 was skipped, leaving
+/// `namespace_bound=true, namespace_id=None` — the "half-bound" poison state.
+///
+/// This test verifies:
+/// a) A failed bind (unreachable socket) leaves the session fully unbound.
+/// b) A second `vault.bind` call after the failure returns `AGENT_UNREACHABLE`,
+///    not `ALREADY_BOUND` — i.e. the session is NOT permanently locked.
+#[tokio::test]
+async fn vault_bind_socket_failure_leaves_session_unbound() {
+    let server = unreachable_server();
+
+    // First bind — socket is unreachable, so this must fail.
+    let err = server
+        .vault_bind(Parameters(VaultBindInput {
+            label: "baremetal-v2".to_owned(),
+        }))
+        .await
+        .expect_err("bind to dead socket must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100) on first bind; got {}",
+        err.code.0
+    );
+
+    // Session must be completely unbound: namespace_id must be None.
+    {
+        let session = server.session.read().await;
+        assert!(
+            session.namespace_id().is_none(),
+            "namespace_id must remain None after failed bind (ADR-0026: no half-bound state)"
+        );
+        assert!(
+            !session.is_bound(),
+            "namespace_bound must remain false after failed bind (ADR-0026: no half-bound state)"
+        );
+    }
+
+    // Second bind attempt must also reach the socket (returning AGENT_UNREACHABLE),
+    // NOT be rejected at the session guard with ALREADY_BOUND.
+    let err2 = server
+        .vault_bind(Parameters(VaultBindInput {
+            label: "baremetal-v2".to_owned(),
+        }))
+        .await
+        .expect_err("second bind after failure must also return an error");
+
+    assert_eq!(
+        err2.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100) on retry; got {} (ALREADY_BOUND = {} would mean the session is poisoned)",
+        err2.code.0,
+        codes::ALREADY_BOUND
+    );
+}
+
+/// REGRESSION (ADR-0026): after a successful bind the session-state fields
+/// `namespace_bound`, `namespace_label`, and `namespace_id` must all be set
+/// consistently. This test uses a pre-bound session (simulated via direct
+/// state mutation) and confirms the invariant holds.
+#[tokio::test]
+async fn vault_bind_session_state_is_consistent_after_success() {
+    let server = unreachable_server();
+
+    // Simulate a fully committed bind (the new two-phase commit path).
+    // Use nil UUIDs since the uuid crate in this workspace doesn't enable v4.
+    {
+        let mut session = server.session.write().await;
+        let ns_id = uuid::Uuid::nil();
+        let sid = uuid::Uuid::nil();
+        session.commit_binding("acme".to_owned(), ns_id, sid);
+    }
+
+    // All three fields must be set.
+    {
+        let session = server.session.read().await;
+        assert!(session.is_bound(), "namespace_bound must be true");
+        assert_eq!(
+            session.namespace_label(),
+            Some("acme"),
+            "namespace_label must match"
+        );
+        assert!(
+            session.namespace_id().is_some(),
+            "namespace_id must be Some after commit_binding"
+        );
+        assert!(
+            session.session_id().is_some(),
+            "session_id must be Some after commit_binding"
+        );
+    }
+
+    // A second bind on the already-bound session must return ALREADY_BOUND.
+    let err = server
+        .vault_bind(Parameters(VaultBindInput {
+            label: "other-label".to_owned(),
+        }))
+        .await
+        .expect_err("second bind must return AlreadyBound");
+
+    assert_eq!(
+        err.code.0,
+        codes::ALREADY_BOUND,
+        "expected ALREADY_BOUND (-32008); got {}",
         err.code.0
     );
 }
