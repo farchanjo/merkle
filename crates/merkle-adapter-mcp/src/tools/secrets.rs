@@ -104,10 +104,12 @@ pub struct VaultDeleteInput {
 /// Input for vault.search — free-text search over public metadata.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSearchInput {
-    /// Natural-language or keyword query.
+    /// Natural-language or keyword query (FTS5 MATCH expression).
     pub query: String,
-    /// Maximum results to return (default 10, max 50).
+    /// Maximum results per page (default 10, max 50).
     pub limit: Option<u32>,
+    /// Zero-based page offset for ranked result pagination.
+    pub offset: Option<u32>,
 }
 
 /// Input for vault.history — version history of a Secret.
@@ -280,6 +282,7 @@ impl MerkleMcpServer {
                     fts_query: input.fts_query,
                     limit: input.limit.unwrap_or(50),
                     cursor: None,
+                    offset: 0,
                 },
             )
             .await
@@ -430,10 +433,17 @@ impl MerkleMcpServer {
     }
 
     /// Free-text semantic search over public metadata using the FTS5 index.
-    /// Returns ranked handles with a relevance score.
+    ///
+    /// Returns ranked results with BM25 relevance scores. SQLite FTS5 `bm25()`
+    /// returns negative values — **more negative = more relevant**. Results are
+    /// ordered best-first. Each result includes `score`, `bm25_rank` (1-based,
+    /// page-local), and `highlights` (per-field snippets with `<b>` markers).
+    ///
+    /// Weight vector: name=10.0, tags=5.0, description=3.0, category=2.0,
+    /// namespace_label=1.0. A name match strongly dominates a description match.
     #[tool(
         name = "vault.search",
-        description = "Free-text semantic search over public metadata using the FTS5 index. Returns ranked handles with BM25 relevance scores (lower = more relevant)."
+        description = "Weighted BM25 full-text search over public metadata (name, tags, description, category, namespace_label). Returns ranked results with score (more negative = more relevant), bm25_rank (1-based, page-local), and per-field highlights. Paginate with limit + offset."
     )]
     pub async fn vault_search(
         &self,
@@ -443,7 +453,8 @@ impl MerkleMcpServer {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
-        let limit = input.limit.unwrap_or(10);
+        let limit = input.limit.unwrap_or(10).clamp(1, 50);
+        let offset = input.offset.unwrap_or(0);
 
         let resp = self
             .client
@@ -452,6 +463,7 @@ impl MerkleMcpServer {
                 &ListSecretsParams {
                     fts_query: Some(input.query),
                     limit,
+                    offset,
                     category: None,
                     sensitivity: None,
                     tags: None,
@@ -463,21 +475,37 @@ impl MerkleMcpServer {
             .await
             .map_err(client_error_to_mcp)?;
 
+        // Ranked mode: server populates ranked_items when fts_query is set.
         let results: Vec<_> = resp
-            .items
+            .ranked_items
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
-            .map(|s| {
+            .map(|rs| {
                 json!({
-                    "handle": s.handle.to_string(),
-                    "name": s.name,
-                    "category": s.category,
-                    "sensitivity": format!("{:?}", s.sensitivity),
+                    "handle": rs.secret.handle.to_string(),
+                    "name": rs.secret.name,
+                    "category": rs.secret.category,
+                    "sensitivity": format!("{:?}", rs.secret.sensitivity),
+                    "score": rs.score,
+                    "bm25_rank": rs.bm25_rank,
+                    "highlights": rs.highlights.iter().map(|h| json!({
+                        "field": h.field,
+                        "snippet": h.snippet,
+                    })).collect::<Vec<_>>(),
                 })
             })
             .collect();
 
         Ok(CallToolResult::success(vec![Content::text(
-            json!({"results": results, "count": results.len()}).to_string(),
+            json!({
+                "results": results,
+                "count": results.len(),
+                "total": resp.total,
+                "has_more": resp.has_more.unwrap_or(false),
+                "offset": offset,
+            })
+            .to_string(),
         )]))
     }
 
