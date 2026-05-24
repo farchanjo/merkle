@@ -63,10 +63,7 @@ impl HttpUploadCommand {
             body: Some(body),
         };
 
-        let response = ctx
-            .external
-            .http_request(spec, self.auth.clone())
-            .await?;
+        let response = ctx.external.http_request(spec, self.auth.clone()).await?;
 
         // Audit: op=http_upload.
         let hmac_key = ctx.require_hmac_key().await?;
@@ -84,7 +81,11 @@ impl HttpUploadCommand {
         ctx.storage.append_audit_entry(&entry).await?;
         ctx.storage.update_pinned_head(&pinned).await?;
 
-        info!(status = response.status, bytes_sent = bytes_sent, "http_upload: complete");
+        info!(
+            status = response.status,
+            bytes_sent = bytes_sent,
+            "http_upload: complete"
+        );
         Ok(HttpUploadOutput {
             status: response.status,
             bytes_sent,

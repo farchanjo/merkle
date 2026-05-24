@@ -52,10 +52,7 @@ impl HttpDownloadCommand {
             body: None,
         };
 
-        let response = ctx
-            .external
-            .http_request(spec, self.auth.clone())
-            .await?;
+        let response = ctx.external.http_request(spec, self.auth.clone()).await?;
 
         let bytes_written = response.body.len() as u64;
         tokio::fs::write(&self.destination, &response.body)
@@ -78,7 +75,11 @@ impl HttpDownloadCommand {
         ctx.storage.append_audit_entry(&entry).await?;
         ctx.storage.update_pinned_head(&pinned).await?;
 
-        info!(status = response.status, bytes_written = bytes_written, "http_download: complete");
+        info!(
+            status = response.status,
+            bytes_written = bytes_written,
+            "http_download: complete"
+        );
         Ok(HttpDownloadOutput {
             status: response.status,
             bytes_written,

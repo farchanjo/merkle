@@ -41,7 +41,9 @@ impl RevokeTempfileCommand {
         ctx.require_unsealed().await?;
 
         if self.opaque_token.trim().is_empty() {
-            return Err(AppError::InvalidInput("opaque_token must not be empty".into()));
+            return Err(AppError::InvalidInput(
+                "opaque_token must not be empty".into(),
+            ));
         }
 
         info!(opaque_token = %self.opaque_token, "revoke_tempfile: revoking");

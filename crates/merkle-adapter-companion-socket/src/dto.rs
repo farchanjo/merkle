@@ -636,3 +636,383 @@ pub struct ListSnapshotsParams {
     pub limit: u32,
     pub cursor: Option<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Use-token group
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /v1/use-tokens`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UseTokenRequest {
+    pub namespace_id: Uuid,
+    pub handle: Handle,
+    pub session_id: Uuid,
+}
+
+/// Response body for `POST /v1/use-tokens`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UseTokenResponse {
+    /// Opaque 43-character URL-safe base64 token string.
+    pub use_token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Request body for `POST /v1/use-tokens/tempfile`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteTempfileRequest {
+    pub namespace_id: Uuid,
+    pub handle: Handle,
+    pub session_id: Uuid,
+}
+
+/// Response body for `POST /v1/use-tokens/tempfile`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UseTempfileResponse {
+    /// Opaque token — the real path is never returned over the socket.
+    pub opaque_token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Request body for `POST /v1/use-tokens/fifo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFifoRequest {
+    pub namespace_id: Uuid,
+    pub handle: Handle,
+    pub session_id: Uuid,
+}
+
+/// Response body for `POST /v1/use-tokens/fifo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UseFifoResponse {
+    /// Opaque token identifying the FIFO — the real path is never returned.
+    pub opaque_token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Response body for `DELETE /v1/use-tokens/tempfiles/{opaque_token}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokeTempfileResponse {
+    pub revoked: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+/// A single check entry inside the doctor response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorCheck {
+    pub name: String,
+    /// `"pass"`, `"warn"`, or `"fail"`.
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub duration_ms: u64,
+}
+
+/// Response body for `GET /v1/agent/doctor`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorResponse {
+    pub checks: Vec<DoctorCheck>,
+    /// `"healthy"`, `"degraded"`, or `"unhealthy"`.
+    pub overall: String,
+}
+
+// ---------------------------------------------------------------------------
+// Proxy group — SSH
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /v1/proxy/ssh/exec`.
+///
+/// # Design note (ADR-0024 §Proxy tool execution split)
+///
+/// Per ADR-0024 the proxy tools execute on the AGENT side. The request
+/// supplies a `key_handle` referring to a stored secret; the agent resolves
+/// and decrypts the key material internally before calling the External
+/// Services port. Key bytes never cross the Companion Socket boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySshExecRequest {
+    pub namespace_id: Uuid,
+    /// Handle to the SSH private-key secret stored in the vault.
+    pub key_handle: Handle,
+    /// Remote host in `host:port` form (e.g. `"bastion.example.com:22"`).
+    pub target: String,
+    /// Shell command to execute on the remote host.
+    pub command: String,
+}
+
+/// Response body for `POST /v1/proxy/ssh/exec`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySshExecResponse {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+/// Request body for `POST /v1/proxy/ssh/copy`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySshCopyRequest {
+    pub namespace_id: Uuid,
+    /// Handle to the SSH private-key secret stored in the vault.
+    pub key_handle: Handle,
+    /// SSH target in `host:port` form.
+    pub target: String,
+    /// Source path (local path for upload; remote path for download).
+    pub source: String,
+    /// Destination path (remote path for upload; local path for download).
+    pub dest: String,
+    /// Transfer direction.
+    pub direction: SshCopyDirection,
+}
+
+/// Transfer direction for `ProxySshCopyRequest`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SshCopyDirection {
+    Upload,
+    Download,
+}
+
+/// Response body for `POST /v1/proxy/ssh/copy`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySshCopyResponse {
+    pub bytes_transferred: u64,
+    pub exit_code: i32,
+}
+
+/// Request body for `POST /v1/proxy/ssh/port-forward`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyPortForwardRequest {
+    pub namespace_id: Uuid,
+    /// Handle to the SSH private-key secret stored in the vault.
+    pub key_handle: Handle,
+    /// SSH bastion target in `host:port` form.
+    pub target: String,
+    /// Local port to bind on `127.0.0.1`.
+    pub local_port: u16,
+    /// Remote host for the forwarded connection.
+    pub remote_host: String,
+    /// Remote port for the forwarded connection.
+    pub remote_port: u16,
+    /// Optional TTL in seconds for the tunnel; agent enforces graceful shutdown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+}
+
+/// Response body for `POST /v1/proxy/ssh/port-forward`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyPortForwardResponse {
+    pub session_id: Uuid,
+    pub local_addr: String,
+}
+
+/// Request body for `POST /v1/proxy/ssh/shell`.
+///
+/// Full PTY proxy is out of scope for this phase. The endpoint is wired but
+/// returns 501 Not Implemented. A future phase will introduce a streaming
+/// WebSocket sub-protocol over the Companion Socket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySshShellRequest {
+    pub namespace_id: Uuid,
+    /// Handle to the SSH private-key secret stored in the vault.
+    pub key_handle: Handle,
+    /// SSH target in `host:port` form.
+    pub target: String,
+}
+
+/// Response placeholder for `POST /v1/proxy/ssh/shell` (501 today).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySshShellResponse {
+    pub session_id: Uuid,
+    /// Transport URI for the future streaming channel.
+    pub transport_uri: String,
+}
+
+// ---------------------------------------------------------------------------
+// Proxy group — HTTP
+// ---------------------------------------------------------------------------
+
+/// Inline HTTP auth specification in proxy requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum HttpAuthSpec {
+    /// No authentication attached.
+    None,
+    /// Bearer token in the Authorization header.
+    Bearer { token: String },
+    /// HTTP Basic authentication.
+    Basic { user: String, pass: String },
+}
+
+/// Inline HTTP request specification in proxy requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpRequestSpecDto {
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+/// Request body for `POST /v1/proxy/http/request`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHttpRequestRequest {
+    pub namespace_id: Uuid,
+    /// Optional handle to a vault secret whose plaintext is used as the auth
+    /// credential. When set, the agent decrypts the secret and constructs
+    /// the appropriate `HttpAuth` before calling `ExternalServices`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_handle: Option<Handle>,
+    pub spec: HttpRequestSpecDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<HttpAuthSpec>,
+}
+
+/// Response body for `POST /v1/proxy/http/request`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHttpRequestResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    /// Response body; binary bodies are base64-encoded.
+    pub body: String,
+}
+
+/// Request body for `POST /v1/proxy/http/download`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHttpDownloadRequest {
+    pub namespace_id: Uuid,
+    /// Optional handle to a vault secret used as auth credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_handle: Option<Handle>,
+    pub url: String,
+    /// Absolute destination path on the agent's filesystem.
+    pub dest_path: String,
+}
+
+/// Response body for `POST /v1/proxy/http/download`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHttpDownloadResponse {
+    pub bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    pub status: u16,
+}
+
+/// Request body for `POST /v1/proxy/http/upload`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHttpUploadRequest {
+    pub namespace_id: Uuid,
+    /// Optional handle to a vault secret used as auth credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_handle: Option<Handle>,
+    pub url: String,
+    /// Absolute source path on the agent's filesystem.
+    pub source_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+}
+
+/// Response body for `POST /v1/proxy/http/upload`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyHttpUploadResponse {
+    pub status: u16,
+    pub bytes_sent: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Proxy group — Spawn
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /v1/proxy/spawn`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySpawnRequest {
+    pub namespace_id: Uuid,
+    /// Handles to vault secrets injected as environment variables.
+    ///
+    /// Each handle is decrypted on the agent side; its plaintext is set as
+    /// an env var named after the secret's canonical name (handle.secret_name()).
+    #[serde(default)]
+    pub secret_handles: Vec<Handle>,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
+}
+
+/// Response body for `POST /v1/proxy/spawn`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySpawnResponse {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+// ---------------------------------------------------------------------------
+// Proxy group — Crypto
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /v1/proxy/crypto/sign`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyCryptoSignRequest {
+    pub namespace_id: Uuid,
+    /// Handle to the signing-key secret (Ed25519 32-byte seed).
+    pub key_handle: Handle,
+    /// Message bytes, base64-encoded.
+    pub message_b64: String,
+    /// Signing algorithm.
+    #[serde(default)]
+    pub algorithm: CryptoSignAlgorithm,
+}
+
+/// Supported signing algorithms for the proxy crypto/sign endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CryptoSignAlgorithm {
+    #[default]
+    Ed25519,
+    RsaSha256,
+}
+
+/// Response body for `POST /v1/proxy/crypto/sign`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyCryptoSignResponse {
+    /// Signature bytes, base64-encoded.
+    pub signature_b64: String,
+    /// Algorithm used.
+    pub algorithm: String,
+}
+
+/// Request body for `POST /v1/proxy/crypto/decrypt`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyCryptoDecryptRequest {
+    pub namespace_id: Uuid,
+    /// Handle to the 32-byte AEAD key secret.
+    pub key_handle: Handle,
+    /// Ciphertext, base64-encoded. Format: `[nonce 24 bytes || ct || tag 16 bytes]`.
+    pub ciphertext_b64: String,
+    /// Additional associated data, base64-encoded.
+    #[serde(default)]
+    pub aad_b64: String,
+    /// AEAD algorithm identifier (informational; vault uses XChaCha20-Poly1305).
+    #[serde(default)]
+    pub algorithm: CryptoDecryptAlgorithm,
+}
+
+/// Supported AEAD algorithms for the proxy crypto/decrypt endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CryptoDecryptAlgorithm {
+    #[default]
+    X25519Chacha20poly1305,
+}
+
+/// Response body for `POST /v1/proxy/crypto/decrypt`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyCryptoDecryptResponse {
+    /// Decrypted plaintext, base64-encoded.
+    pub plaintext_b64: String,
+}

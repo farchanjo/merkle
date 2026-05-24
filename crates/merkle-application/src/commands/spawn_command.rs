@@ -5,8 +5,8 @@
 //! awaits the child process, and returns stdout/stderr/exit-code. The
 //! plaintext is never written to disk. Audited with `op=spawn`.
 
-use tokio::process::Command;
 use merkle_types::{AuditOp, AuditOutcome, Handle, NamespaceId};
+use tokio::process::Command;
 use tracing::info;
 
 use crate::{AppContext, AppError};

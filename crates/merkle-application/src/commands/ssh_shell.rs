@@ -47,10 +47,7 @@ impl SshShellCommand {
 
         info!(target = %self.target, "ssh_shell: executing remote shell");
 
-        let shell_cmd = self
-            .command
-            .as_deref()
-            .unwrap_or("/bin/sh -l");
+        let shell_cmd = self.command.as_deref().unwrap_or("/bin/sh -l");
 
         let result = ctx
             .external

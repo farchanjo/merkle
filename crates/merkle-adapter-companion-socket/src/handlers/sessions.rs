@@ -8,6 +8,20 @@
 //! a session descriptor. `DELETE /v1/sessions/{id}` is a no-op at this phase
 //! because namespace bindings are persistent; a future unbind command will be
 //! wired in Phase 6.B.
+//!
+//! # MCP `vault.bind` mapping (ADR-0024 §Note 1)
+//!
+//! The MCP `vault.bind` tool maps to `BindNamespaceCommand`. Rather than
+//! introducing a parallel bind endpoint, the MCP Adapter MUST call
+//! `POST /v1/sessions` with:
+//!
+//! - `cwd_hash`: hex-SHA256 of `std::env::current_dir()` at MCP server startup.
+//! - `namespace_label`: the user-supplied label from `vault.bind`, if any.
+//!
+//! This preserves the cwd-scoped namespace semantics defined in ADR-0002 and
+//! avoids a duplicated bind surface. The 1:1 `session_id == namespace_id`
+//! mapping is a Phase 6 simplification; Phase 6.B will introduce a separate
+//! session table with per-client TTLs.
 
 use axum::{
     Json,
@@ -52,7 +66,13 @@ pub async fn create_session(
     // NamespaceLabel requires DNS-safe format; sanitize to [a-z0-9-].
     let sanitized = raw_label
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_owned();
@@ -109,7 +129,10 @@ pub async fn create_session(
 /// acknowledges the close and clears any in-flight state (none in Phase 6).
 /// A dedicated `UnbindNamespaceCommand` will be wired in Phase 6.B.
 #[instrument(skip(_ctx))]
-#[expect(clippy::used_underscore_binding, reason = "axum extractors accepted but intentionally unused in Phase 6.B stub")]
+#[expect(
+    clippy::used_underscore_binding,
+    reason = "axum extractors accepted but intentionally unused in Phase 6.B stub"
+)]
 pub async fn close_session(
     State(_ctx): State<Arc<AppContext>>,
     Path(_session_id): Path<Uuid>,

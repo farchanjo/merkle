@@ -1361,6 +1361,736 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
 
+  # ---------------------------------------------------------------------------
+  # Diagnostics (ADR-0024 gap matrix)
+  # ---------------------------------------------------------------------------
+
+  /v1/agent/doctor:
+    get:
+      operationId: diagnostics--doctor
+      summary: Run internal health checks
+      description: >-
+        Executes a structured health check across all bounded contexts and
+        returns a per-check summary. Checks include vault seal state, audit
+        chain integrity, storage liveness, and OOB notifier availability.
+        This endpoint is safe to call from monitoring tooling and MCP server
+        health probes — it does not emit an audit entry and never returns key
+        material or file paths.
+      tags:
+        - identity-and-sealing
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      responses:
+        "200":
+          description: Health checks completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoctorResponse"
+        "412":
+          description: Vault is sealed; doctor requires an unsealed vault.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error while running health checks.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Use-token group (ADR-0024 gap matrix — PR3)
+  # ---------------------------------------------------------------------------
+
+  /v1/use-tokens:
+    post:
+      operationId: access-mediation--issue-use-token
+      summary: Issue a short-lived use-token
+      description: >-
+        Generates a 256-bit cryptographically-random use-token valid for
+        60 seconds. The opaque base64url token string is returned; the
+        plaintext secret material is never included. Audited with op=use.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UseTokenRequest"
+      responses:
+        "201":
+          description: Use-token issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UseTokenResponse"
+        "400":
+          description: Invalid namespace or handle.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Secret not found for the given handle.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/use-tokens/tempfile:
+    post:
+      operationId: access-mediation--write-tempfile
+      summary: Materialize a secret to a mode-0600 temporary file
+      description: >-
+        Resolves the secret by handle, decrypts the private blob, and writes
+        the plaintext to a temporary file with mode 0600. Returns an opaque
+        token identifying the file; the real filesystem path is never included
+        in the response. The DEK is derived server-side from the namespace HMAC
+        key; the client must not supply raw key bytes. Audited with
+        op=write_tempfile.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteTempfileRequest"
+      responses:
+        "201":
+          description: Tempfile written; opaque token returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UseTempfileResponse"
+        "400":
+          description: Invalid namespace or handle.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Secret not found for the given handle.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error (I/O, crypto, or audit failure).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/use-tokens/fifo:
+    post:
+      operationId: access-mediation--write-fifo
+      summary: Materialize a secret to a UNIX named pipe (FIFO)
+      description: >-
+        Creates a FIFO at a random path under the system temp directory and
+        spawns a background writer task that writes the secret plaintext exactly
+        once when a reader connects, then removes the FIFO. Returns an opaque
+        token; the real FIFO path is never included. DEK is derived
+        server-side. Audited with op=write_tempfile. Only available on UNIX
+        platforms; returns 501 on Windows.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteFifoRequest"
+      responses:
+        "201":
+          description: FIFO created; opaque token returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UseFifoResponse"
+        "400":
+          description: Invalid namespace or handle.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Secret not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "501":
+          description: Not implemented on this platform.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/use-tokens/tempfiles/{opaque_token}:
+    delete:
+      operationId: access-mediation--revoke-tempfile
+      summary: Revoke a tempfile or FIFO by opaque token
+      description: >-
+        Best-effort deletion of the tempfile or FIFO identified by the opaque
+        token. Always returns 200; `revoked: false` means the file was already
+        gone (consumed or never created). Audited with op=write_tempfile.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - name: opaque_token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: >
+            Opaque token previously returned by write_tempfile or write_fifo.
+      responses:
+        "200":
+          description: Revocation completed (best-effort).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokeTempfileResponse"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Internal error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Proxy group — SSH (ADR-0024 gap matrix — PR4)
+  # ---------------------------------------------------------------------------
+
+  /v1/proxy/ssh/exec:
+    post:
+      operationId: proxy--ssh-exec
+      summary: Execute a remote SSH command (agent-side)
+      description: >-
+        Executes `command` on the SSH target using the private key stored at
+        `key_handle`. The agent decrypts the key before calling
+        ExternalServices; raw key bytes never cross the Companion Socket
+        boundary (ADR-0024 §Note 2). Audited with op=ssh_exec.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxySshExecRequest"
+      responses:
+        "200":
+          description: Command executed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxySshExecResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Key secret not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: SSH or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/proxy/ssh/copy:
+    post:
+      operationId: proxy--ssh-copy
+      summary: Copy a file to/from a remote host via SSH
+      description: >-
+        Performs a file copy to/from the SSH target using the private key stored
+        at `key_handle`. Transfer direction is specified by the `direction`
+        field. Key material never crosses the socket boundary.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxySshCopyRequest"
+      responses:
+        "200":
+          description: Copy completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxySshCopyResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Key secret not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: SSH or I/O error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/proxy/ssh/port-forward:
+    post:
+      operationId: proxy--ssh-port-forward
+      summary: Open a long-lived SSH port-forward tunnel
+      description: >-
+        Spawns an `ssh -L` child process using the private key at `key_handle`.
+        Returns a session_id and local_addr; the tunnel stays active until the
+        agent is stopped or the session is explicitly terminated (Phase 7).
+        Key material never crosses the socket boundary.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyPortForwardRequest"
+      responses:
+        "201":
+          description: Tunnel established.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyPortForwardResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Policy denied (missing operator confirmation).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Key secret not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: SSH spawn or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/proxy/ssh/shell:
+    post:
+      operationId: proxy--ssh-shell
+      summary: Open an interactive SSH shell session (501 stub)
+      description: >-
+        Full PTY proxy is out of scope for Phase 6. This endpoint is wired but
+        always returns 501 Not Implemented. A future phase will introduce a
+        streaming sub-protocol over the Companion Socket.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxySshShellRequest"
+      responses:
+        "501":
+          description: Not implemented in Phase 6.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Proxy group — HTTP
+  # ---------------------------------------------------------------------------
+
+  /v1/proxy/http/request:
+    post:
+      operationId: proxy--http-request
+      summary: Perform an outbound HTTP request (agent-side)
+      description: >-
+        Issues an HTTP request via ExternalServices. When `secret_handle` is
+        set, the agent decrypts the vault secret and uses the plaintext as a
+        Bearer token; this supersedes the `auth` field. Audited with
+        op=http_request.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyHttpRequestRequest"
+      responses:
+        "200":
+          description: HTTP request completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyHttpRequestResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: HTTP or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/proxy/http/download:
+    post:
+      operationId: proxy--http-download
+      summary: Download a remote resource to the agent filesystem
+      description: >-
+        Issues a GET request and writes the response body to `dest_path` on the
+        agent filesystem. When `secret_handle` is set, the vault secret is used
+        as a Bearer auth token. Audited with op=http_download.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyHttpDownloadRequest"
+      responses:
+        "200":
+          description: Download completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyHttpDownloadResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: HTTP, I/O, or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/proxy/http/upload:
+    post:
+      operationId: proxy--http-upload
+      summary: Upload a local file to a remote URL (agent-side)
+      description: >-
+        Reads `source_path` from the agent filesystem and issues a PUT request
+        to `url`. When `secret_handle` is set, the vault secret is used as a
+        Bearer auth token. Audited with op=http_upload.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: medium
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyHttpUploadRequest"
+      responses:
+        "200":
+          description: Upload completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyHttpUploadResponse"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: HTTP, I/O, or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Proxy group — Spawn
+  # ---------------------------------------------------------------------------
+
+  /v1/proxy/spawn:
+    post:
+      operationId: proxy--spawn
+      summary: Spawn a subprocess with vault-secret env injection (agent-side)
+      description: >-
+        Spawns `command` with `args` on the agent host. Each handle in
+        `secret_handles` is decrypted and injected as an environment variable
+        named after the secret's canonical name. Additional `env` pairs are
+        also set. Audited with op=spawn.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxySpawnRequest"
+      responses:
+        "200":
+          description: Subprocess completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxySpawnResponse"
+        "400":
+          description: Invalid request (empty command or secret not found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Spawn, crypto, or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
+  # Proxy group — Crypto
+  # ---------------------------------------------------------------------------
+
+  /v1/proxy/crypto/sign:
+    post:
+      operationId: proxy--crypto-sign
+      summary: Ed25519 sign with a vault-stored key (agent-side)
+      description: >-
+        Decrypts the Ed25519 private key at `key_handle` and signs
+        `message_b64`. Only the `ed25519` algorithm is supported in Phase 6;
+        `rsa-sha256` returns 501. Audited with op=crypto_sign.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyCryptoSignRequest"
+      responses:
+        "200":
+          description: Signature produced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyCryptoSignResponse"
+        "400":
+          description: Invalid base64 or request parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Key secret not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "501":
+          description: Algorithm not implemented.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Crypto or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/proxy/crypto/decrypt:
+    post:
+      operationId: proxy--crypto-decrypt
+      summary: AEAD decrypt with a vault-stored key (agent-side)
+      description: >-
+        Decrypts the 32-byte AEAD key at `key_handle`, then uses it to
+        AEAD-decrypt `ciphertext_b64`. Ciphertext format:
+        `[nonce 24 bytes || ciphertext || tag 16 bytes]` concatenated and
+        base64-encoded. Audited with op=crypto_decrypt.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyCryptoDecryptRequest"
+      responses:
+        "200":
+          description: Decryption succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyCryptoDecryptResponse"
+        "400":
+          description: Invalid base64, ciphertext too short, or bad parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Key secret not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "412":
+          description: Vault is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Crypto or storage error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
 # =============================================================================
 # Components
 # =============================================================================
@@ -2665,3 +3395,734 @@ components:
                 type: string
               received:
                 type: string
+
+    # -------------------------------------------------------------------------
+    # Diagnostics (ADR-0024 gap matrix — GET /v1/agent/doctor)
+    # -------------------------------------------------------------------------
+
+    DoctorCheck:
+      type: object
+      description: >-
+        Result of a single internal health check.
+      required:
+        - name
+        - status
+        - duration_ms
+      properties:
+        name:
+          type: string
+          description: >-
+            Machine-readable check identifier (e.g. "vault-seal",
+            "storage-liveness").
+          example: vault-seal
+        status:
+          type: string
+          description: '"pass" if the check succeeded, "fail" otherwise.'
+          enum:
+            - pass
+            - fail
+        message:
+          type: string
+          description: >-
+            Optional human-readable detail. Present only when status
+            is "fail".
+          example: Storage backend returned error after 3 retries.
+        duration_ms:
+          type: integer
+          description: Wall-clock time the check took, in milliseconds.
+          example: 12
+
+    DoctorResponse:
+      type: object
+      description: >-
+        Aggregated health-check result returned by GET /v1/agent/doctor.
+      required:
+        - checks
+        - overall
+      properties:
+        checks:
+          type: array
+          description: Per-check results in evaluation order.
+          items:
+            $ref: "#/components/schemas/DoctorCheck"
+        overall:
+          type: string
+          description: >-
+            "healthy" when every check passed, "unhealthy" otherwise.
+          enum:
+            - healthy
+            - unhealthy
+
+    # -------------------------------------------------------------------------
+    # Use-tokens (ADR-0024 gap matrix — PR3)
+    # -------------------------------------------------------------------------
+
+    UseTokenRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/use-tokens. Identifies the secret whose
+        plaintext will be wrapped in a short-lived token.
+      required:
+        - namespace_id
+        - handle
+        - session_id
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+          description: UUIDv7 of the namespace that owns the secret.
+        handle:
+          $ref: "#/components/schemas/Handle"
+        session_id:
+          type: string
+          format: uuid
+          description: Session UUID returned by POST /v1/sessions.
+
+    UseTokenResponse:
+      type: object
+      description: Issued use-token.
+      required:
+        - use_token
+        - expires_at
+      properties:
+        use_token:
+          type: string
+          description: Opaque base64url token. Valid for 60 seconds.
+          example: "VXNlVG9rZW5FeGFtcGxlVmFsdWUAAA"
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC 3339 expiry timestamp.
+
+    WriteTempfileRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/use-tokens/tempfile. The agent writes the
+        plaintext of the referenced secret into a mode-0600 temporary file
+        and returns an opaque revocation token.
+      required:
+        - namespace_id
+        - handle
+        - session_id
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+          description: UUIDv7 of the namespace that owns the secret.
+        handle:
+          $ref: "#/components/schemas/Handle"
+        session_id:
+          type: string
+          format: uuid
+          description: Session UUID returned by POST /v1/sessions.
+        suffix:
+          type: string
+          description: >-
+            Optional filename suffix for the temp file (e.g. ".pem").
+            Defaults to no suffix.
+          example: ".pem"
+
+    UseTempfileResponse:
+      type: object
+      description: >-
+        Descriptor returned when the agent has written the secret plaintext
+        to a temporary file.
+      required:
+        - opaque_token
+        - expires_at
+      properties:
+        opaque_token:
+          type: string
+          description: >-
+            Token suitable for DELETE /v1/use-tokens/tempfiles/{opaque_token}
+            to schedule early cleanup.
+          example: "tmp_3kLm9pQr"
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 timestamp after which the agent will auto-delete the file.
+
+    WriteFifoRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/use-tokens/fifo. The agent creates a named
+        FIFO pipe, writes the secret plaintext to it on first read, then
+        deletes the pipe.
+      required:
+        - namespace_id
+        - handle
+        - session_id
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+          description: UUIDv7 of the namespace that owns the secret.
+        handle:
+          $ref: "#/components/schemas/Handle"
+        session_id:
+          type: string
+          format: uuid
+          description: Session UUID returned by POST /v1/sessions.
+
+    UseFifoResponse:
+      type: object
+      description: Descriptor returned when the agent has created the FIFO.
+      required:
+        - opaque_token
+        - expires_at
+      properties:
+        opaque_token:
+          type: string
+          description: >-
+            Opaque token identifying the FIFO for tracking and early revocation.
+          example: "fifo_9xYzAb"
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC 3339 timestamp after which the FIFO is auto-deleted.
+
+    RevokeTempfileResponse:
+      type: object
+      description: >-
+        Confirmation that a tempfile or FIFO has been scheduled for immediate
+        cleanup by the agent.
+      required:
+        - revoked
+      properties:
+        revoked:
+          type: boolean
+          description: true when the token was found and cleanup was scheduled.
+          example: true
+
+    # -------------------------------------------------------------------------
+    # Proxy — SSH (ADR-0024 gap matrix — PR4)
+    # -------------------------------------------------------------------------
+
+    ProxySshExecRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/ssh/exec. The agent executes a
+        command on the remote host using the referenced SSH key. Key material
+        never leaves the agent process.
+      required:
+        - namespace_id
+        - target
+        - key_handle
+        - command
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+          description: UUIDv7 of the namespace that owns the SSH key secret.
+        target:
+          type: string
+          description: >-
+            SSH target in "user@host:port" format. Port defaults to 22.
+          example: "deploy@bastion.example.com:22"
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+        command:
+          type: string
+          description: Shell command to run on the remote host.
+          example: "systemctl status nginx"
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Optional environment variables to set for the command.
+
+    ProxySshExecResponse:
+      type: object
+      description: Result of a remote SSH command execution.
+      required:
+        - stdout
+        - stderr
+        - exit_code
+      properties:
+        stdout:
+          type: string
+          description: Standard output of the command (UTF-8).
+        stderr:
+          type: string
+          description: Standard error of the command (UTF-8).
+        exit_code:
+          type: integer
+          description: Process exit code. 0 = success.
+          example: 0
+
+    ProxySshCopyRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/ssh/copy. Copies a file between
+        local and remote using SCP/SFTP. Direction is determined by the
+        "direction" field.
+      required:
+        - namespace_id
+        - target
+        - key_handle
+        - source
+        - destination
+        - direction
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        target:
+          type: string
+          example: "deploy@bastion.example.com:22"
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+        source:
+          type: string
+          description: Source path (local absolute path or remote path).
+          example: "/tmp/artifact.tar.gz"
+        destination:
+          type: string
+          description: Destination path (remote path or local absolute path).
+          example: "/opt/releases/artifact.tar.gz"
+        direction:
+          type: string
+          description: >-
+            "upload" to push local to remote; "download" to pull
+            remote to local.
+          enum:
+            - upload
+            - download
+
+    ProxySshCopyResponse:
+      type: object
+      description: Result of a file copy operation.
+      required:
+        - bytes_transferred
+      properties:
+        bytes_transferred:
+          type: integer
+          format: int64
+          description: Number of bytes transferred.
+          example: 8192
+
+    ProxyPortForwardRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/ssh/port-forward. Establishes an
+        SSH port-forwarding tunnel and returns a local address that callers
+        can connect to. Requires OOB confirmation.
+      required:
+        - namespace_id
+        - target
+        - key_handle
+        - remote_host
+        - remote_port
+        - local_port
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        target:
+          type: string
+          example: "tunnel@bastion.example.com:22"
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+        remote_host:
+          type: string
+          description: >-
+            Remote host to forward to (from the SSH server's
+            perspective).
+          example: "db.internal"
+        remote_port:
+          type: integer
+          description: Remote port to forward to.
+          example: 5432
+        local_port:
+          type: integer
+          description: >-
+            Local port to bind. Use 0 to request an ephemeral OS-assigned port.
+          example: 0
+
+    ProxyPortForwardResponse:
+      type: object
+      description: >-
+        Tunnel descriptor returned after the port-forward is established.
+      required:
+        - session_id
+        - local_addr
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: Opaque session UUID. Pass to a future teardown endpoint.
+        local_addr:
+          type: string
+          description: >-
+            Local address the caller should connect to, e.g.
+            "127.0.0.1:54321".
+          example: "127.0.0.1:54321"
+
+    ProxySshShellRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/ssh/shell. This endpoint is a
+        501-stub; full PTY allocation is deferred to a future phase.
+      required:
+        - namespace_id
+        - target
+        - key_handle
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        target:
+          type: string
+          example: "admin@host.example.com:22"
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+
+    # -------------------------------------------------------------------------
+    # Proxy — HTTP
+    # -------------------------------------------------------------------------
+
+    HttpAuthSpec:
+      type: object
+      description: >-
+        Optional authentication configuration for HTTP proxy requests.
+        Exactly one of the auth_type values is active per request.
+      required:
+        - auth_type
+      properties:
+        auth_type:
+          type: string
+          description: Authentication scheme.
+          enum:
+            - bearer
+            - basic
+            - header
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+          description: >-
+            Handle of the secret that provides the credential material.
+            For "bearer": value is used as the token.
+            For "basic": value is split on ":" as "user:password".
+            For "header": the secret must be a "name: value" string.
+        static_value:
+          type: string
+          description: >-
+            Static credential string. Used only when no key_handle is
+            provided. Prefer key_handle for production use.
+
+    ProxyHttpRequestRequest:
+      type: object
+      description: Request body for POST /v1/proxy/http/request.
+      required:
+        - namespace_id
+        - url
+        - method
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+          example: "https://api.example.com/v1/status"
+        method:
+          type: string
+          description: HTTP method.
+          enum:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - HEAD
+            - OPTIONS
+          example: GET
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional request headers.
+        body_base64:
+          type: string
+          description: >-
+            Optional request body, base64-encoded. Use for POST/PUT/PATCH.
+          example: "eyJrZXkiOiJ2YWx1ZSJ9"
+        auth:
+          $ref: "#/components/schemas/HttpAuthSpec"
+        timeout_secs:
+          type: integer
+          description: Request timeout in seconds. Default 30.
+          example: 30
+
+    ProxyHttpRequestResponse:
+      type: object
+      description: HTTP response returned by POST /v1/proxy/http/request.
+      required:
+        - status_code
+        - body_base64
+      properties:
+        status_code:
+          type: integer
+          description: HTTP response status code.
+          example: 200
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Response headers.
+        body_base64:
+          type: string
+          description: Response body, base64-encoded.
+
+    ProxyHttpDownloadRequest:
+      type: object
+      description: Request body for POST /v1/proxy/http/download.
+      required:
+        - namespace_id
+        - url
+        - destination
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+          example: "https://releases.example.com/artifact-1.0.tar.gz"
+        destination:
+          type: string
+          description: >-
+            Absolute path on the agent host where the file will be
+            saved.
+          example: "/tmp/artifact-1.0.tar.gz"
+        auth:
+          $ref: "#/components/schemas/HttpAuthSpec"
+
+    ProxyHttpDownloadResponse:
+      type: object
+      description: Result of a file download via POST /v1/proxy/http/download.
+      required:
+        - bytes_written
+        - status_code
+      properties:
+        bytes_written:
+          type: integer
+          format: int64
+          description: Number of bytes written to destination.
+          example: 104857600
+        status_code:
+          type: integer
+          description: HTTP status code from the origin server.
+          example: 200
+
+    ProxyHttpUploadRequest:
+      type: object
+      description: Request body for POST /v1/proxy/http/upload.
+      required:
+        - namespace_id
+        - url
+        - source
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+          example: "https://storage.example.com/bucket/artifact.tar.gz"
+        source:
+          type: string
+          description: Absolute path on the agent host of the file to upload.
+          example: "/tmp/artifact.tar.gz"
+        content_type:
+          type: string
+          description: >-
+            MIME type sent as Content-Type. Default
+            "application/octet-stream".
+          example: "application/gzip"
+        auth:
+          $ref: "#/components/schemas/HttpAuthSpec"
+
+    ProxyHttpUploadResponse:
+      type: object
+      description: Result of a file upload via POST /v1/proxy/http/upload.
+      required:
+        - bytes_sent
+        - status_code
+      properties:
+        bytes_sent:
+          type: integer
+          format: int64
+          description: Number of bytes sent to the remote server.
+          example: 104857600
+        status_code:
+          type: integer
+          description: HTTP status code returned by the server.
+          example: 200
+
+    # -------------------------------------------------------------------------
+    # Proxy — Spawn
+    # -------------------------------------------------------------------------
+
+    ProxySpawnRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/spawn. The agent spawns a subprocess
+        injecting the referenced secrets as environment variables.
+        Key material never appears in the command string.
+      required:
+        - namespace_id
+        - command
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        command:
+          type: array
+          description: Command argv to execute. Index 0 is the binary path.
+          items:
+            type: string
+          example:
+            - "/usr/bin/make"
+            - "deploy"
+        handles:
+          type: array
+          description: >-
+            Secret handles to resolve. Each secret's plaintext is injected
+            as an environment variable named by env_var_name.
+          items:
+            type: object
+            required:
+              - handle
+              - env_var_name
+            properties:
+              handle:
+                $ref: "#/components/schemas/Handle"
+              env_var_name:
+                type: string
+                description: Environment variable name to set.
+                example: "DATABASE_URL"
+        extra_env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional non-secret environment variables.
+        working_dir:
+          type: string
+          description: Working directory for the spawned process.
+          example: "/home/deploy/app"
+
+    ProxySpawnResponse:
+      type: object
+      description: Result of a spawned subprocess (POST /v1/proxy/spawn).
+      required:
+        - exit_code
+        - stdout
+        - stderr
+      properties:
+        exit_code:
+          type: integer
+          description: Process exit code. 0 = success.
+          example: 0
+        stdout:
+          type: string
+          description: Standard output (UTF-8).
+        stderr:
+          type: string
+          description: Standard error (UTF-8).
+
+    # -------------------------------------------------------------------------
+    # Proxy — Crypto
+    # -------------------------------------------------------------------------
+
+    ProxyCryptoSignRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/crypto/sign. The agent retrieves the
+        private key referenced by key_handle and signs the provided message.
+        Only Ed25519 is supported; RSA is a 501 stub.
+      required:
+        - namespace_id
+        - key_handle
+        - message_b64
+        - algorithm
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+        message_b64:
+          type: string
+          description: Base64-encoded message bytes to sign.
+          example: "aGVsbG8gd29ybGQ="
+        algorithm:
+          type: string
+          description: >-
+            Signing algorithm. Currently only "ed25519" is
+            implemented.
+          enum:
+            - ed25519
+            - rsa-sha256
+          default: ed25519
+
+    ProxyCryptoSignResponse:
+      type: object
+      description: Signature produced by POST /v1/proxy/crypto/sign.
+      required:
+        - signature_b64
+        - algorithm
+      properties:
+        signature_b64:
+          type: string
+          description: Base64-encoded raw signature bytes.
+          example: "MEUCIQDexample..."
+        algorithm:
+          type: string
+          description: Algorithm that produced the signature.
+          example: ed25519
+
+    ProxyCryptoDecryptRequest:
+      type: object
+      description: >-
+        Request body for POST /v1/proxy/crypto/decrypt. The agent retrieves
+        the private key and decrypts the ciphertext. Only
+        X25519+ChaCha20-Poly1305 is currently supported.
+      required:
+        - namespace_id
+        - key_handle
+        - ciphertext_b64
+        - algorithm
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        key_handle:
+          $ref: "#/components/schemas/Handle"
+        ciphertext_b64:
+          type: string
+          description: Base64-encoded ciphertext.
+          example: "Y2lwaGVydGV4dA=="
+        aad_b64:
+          type: string
+          description: >-
+            Optional base64-encoded additional authenticated data.
+            Must match what was used during encryption.
+          example: "YWFk"
+        algorithm:
+          type: string
+          description: Decryption algorithm.
+          enum:
+            - x25519-chacha20poly1305
+          default: x25519-chacha20poly1305
+
+    ProxyCryptoDecryptResponse:
+      type: object
+      description: Plaintext produced by POST /v1/proxy/crypto/decrypt.
+      required:
+        - plaintext_b64
+      properties:
+        plaintext_b64:
+          type: string
+          description: Base64-encoded decrypted plaintext.
+          example: "aGVsbG8gd29ybGQ="

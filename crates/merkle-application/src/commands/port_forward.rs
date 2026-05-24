@@ -99,9 +99,7 @@ impl PortForwardCommand {
             ctx.storage.append_audit_entry(&entry).await?;
             ctx.storage.update_pinned_head(&pinned).await?;
 
-            return Err(AppError::PolicyDenied(
-                "missing_slash_command".into(),
-            ));
+            return Err(AppError::PolicyDenied("missing_slash_command".into()));
         }
 
         // ------------------------------------------------------------------

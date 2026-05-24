@@ -93,7 +93,9 @@ impl CryptoDecryptCommand {
         })?;
         let body = &self.ciphertext[24..];
 
-        let plaintext = ctx.crypto.aead_decrypt(&aead_key, &nonce, body, &self.aad)?;
+        let plaintext = ctx
+            .crypto
+            .aead_decrypt(&aead_key, &nonce, body, &self.aad)?;
 
         // Audit: op=crypto_decrypt.
         let hmac_key = ctx.require_hmac_key().await?;
