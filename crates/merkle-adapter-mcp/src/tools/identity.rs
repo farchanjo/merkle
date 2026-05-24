@@ -1,7 +1,8 @@
 //! Identity and sealing tools: vault.unseal, vault.seal, vault.bind.
 //!
 //! These tools manage the vault lifecycle state transitions and namespace
-//! session binding. They must be called before most other tools.
+//! session binding. They communicate exclusively through the Companion Socket
+//! via [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
 
 use rmcp::{
     ErrorData,
@@ -13,13 +14,8 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{MerkleMcpServer, errors::app_error_to_mcp};
-use merkle_application::commands::{
-    bind_namespace::BindNamespaceCommand, seal_vault::SealVaultCommand,
-    unseal_vault::UnsealVaultCommand,
-};
-use merkle_domain_identity::UnsealPreconditions;
-use merkle_types::{NamespaceLabel, SecurityProfile};
+use crate::{MerkleMcpServer, errors::client_error_to_mcp};
+use merkle_companion_client::dto::{CreateSessionRequest, UnsealRequest};
 
 // ---------------------------------------------------------------------------
 // Input parameter structs
@@ -63,10 +59,39 @@ impl IdentityTools {
 }
 
 // ---------------------------------------------------------------------------
+// CWD hash helper
+// ---------------------------------------------------------------------------
+
+/// Compute the cwd_hash for `CreateSessionRequest`.
+///
+/// The hash is the first 32 hex characters of the BLAKE3 hash of the current
+/// working directory's canonical UTF-8 path. This produces a stable,
+/// short-enough key that the server uses to resolve (or create) the namespace
+/// for this working directory.
+///
+/// Per ADR-0008 (CWD-Bound Namespace) this hash is the canonical namespace
+/// identity for the current working directory; per ADR-0025 §Bug #6 the MCP
+/// adapter materialises it internally so callers never pass `cwd_hash` over
+/// the MCP transport. The bound label supplied via `vault.bind` overrides
+/// the default name but the underlying cwd_hash identity is preserved.
+fn cwd_hash() -> String {
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+        .to_string_lossy()
+        .into_owned();
+    let digest = blake3::hash(cwd.as_bytes());
+    // Take the first 32 hex chars (16 bytes of the 32-byte hash).
+    digest.to_hex()[..32].to_owned()
+}
+
+// ---------------------------------------------------------------------------
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-#[allow(missing_docs)]
+#[expect(
+    missing_docs,
+    reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
+)]
 #[rmcp::tool_router(router = identity_router)]
 impl MerkleMcpServer {
     /// Unseal the Vault Agent by loading the MasterKey from the OS keychain.
@@ -74,24 +99,27 @@ impl MerkleMcpServer {
     /// On macOS with Touch ID configured the system prompts natively;
     /// `passphrase` is ignored. On Linux/Windows the passphrase is used to
     /// derive the key with Argon2id if no Secret Service is available.
-    #[tool(name = "vault.unseal", description = "Unseal the Vault Agent by loading the MasterKey from the OS keychain. On macOS, Touch ID is used. On Linux/Windows a passphrase may be required. Most tools require the agent to be unsealed.")]
+    #[tool(
+        name = "vault.unseal",
+        description = "Unseal the Vault Agent by loading the MasterKey from the OS keychain. On macOS, Touch ID is used. On Linux/Windows a passphrase may be required. Most tools require the agent to be unsealed."
+    )]
     pub async fn vault_unseal(
         &self,
         Parameters(_input): Parameters<VaultUnsealInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let cmd = UnsealVaultCommand {
-            preconditions: UnsealPreconditions {
-                security_profile: SecurityProfile::Balanced,
-                mlock_succeeded: true,
-                entropy_seeded: true,
-                keychain_reachable: true,
-            },
-        };
-        cmd.execute(&self.app_ctx)
+        let resp = self
+            .client
+            .agent_unseal(UnsealRequest {})
             .await
-            .map_err(app_error_to_mcp)?;
+            .map_err(client_error_to_mcp)?;
+
         Ok(CallToolResult::success(vec![Content::text(
-            json!({"unsealed": true}).to_string(),
+            json!({
+                "unsealed": !resp.sealed,
+                "already_unsealed": resp.already_unsealed,
+                "method": resp.method.as_ref().map(|m| format!("{m:?}")),
+            })
+            .to_string(),
         )]))
     }
 
@@ -99,27 +127,45 @@ impl MerkleMcpServer {
     ///
     /// All subsequent tool calls that require plaintext access will return
     /// `UnsealRequired` until the agent is unsealed again.
-    #[tool(name = "vault.seal", description = "Seal the Vault Agent by zeroing the in-memory MasterKey. All subsequent plaintext-access tool calls will return UnsealRequired until the agent is unsealed again.")]
+    #[tool(
+        name = "vault.seal",
+        description = "Seal the Vault Agent by zeroing the in-memory MasterKey. All subsequent plaintext-access tool calls will return UnsealRequired until the agent is unsealed again."
+    )]
     pub async fn vault_seal(
         &self,
         Parameters(input): Parameters<VaultSealInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let _ = input.reason; // recorded in audit log by domain layer
-        let cmd = SealVaultCommand;
-        cmd.execute(&self.app_ctx)
+        let _ = input.reason; // audited by the agent
+        let resp = self
+            .client
+            .agent_seal()
             .await
-            .map_err(app_error_to_mcp)?;
+            .map_err(client_error_to_mcp)?;
+
         Ok(CallToolResult::success(vec![Content::text(
-            json!({"sealed": true}).to_string(),
+            json!({"sealed": resp.sealed}).to_string(),
         )]))
     }
 
     /// Associate the current MCP session with a named Namespace.
     ///
+    /// Calls `POST /v1/sessions` which resolves or creates the namespace
+    /// matching the given label and the BLAKE3 hash of the MCP process's
+    /// current working directory (per ADR-0008 CWD-Bound Namespace).
+    /// The `cwd_hash` is materialised internally by this adapter via
+    /// [`cwd_hash`] and never crossed the MCP transport boundary
+    /// (ADR-0025 §Bug #6 — documentation fix; no behavioural change).
+    ///
+    /// The returned `session_id` and `namespace_id` are stored in
+    /// `SessionState` for use by `vault.reveal` and all use-token tools.
+    ///
     /// May be called at most once per session; re-binding is rejected with
     /// `AlreadyBound`. Without a binding, operations resolve to the default
     /// Namespace derived from the working directory hash.
-    #[tool(name = "vault.bind", description = "Associate the current MCP session with a named Namespace. Call this at session start. May be called at most once — re-binding returns AlreadyBound. Without binding, the default Namespace (cwd-hash derived) is used.")]
+    #[tool(
+        name = "vault.bind",
+        description = "Associate the current MCP session with a named Namespace. Call this at session start. May be called at most once — re-binding returns AlreadyBound. Without binding, the default Namespace (cwd-hash derived) is used."
+    )]
     pub async fn vault_bind(
         &self,
         Parameters(input): Parameters<VaultBindInput>,
@@ -132,28 +178,31 @@ impl MerkleMcpServer {
                 .map_err(|_| crate::errors::already_bound())?;
         }
 
-        let label = NamespaceLabel::try_from(input.label.as_str())
-            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+        // Derive the cwd_hash from the current process working directory.
+        let hash = cwd_hash();
 
-        let cmd = BindNamespaceCommand {
-            label,
-            cwd_hash: None,
-            dek_version: 1,
-        };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let resp = self
+            .client
+            .create_session(CreateSessionRequest {
+                cwd_hash: hash,
+                namespace_label: Some(input.label.clone()),
+                client_pid: Some(std::process::id()),
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
-        // Persist the authoritative NamespaceId so subsequent tool calls can
-        // use the same namespace record that was just created in storage.
+        // Persist both namespace_id and session_id for downstream tools.
         {
             let mut session = self.session.write().await;
-            session.set_namespace_id(out.namespace_id);
+            session.set_binding(resp.namespace_id, resp.session_id);
         }
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "namespace_id": out.namespace_id.to_string(),
-                "label": out.label.to_string(),
-                "policy_profile": "balanced",
+                "namespace_id": resp.namespace_id.to_string(),
+                "session_id": resp.session_id.to_string(),
+                "label": resp.namespace_label,
+                "policy_profile": format!("{:?}", resp.policy_profile),
             })
             .to_string(),
         )]))

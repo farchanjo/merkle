@@ -1,7 +1,7 @@
 //! Diagnostics tools: vault.doctor.
 //!
-//! `DoctorQuery` is fully implemented (F5.B) and aggregates health checks
-//! across all bounded contexts.
+//! Forwards `GET /v1/agent/doctor` to the Companion Socket via
+//! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
 
 use rmcp::{
     ErrorData,
@@ -13,8 +13,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{MerkleMcpServer, errors::app_error_to_mcp};
-use merkle_application::queries::doctor::DoctorQuery;
+use crate::{MerkleMcpServer, errors::client_error_to_mcp};
 
 // ---------------------------------------------------------------------------
 // Input parameter struct
@@ -43,13 +42,16 @@ impl DiagnosticsTools {
 // Tool implementation
 // ---------------------------------------------------------------------------
 
-#[allow(missing_docs)]
+#[expect(
+    missing_docs,
+    reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
+)]
 #[rmcp::tool_router(router = diagnostics_router)]
 impl MerkleMcpServer {
     /// Run a diagnostic health check on the Vault Agent. Always returns a
-    /// result even in degraded state. Reports: sealed state, keychain,
-    /// DB integrity, audit chain, backup schedule, expiring Secrets, disk
-    /// space, and warnings.
+    /// result even in degraded state. Reports sealed state, keychain
+    /// reachability, DB integrity, audit chain, backup schedule, expiring
+    /// Secrets, disk space, and any warnings.
     #[tool(
         name = "vault.doctor",
         description = "Run a diagnostic health check on the Vault Agent. Always returns a result even in degraded state. Reports: sealed state, keychain, DB integrity, audit chain, backup schedule, expiring Secrets, disk space, and warnings."
@@ -58,11 +60,11 @@ impl MerkleMcpServer {
         &self,
         Parameters(_input): Parameters<VaultDoctorInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let query = DoctorQuery;
-        let out = query
-            .execute(&self.app_ctx)
+        let out = self
+            .client
+            .agent_doctor()
             .await
-            .map_err(app_error_to_mcp)?;
+            .map_err(client_error_to_mcp)?;
 
         let checks: Vec<serde_json::Value> = out
             .checks
@@ -70,23 +72,19 @@ impl MerkleMcpServer {
             .map(|c| {
                 json!({
                     "name": c.name,
-                    "ok": c.ok,
-                    "detail": c.detail,
+                    "status": c.status,
+                    "message": c.message,
+                    "duration_ms": c.duration_ms,
                 })
             })
             .collect();
 
-        let chain_intact = out
-            .checks
-            .iter()
-            .find(|c| c.name == "audit_chain_integrity")
-            .is_some_and(|c| c.ok);
+        let all_pass = out.checks.iter().all(|c| c.status == "pass");
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "sealed_state": out.sealed_state,
-                "all_ok": out.all_ok,
-                "chain_intact": chain_intact,
+                "overall": out.overall,
+                "all_pass": all_pass,
                 "checks": checks,
             })
             .to_string(),

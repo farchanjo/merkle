@@ -2,10 +2,12 @@
 //! vault.ssh.shell, vault.http.request, vault.http.download,
 //! vault.http.upload, vault.spawn, vault.crypto.sign, vault.crypto.decrypt.
 //!
-//! All commands are fully wired (F12). `vault.ssh.port_forward` was previously
-//! deferred; it now calls `PortForwardCommand` directly and returns `session_id`
-//! and `local_addr` on success (ADR-0023). The `operator_confirmation` field on
-//! the input controls whether the sensitivity=high policy gate allows the tunnel.
+//! All proxy commands are forwarded to the Vault Agent Companion Socket via
+//! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
+//! Key material is decrypted agent-side; no key bytes cross the socket.
+//!
+//! `vault.ssh.shell` is wired but returns `vault.not_implemented` because
+//! the server endpoint returns 501 Not Implemented in this phase.
 
 use std::collections::HashMap;
 
@@ -19,17 +21,16 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
 
-use crate::{MerkleMcpServer, errors::app_error_to_mcp};
-use merkle_application::commands::{
-    crypto_decrypt::CryptoDecryptCommand, crypto_sign::CryptoSignCommand,
-    http_download::HttpDownloadCommand, http_request::HttpRequestCommand,
-    http_upload::HttpUploadCommand, port_forward::PortForwardCommand,
-    spawn_command::SpawnCommandCommand, ssh_copy::SshCopyCommand, ssh_exec::SshExecCommand,
-    ssh_shell::SshShellCommand,
+use crate::{MerkleMcpServer, errors::client_error_to_mcp};
+use merkle_companion_client::dto::{
+    HttpRequestSpecDto, ProxyCryptoDecryptRequest, ProxyCryptoSignRequest,
+    ProxyHttpDownloadRequest, ProxyHttpRequestRequest, ProxyHttpUploadRequest,
+    ProxyPortForwardRequest, ProxySpawnRequest, ProxySshCopyRequest, ProxySshExecRequest,
+    ProxySshShellRequest, SshCopyDirection,
 };
-use merkle_ports::{HttpAuth, HttpRequestSpec};
-use merkle_types::{Handle, NamespaceId};
+use merkle_types::Handle;
 
 // ---------------------------------------------------------------------------
 // SSH tool inputs
@@ -38,8 +39,10 @@ use merkle_types::{Handle, NamespaceId};
 /// Input for vault.ssh.exec.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSshExecInput {
-    /// Handle URI of an ssh-category Secret.
+    /// Handle URI of an ssh-category Secret containing the private key.
     pub handle: String,
+    /// SSH target in `host:port` form (e.g. `"bastion.example.com:22"`).
+    pub target: String,
     /// Command to execute on the remote host.
     pub command: String,
     /// Optional command arguments.
@@ -55,14 +58,14 @@ pub struct VaultSshExecInput {
 pub struct VaultSshCopyInput {
     /// Handle URI of an ssh-category Secret.
     pub handle: String,
-    /// Transfer direction: to_remote | from_remote.
+    /// SSH target in `host:port` form.
+    pub target: String,
+    /// Transfer direction: upload | download.
     pub direction: String,
-    /// Local filesystem path.
-    pub local_path: String,
-    /// Remote filesystem path.
-    pub remote_path: String,
-    /// If true, copy directories recursively.
-    pub recursive: Option<bool>,
+    /// Source path (local for upload, remote for download).
+    pub source: String,
+    /// Destination path (remote for upload, local for download).
+    pub dest: String,
 }
 
 /// Input for vault.ssh.port_forward.
@@ -70,24 +73,17 @@ pub struct VaultSshCopyInput {
 pub struct VaultSshPortForwardInput {
     /// Handle URI of an ssh-category Secret.
     pub handle: String,
-    /// Forward direction: local | remote.
-    pub direction: String,
-    /// Bind address (default: 127.0.0.1).
-    pub bind_address: Option<String>,
-    /// Port to bind on the local side.
-    pub bind_port: u16,
-    /// Target host for the forward.
-    pub target_host: String,
-    /// Target port for the forward.
-    pub target_port: u16,
-    /// Time-to-live in seconds (default: 300).
-    pub ttl_secs: Option<u32>,
-    /// Operator confirmation (ADR-0011 / ADR-0023).
-    ///
-    /// When the SSH key has `sensitivity=high`, `slash_command=true` is required.
-    /// For `sensitivity ≤ medium`, the policy gate passes regardless of this field.
-    /// Defaults to `true` when omitted (safe default for Claude Code clients that
-    /// set the flag via the `/merkle-port-forward` slash command).
+    /// SSH bastion target in `host:port` form.
+    pub target: String,
+    /// Local port to bind on `127.0.0.1`.
+    pub local_port: u16,
+    /// Remote host for the forwarded connection.
+    pub remote_host: String,
+    /// Remote port for the forwarded connection.
+    pub remote_port: u16,
+    /// Optional TTL in seconds for the tunnel (agent enforces graceful shutdown).
+    pub ttl_secs: Option<u64>,
+    /// Operator confirmation (defaults to `true` for Claude Code clients).
     pub operator_confirmation: Option<bool>,
 }
 
@@ -96,14 +92,8 @@ pub struct VaultSshPortForwardInput {
 pub struct VaultSshShellInput {
     /// Handle URI of an ssh-category Secret.
     pub handle: String,
-    /// Terminal type (default: xterm-256color).
-    pub term: Option<String>,
-    /// Terminal columns (default: 220).
-    pub cols: Option<u16>,
-    /// Terminal rows (default: 50).
-    pub rows: Option<u16>,
-    /// Session timeout in seconds (default: 120).
-    pub timeout_secs: Option<u32>,
+    /// SSH target in `host:port` form.
+    pub target: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -113,20 +103,16 @@ pub struct VaultSshShellInput {
 /// Input for vault.http.request.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultHttpRequestInput {
-    /// Handle URI of a token | password | key category Secret.
+    /// Handle URI of a token | password | key category Secret (optional auth).
     pub handle: Option<String>,
     /// HTTP method: GET | POST | PUT | PATCH | DELETE.
     pub method: String,
     /// Target URL.
     pub url: String,
-    /// How to inject credentials: bearer | basic | header | query_param | body_field.
-    pub inject_as: Option<String>,
-    /// Optional extra request headers.
+    /// Optional extra request headers as key-value pairs.
     pub headers: Option<HashMap<String, String>>,
-    /// Optional request body; may contain `{{handle.field}}` placeholders.
+    /// Optional request body string.
     pub body: Option<String>,
-    /// Request timeout in seconds (default: 30).
-    pub timeout_secs: Option<u32>,
 }
 
 /// Input for vault.http.download.
@@ -134,14 +120,10 @@ pub struct VaultHttpRequestInput {
 pub struct VaultHttpDownloadInput {
     /// URL to download from.
     pub url: String,
-    /// Local filesystem path to write the downloaded content.
-    pub destination: String,
+    /// Absolute destination path on the agent's filesystem.
+    pub dest_path: String,
     /// Optional handle URI of an auth credential.
     pub handle: Option<String>,
-    /// How to inject credentials (if handle is provided).
-    pub inject_as: Option<String>,
-    /// Request timeout in seconds.
-    pub timeout_secs: Option<u32>,
 }
 
 /// Input for vault.http.upload.
@@ -149,48 +131,31 @@ pub struct VaultHttpDownloadInput {
 pub struct VaultHttpUploadInput {
     /// URL to upload to.
     pub url: String,
-    /// Local filesystem path of the file to upload.
-    pub source: String,
+    /// Absolute source path on the agent's filesystem.
+    pub source_path: String,
     /// Optional handle URI of an auth credential.
     pub handle: Option<String>,
-    /// How to inject credentials (if handle is provided).
-    pub inject_as: Option<String>,
-    /// HTTP method (default: PUT).
-    pub method: Option<String>,
-    /// Content-Type header.
+    /// Content-Type header (default: application/octet-stream).
     pub content_type: Option<String>,
-    /// Request timeout in seconds.
-    pub timeout_secs: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
 // Process spawn input
 // ---------------------------------------------------------------------------
 
-/// A single env injection spec for vault.spawn.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct EnvHandle {
-    /// Handle URI of an env-category Secret.
-    pub handle: String,
-    /// Specific field within env category; omit to expand all fields.
-    pub field: Option<String>,
-}
-
 /// Input for vault.spawn.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSpawnInput {
-    /// Primary Secret handle to inject as an environment variable.
-    pub handle: String,
-    /// Name of the environment variable to inject the secret into.
-    pub env_var: String,
+    /// Handles to vault secrets injected as environment variables.
+    pub secret_handles: Vec<String>,
     /// Command to run.
-    pub cmd: String,
+    pub command: String,
     /// Optional command arguments.
     pub args: Option<Vec<String>>,
+    /// Optional extra environment variables.
+    pub env: Option<Vec<(String, String)>>,
     /// Optional working directory for the child process.
     pub working_dir: Option<String>,
-    /// Command timeout in seconds (default: 60).
-    pub timeout_secs: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -203,8 +168,8 @@ pub struct VaultCryptoSignInput {
     /// Handle URI of a key-category Secret holding the signing key.
     pub handle: String,
     /// Base64-encoded payload to sign.
-    pub payload: String,
-    /// Signature algorithm (e.g. ed25519).
+    pub message_b64: String,
+    /// Signing algorithm (default: ed25519).
     pub algorithm: Option<String>,
 }
 
@@ -213,8 +178,10 @@ pub struct VaultCryptoSignInput {
 pub struct VaultCryptoDecryptInput {
     /// Handle URI of a key-category Secret holding the decryption key.
     pub handle: String,
-    /// Base64-encoded ciphertext to decrypt.
-    pub ciphertext: String,
+    /// Base64-encoded ciphertext (format: `[nonce 24 bytes || ct || tag 16 bytes]`).
+    pub ciphertext_b64: String,
+    /// Additional associated data, base64-encoded (default: empty).
+    pub aad_b64: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -233,28 +200,28 @@ impl ProxyTools {
 }
 
 // ---------------------------------------------------------------------------
-// Helper
+// Helpers
 // ---------------------------------------------------------------------------
 
 fn parse_handle(raw: &str) -> Result<Handle, ErrorData> {
     raw.parse::<Handle>()
-        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))
+        .map_err(|e| ErrorData::invalid_params(format!("invalid handle: {e}"), None))
 }
 
-fn resolve_namespace(
-    session: &crate::session::SessionState,
-) -> Result<NamespaceId, ErrorData> {
+fn resolve_namespace(session: &crate::session::SessionState) -> Result<Uuid, ErrorData> {
     session
-        .namespace_label()
-        .ok_or_else(crate::errors::namespace_not_bound)?;
-    Ok(NamespaceId::new())
+        .namespace_id()
+        .ok_or_else(crate::errors::namespace_not_bound)
 }
 
 // ---------------------------------------------------------------------------
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-#[allow(missing_docs)]
+#[expect(
+    missing_docs,
+    reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
+)]
 #[rmcp::tool_router(router = proxy_router)]
 impl MerkleMcpServer {
     /// Execute a remote command over SSH using credentials from an ssh-category
@@ -268,177 +235,170 @@ impl MerkleMcpServer {
         &self,
         Parameters(input): Parameters<VaultSshExecInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        // SshExecCommand requires a pre-extracted target and key_material.
-        // Full wiring (handle → secret → key_material + target) is scaffolded;
-        // once DescribeSecretCommand returns SSH metadata this will be filled in.
-        let _ = parse_handle(&input.handle)?;
-        let _ = input.args;
-        let _ = input.env;
-        let _ = input.timeout_secs;
-
+        let key_handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
-        // Placeholder target/key until handle resolution is wired.
-        let cmd = SshExecCommand {
-            namespace_id,
-            target: "localhost:22".to_owned(),
-            key_material: Vec::new(),
-            command: input.command,
+
+        // Build the full command string from command + args.
+        let command = if let Some(args) = input.args {
+            let mut parts = vec![input.command];
+            parts.extend(args);
+            parts.join(" ")
+        } else {
+            input.command
         };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+
+        let resp = self
+            .client
+            .proxy_ssh_exec(ProxySshExecRequest {
+                namespace_id,
+                key_handle,
+                target: input.target,
+                command,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "exit_code": out.result.exit_code,
-                "stdout": out.result.stdout,
-                "stderr": out.result.stderr,
+                "exit_code": resp.exit_code,
+                "stdout": resp.stdout,
+                "stderr": resp.stderr,
             })
             .to_string(),
         )]))
     }
 
     /// Copy files to or from a remote host using SSH credentials from a Secret.
-    /// Direction: `to_remote` or `from_remote`. Supports recursive directory copy.
+    /// Direction: `upload` or `download`.
     #[tool(
         name = "vault.ssh.copy",
-        description = "Copy files to or from a remote host using SSH credentials from a Secret. Direction: to_remote or from_remote. Supports recursive directory copy."
+        description = "Copy files to or from a remote host using SSH credentials from a Secret. Direction: upload or download."
     )]
     pub async fn vault_ssh_copy(
         &self,
         Parameters(input): Parameters<VaultSshCopyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let _ = parse_handle(&input.handle)?;
+        let key_handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
-        // NOTE: `target` and `key_material` are resolved from the secret
-        // handle by the application layer when full SSH handle resolution is
-        // wired (Phase 7). Placeholders are safe because the port impl will
-        // fail fast with an SSH error rather than silently misroute.
-        let cmd = SshCopyCommand {
-            namespace_id,
-            target: String::new(),
-            source: input.local_path,
-            destination: input.remote_path,
-            key_material: Vec::new(),
+
+        let direction = match input.direction.to_lowercase().as_str() {
+            "download" => SshCopyDirection::Download,
+            _ => SshCopyDirection::Upload,
         };
-        cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+
+        let resp = self
+            .client
+            .proxy_ssh_copy(ProxySshCopyRequest {
+                namespace_id,
+                key_handle,
+                target: input.target,
+                source: input.source,
+                dest: input.dest,
+                direction,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
-            json!({"copied": true}).to_string(),
+            json!({
+                "bytes_transferred": resp.bytes_transferred,
+                "exit_code": resp.exit_code,
+            })
+            .to_string(),
         )]))
     }
 
-    /// Establish a local or remote SSH port forward using credentials from a
-    /// Secret. Returns a `session_id` and the bound `local_addr`.
-    ///
-    /// The SSH private key is materialised in a mode-0600 tempfile inside the
-    /// agent process and passed to an `ssh -L` subprocess. The subprocess is
-    /// registered in `AppContext.active_port_forwards` so a future revoke call
-    /// can terminate it.
-    ///
-    /// For SSH keys with `sensitivity=high`, the caller MUST set
-    /// `operator_confirmation=true` (via the `/merkle-port-forward` slash
-    /// command); the policy gate denies the request otherwise.
+    /// Establish a local SSH port forward using credentials from a Secret.
+    /// Returns `session_id` and `local_addr`.
     #[tool(
         name = "vault.ssh.port_forward",
-        description = "Establish a local SSH port forward using credentials from a Secret. Returns session_id and local_addr. For sensitivity=high SSH keys, operator_confirmation=true is required via slash command."
+        description = "Establish a local SSH port forward using credentials from a Secret. Returns session_id and local_addr. The tunnel is torn down on session close or TTL expiry."
     )]
     pub async fn vault_ssh_port_forward(
         &self,
         Parameters(input): Parameters<VaultSshPortForwardInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let _ = parse_handle(&input.handle)?;
+        let key_handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
 
-        // The operator_confirmation field defaults to true for Claude Code clients
-        // (the slash command sets it). For non-slash paths it can be false.
-        let slash_command = input.operator_confirmation.unwrap_or(true);
-
-        let cmd = PortForwardCommand {
-            namespace_id,
-            // NOTE: ssh_target and key_material are resolved from the secret
-            // handle when full SSH handle resolution is wired (Phase 7).
-            // Placeholders cause a fast ssh-spawn failure rather than silent
-            // misroute. The policy gate evaluates sensitivity before spawning.
-            ssh_target: input.target_host.clone(),
-            local_port: input.bind_port,
-            remote_host: input.target_host.clone(),
-            remote_port: input.target_port,
-            key_material: Vec::new(),
-            sensitivity: merkle_types::Sensitivity::Low,
-            operator_confirmation:
-                merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation {
-                    slash_command,
-                    oob_ack: false,
-                    signed_config_flag: None,
-                },
-        };
-
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let resp = self
+            .client
+            .proxy_ssh_port_forward(ProxyPortForwardRequest {
+                namespace_id,
+                key_handle,
+                target: input.target,
+                local_port: input.local_port,
+                remote_host: input.remote_host,
+                remote_port: input.remote_port,
+                ttl_secs: input.ttl_secs,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "session_id": out.session_id.to_string(),
-                "local_addr": out.local_addr,
+                "session_id": resp.session_id.to_string(),
+                "local_addr": resp.local_addr,
             })
             .to_string(),
         )]))
     }
 
-    /// Open a buffered SSH shell session and capture all output.
-    /// No stdin accepted. Use `vault.ssh.exec` for commands requiring stdin.
-    /// Output returned in full at session end.
+    /// Open a buffered SSH shell session. Full PTY streaming is not yet
+    /// implemented; this tool returns a `vault.not_implemented` error.
+    /// Use `vault.ssh.exec` for non-interactive commands.
     #[tool(
         name = "vault.ssh.shell",
-        description = "Open a buffered SSH shell session and capture all output. No stdin accepted. Use vault.ssh.exec for commands requiring stdin. Output returned in full at session end."
+        description = "Open an interactive SSH shell session. NOT YET IMPLEMENTED — the server returns 501. Use vault.ssh.exec for non-interactive commands."
     )]
     pub async fn vault_ssh_shell(
         &self,
         Parameters(input): Parameters<VaultSshShellInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let _ = parse_handle(&input.handle)?;
-        let _ = input.term;
-        let _ = input.cols;
-        let _ = input.rows;
-        let _ = input.timeout_secs;
-
+        let key_handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
-        let cmd = SshShellCommand {
-            namespace_id,
-            target: "localhost:22".to_owned(),
-            key_material: Vec::new(),
-            command: None,
-        };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
-        Ok(CallToolResult::success(vec![Content::text(
-            json!({
-                "exit_code": out.exit_code,
-                "stdout": stdout,
-                "stderr": stderr,
+        // The server returns 501; we forward the call and let the error mapper
+        // translate it to vault.not_implemented.
+        self.client
+            .proxy_ssh_shell(ProxySshShellRequest {
+                namespace_id,
+                key_handle,
+                target: input.target,
             })
-            .to_string(),
-        )]))
+            .await
+            .map_err(|e| {
+                // 501 → explicit not_implemented message; other errors mapped normally.
+                use merkle_companion_client::ClientError;
+                if let ClientError::Http { status: 501, .. } = &e {
+                    crate::errors::not_implemented("vault.ssh.shell")
+                } else {
+                    client_error_to_mcp(e)
+                }
+            })?;
+
+        // Unreachable in practice (server always returns 501 today), but
+        // keeps the return type consistent.
+        Err(crate::errors::not_implemented("vault.ssh.shell"))
     }
 
-    /// Perform an HTTP request injecting credentials from a Secret as bearer,
-    /// basic auth, header, query param, or body field. Response body is capped
-    /// at 256 KiB.
+    /// Perform an HTTP request injecting credentials from a Secret.
+    /// Response body is capped at 256 KiB.
     #[tool(
         name = "vault.http.request",
-        description = "Perform an HTTP request injecting credentials from a Secret as bearer, basic auth, header, query param, or body field. Response body is capped at 256 KiB."
+        description = "Perform an HTTP request, optionally injecting credentials from a Secret. Response body is capped at 256 KiB."
     )]
     pub async fn vault_http_request(
         &self,
@@ -449,51 +409,42 @@ impl MerkleMcpServer {
             resolve_namespace(&session)?
         };
 
-        // Build headers from the optional map.
-        let headers: Vec<(String, String)> = input
-            .headers
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let secret_handle = input.handle.as_deref().map(parse_handle).transpose()?;
 
-        let body = input
-            .body
-            .map(String::into_bytes);
+        let headers: Vec<(String, String)> =
+            input.headers.unwrap_or_default().into_iter().collect();
 
-        let spec = HttpRequestSpec {
-            method: input.method,
-            url: input.url,
-            headers,
-            body,
-        };
+        let resp = self
+            .client
+            .proxy_http_request(ProxyHttpRequestRequest {
+                namespace_id,
+                secret_handle,
+                spec: HttpRequestSpecDto {
+                    method: input.method,
+                    url: input.url,
+                    headers,
+                    body: input.body,
+                },
+                auth: None,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
-        // Auth injection: bearer | basic | none.
-        // The full handle → credential resolution flow is wired in Phase 7.
-        // For now, inject None so requests without credentials still work.
-        let auth = HttpAuth::None;
-        let _ = input.handle;
-        let _ = input.inject_as;
-        let _ = input.timeout_secs;
-
-        let cmd = HttpRequestCommand { namespace_id, spec, auth };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
-
-        let body_str = String::from_utf8_lossy(&out.response.body).into_owned();
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "status": out.response.status,
-                "body": body_str,
-                "headers": out.response.headers,
+                "status": resp.status,
+                "body": resp.body,
+                "headers": resp.headers,
             })
             .to_string(),
         )]))
     }
 
-    /// Download a file to the local filesystem, optionally using credentials
+    /// Download a file to the agent filesystem, optionally using credentials
     /// from a Secret for authentication.
     #[tool(
         name = "vault.http.download",
-        description = "Download a file to the local filesystem, optionally using credentials from a Secret for authentication."
+        description = "Download a file to the agent filesystem, optionally using credentials from a Secret for authentication."
     )]
     pub async fn vault_http_download(
         &self,
@@ -503,35 +454,36 @@ impl MerkleMcpServer {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
-        let _ = input.timeout_secs;
-        // Auth is not yet wired from handle; full credential injection is Phase 7.
-        let auth = HttpAuth::None;
-        let _ = input.handle;
-        let _ = input.inject_as;
 
-        let cmd = HttpDownloadCommand {
-            namespace_id,
-            url: input.url,
-            destination: std::path::PathBuf::from(&input.destination),
-            auth,
-        };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let secret_handle = input.handle.as_deref().map(parse_handle).transpose()?;
+
+        let resp = self
+            .client
+            .proxy_http_download(ProxyHttpDownloadRequest {
+                namespace_id,
+                secret_handle,
+                url: input.url,
+                dest_path: input.dest_path.clone(),
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "status": out.status,
-                "bytes_written": out.bytes_written,
-                "destination": input.destination,
+                "status": resp.status,
+                "bytes": resp.bytes,
+                "content_type": resp.content_type,
+                "dest_path": input.dest_path,
             })
             .to_string(),
         )]))
     }
 
-    /// Upload a local file to a URL, optionally using credentials from a Secret.
-    /// Default method: PUT.
+    /// Upload a local file from the agent filesystem to a URL, optionally
+    /// using credentials from a Secret.
     #[tool(
         name = "vault.http.upload",
-        description = "Upload a local file to a URL, optionally using credentials from a Secret for authentication. Default method: PUT."
+        description = "Upload a file from the agent filesystem to a URL, optionally using credentials from a Secret for authentication."
     )]
     pub async fn vault_http_upload(
         &self,
@@ -541,79 +493,70 @@ impl MerkleMcpServer {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
-        let _ = input.timeout_secs;
-        // Auth and content-type injection wired in Phase 7.
-        let auth = HttpAuth::None;
-        let _ = input.handle;
-        let _ = input.inject_as;
 
-        let method = input.method.unwrap_or_else(|| "PUT".to_owned());
-        // Include Content-Type as a header if provided.
-        let headers: Vec<(String, String)> = input
-            .content_type
-            .map(|ct| vec![("Content-Type".to_owned(), ct)])
-            .unwrap_or_default();
+        let secret_handle = input.handle.as_deref().map(parse_handle).transpose()?;
 
-        let cmd = HttpUploadCommand {
-            namespace_id,
-            source: std::path::PathBuf::from(&input.source),
-            url: input.url,
-            method,
-            auth,
-            headers,
-        };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let resp = self
+            .client
+            .proxy_http_upload(ProxyHttpUploadRequest {
+                namespace_id,
+                secret_handle,
+                url: input.url,
+                source_path: input.source_path,
+                content_type: input.content_type,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "status": out.status,
-                "bytes_sent": out.bytes_sent,
+                "status": resp.status,
+                "bytes_sent": resp.bytes_sent,
             })
             .to_string(),
         )]))
     }
 
-    /// Spawn a child process with a Secret injected as an environment variable.
-    /// stdin is closed. stdout/stderr returned (max 256 KiB / 64 KiB).
+    /// Spawn a child process on the agent host with vault secrets injected as
+    /// environment variables. stdin is closed. stdout/stderr returned.
     /// Credentials never appear in the response.
     #[tool(
         name = "vault.spawn",
-        description = "Spawn a child process with a Secret injected as an environment variable. stdin is closed. stdout/stderr returned. Credentials never appear in the response."
+        description = "Spawn a child process on the agent host with Secrets injected as environment variables. stdin is closed. stdout/stderr returned. Credentials never appear in the response."
     )]
     pub async fn vault_spawn(
         &self,
         Parameters(input): Parameters<VaultSpawnInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
 
-        let mut argv = vec![input.cmd];
-        argv.extend(input.args.unwrap_or_default());
+        let secret_handles: Result<Vec<Handle>, ErrorData> = input
+            .secret_handles
+            .iter()
+            .map(|h| parse_handle(h))
+            .collect();
 
-        let _ = input.working_dir;
-        let _ = input.timeout_secs;
-
-        // dek_bytes: zeroed placeholder — the application layer retrieves the
-        // real DEK from the keychain internally (the MCP adapter does not hold it).
-        let cmd = SpawnCommandCommand {
-            namespace_id,
-            handle,
-            env_var: input.env_var,
-            dek_bytes: [0u8; 32],
-            argv,
-        };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        let resp = self
+            .client
+            .proxy_spawn(ProxySpawnRequest {
+                namespace_id,
+                secret_handles: secret_handles?,
+                command: input.command,
+                args: input.args.unwrap_or_default(),
+                env: input.env.unwrap_or_default(),
+                working_dir: input.working_dir,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "exit_code": out.exit_code,
-                "stdout": stdout,
-                "stderr": stderr,
+                "exit_code": resp.exit_code,
+                "stdout": resp.stdout,
+                "stderr": resp.stderr,
             })
             .to_string(),
         )]))
@@ -629,24 +572,37 @@ impl MerkleMcpServer {
         &self,
         Parameters(input): Parameters<VaultCryptoSignInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let handle = parse_handle(&input.handle)?;
+        let key_handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
 
-        let _ = input.algorithm;
-        let message = input.payload.into_bytes();
+        let algorithm = input
+            .algorithm
+            .map(|a| match a.to_lowercase().as_str() {
+                "rsa-sha256" | "rsa_sha256" => {
+                    merkle_companion_client::dto::CryptoSignAlgorithm::RsaSha256
+                }
+                _ => merkle_companion_client::dto::CryptoSignAlgorithm::Ed25519,
+            })
+            .unwrap_or_default();
 
-        // dek_bytes: zeroed placeholder — the application layer retrieves the
-        // real DEK from the keychain internally (the MCP adapter does not hold it).
-        let cmd = CryptoSignCommand { namespace_id, key_handle: handle, dek_bytes: [0u8; 32], message };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let resp = self
+            .client
+            .proxy_crypto_sign(ProxyCryptoSignRequest {
+                namespace_id,
+                key_handle,
+                message_b64: input.message_b64,
+                algorithm,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "signature_hex": out.signature_hex,
-                "algorithm": "ed25519",
+                "signature_b64": resp.signature_b64,
+                "algorithm": resp.algorithm,
             })
             .to_string(),
         )]))
@@ -662,28 +618,32 @@ impl MerkleMcpServer {
         &self,
         Parameters(input): Parameters<VaultCryptoDecryptInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let handle = parse_handle(&input.handle)?;
+        let key_handle = parse_handle(&input.handle)?;
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
         };
 
-        let ciphertext = base64::engine::general_purpose::STANDARD
-            .decode(&input.ciphertext)
-            .map_err(|e| ErrorData::invalid_params(format!("ciphertext: {e}"), None))?;
+        // Validate the ciphertext base64 at the adapter level for fast feedback.
+        let _ = base64::engine::general_purpose::STANDARD
+            .decode(&input.ciphertext_b64)
+            .map_err(|e| ErrorData::invalid_params(format!("ciphertext_b64: {e}"), None))?;
 
-        // dek_bytes: zeroed placeholder — the application layer retrieves the
-        // real DEK from the keychain internally (the MCP adapter does not hold it).
-        // aad: empty — callers who need AAD will pass it in a future schema extension.
-        let cmd = CryptoDecryptCommand { namespace_id, key_handle: handle, dek_bytes: [0u8; 32], ciphertext, aad: Vec::new() };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
-
-        // Encode plaintext as base64 so it can be safely embedded in JSON.
-        let plaintext_b64 = base64::engine::general_purpose::STANDARD.encode(&out.plaintext);
+        let resp = self
+            .client
+            .proxy_crypto_decrypt(ProxyCryptoDecryptRequest {
+                namespace_id,
+                key_handle,
+                ciphertext_b64: input.ciphertext_b64,
+                aad_b64: input.aad_b64.unwrap_or_default(),
+                algorithm: merkle_companion_client::dto::CryptoDecryptAlgorithm::default(),
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "plaintext_b64": plaintext_b64,
+                "plaintext_b64": resp.plaintext_b64,
             })
             .to_string(),
         )]))

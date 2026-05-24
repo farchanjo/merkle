@@ -1,12 +1,8 @@
 //! vault.reveal — OOB-gated plaintext disclosure.
 //!
-//! Supports two confirmation paths:
-//!
-//! 1. **Slash-command path** (`operator_confirmation = true`): the Claude Code
-//!    client sets `slash_command = true` via the `/merkle-reveal` slash command.
-//! 2. **JWT attestation path** (`signed_config_flag` present, `operator_confirmation =
-//!    false`): non-Claude clients supply an Ed25519-signed JWT that is verified
-//!    by `JwtAttestationVerifier` (ADR-0011 Amendment 6).
+//! Forwards `POST /v1/reveal` to the Companion Socket. The agent evaluates
+//! the operator confirmation and OOB policy and returns either plaintext
+//! (200 OK) or an OOB-pending envelope (202 Accepted).
 
 use rmcp::{
     ErrorData,
@@ -18,44 +14,25 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{MerkleMcpServer, errors::app_error_to_mcp};
-use merkle_application::commands::reveal_secret::RevealSecretCommand;
-use merkle_domain_access_mediation::operator_confirmation::{
-    OperatorConfirmation, SignedConfigFlag,
-};
-use merkle_types::{
-    CompanionDeviceClass, Handle, NamespaceId, OobChannel, SecurityProfile, Sensitivity,
-};
+use crate::{MerkleMcpServer, errors::client_error_to_mcp};
+use merkle_companion_client::dto::OperatorConfirmation;
+use merkle_companion_client::{RevealOutcome, dto::RevealRequest};
+use merkle_types::Handle;
 
 // ---------------------------------------------------------------------------
 // Input parameter struct
 // ---------------------------------------------------------------------------
 
-/// Signed config flag submitted by non-Claude clients (ADR-0011 Amendment 6).
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct SignedConfigFlagInput {
-    /// Compact-serialised JWT (base64url.base64url.base64url).
-    pub jwt: String,
-    /// Key identifier declared in the JWT header (`kid` claim).
-    pub key_id: String,
-}
-
 /// Input for vault.reveal.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultRevealInput {
-    /// Handle URI of the Secret to reveal (e.g. `vault://default/my-token`).
+    /// Handle URI of the Secret to reveal (e.g. `vault://default/token/my-token`).
     pub handle: String,
     /// Human-readable reason recorded in the audit log.
     pub purpose: String,
     /// For Claude Code clients: must be `true`. Only honoured when set by
     /// the `/merkle-reveal` slash command, never from LLM-generated arguments.
-    ///
-    /// For non-Claude clients using JWT attestation, set to `false` and
-    /// supply `signed_config_flag` instead.
     pub operator_confirmation: bool,
-    /// Optional JWT attestation for non-Claude clients (ADR-0011 Amendment 6).
-    /// When supplied, `operator_confirmation` may be `false`.
-    pub signed_config_flag: Option<SignedConfigFlagInput>,
 }
 
 // ---------------------------------------------------------------------------
@@ -77,29 +54,32 @@ impl RevealTools {
 // Tool implementation
 // ---------------------------------------------------------------------------
 
-#[allow(missing_docs)]
+#[expect(
+    missing_docs,
+    reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
+)]
 #[rmcp::tool_router(router = reveal_router)]
 impl MerkleMcpServer {
     /// Return the plaintext of a Secret directly in the MCP response.
     ///
     /// Requires `operator_confirmation = true` (set only by the `/merkle-reveal`
-    /// slash command) OR a valid `signed_config_flag` JWT for non-Claude clients.
-    /// High-sensitivity Secrets additionally require an OOB round-trip.
+    /// slash command). High-sensitivity Secrets additionally require an OOB
+    /// round-trip. If OOB confirmation is pending, a `oob_pending=true` response
+    /// is returned with channel and nonce information; the caller should
+    /// acknowledge and re-issue the tool call.
     ///
     /// WARNING: The revealed plaintext appears in the conversation context.
     /// Prefer `vault.use` for proxy operations that do not require the model
     /// to see the credential value.
     #[tool(
         name = "vault.reveal",
-        description = "Return the plaintext of a Secret in the MCP response. Requires operator_confirmation=true (set only by /merkle-reveal slash command) or a valid signed_config_flag JWT for non-Claude clients. Blocked for high-sensitivity Secrets unless Namespace Policy permits. Triggers OOB confirmation for medium/high sensitivity."
+        description = "Return the plaintext of a Secret in the MCP response. Requires operator_confirmation=true (set only by /merkle-reveal slash command). Triggers OOB confirmation for medium/high sensitivity. If OOB pending, re-issue after acknowledging the notification."
     )]
     pub async fn vault_reveal(
         &self,
         Parameters(input): Parameters<VaultRevealInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Both paths require at least one of: slash_command=true OR signed_config_flag.
-        let has_jwt = input.signed_config_flag.is_some();
-        if !input.operator_confirmation && !has_jwt {
+        if !input.operator_confirmation {
             return Err(crate::errors::not_implemented("vault.reveal"));
         }
 
@@ -108,75 +88,50 @@ impl MerkleMcpServer {
             .parse::<Handle>()
             .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
 
-        let namespace_id = {
+        let session_id = {
             let session = self.session.read().await;
             session
                 .namespace_label()
                 .ok_or_else(crate::errors::namespace_not_bound)?;
-            NamespaceId::new()
+            session
+                .session_id()
+                .ok_or_else(crate::errors::namespace_not_bound)?
         };
 
-        // Build the OperatorConfirmation from the MCP input.
-        let scf = input.signed_config_flag.map(|f| SignedConfigFlag {
-            jwt: f.jwt,
-            key_id: f.key_id,
-        });
-        let operator_confirmation = OperatorConfirmation {
-            slash_command: input.operator_confirmation,
-            oob_ack: false,
-            signed_config_flag: scf,
-        };
-
-        // Use a fresh ChallengeId when the JWT path is active.
-        let challenge_id = if operator_confirmation.signed_config_flag.is_some() {
-            Some(merkle_types::ChallengeId::new())
-        } else {
-            None
-        };
-
-        // Retrieve the secret's sensitivity from storage (requires unsealed vault).
-        let stored_sensitivity = self
-            .app_ctx
-            .storage
-            .get_secret_by_handle(&handle)
-            .await
-            .map_err(|e| {
-                ErrorData::new(
-                    rmcp::model::ErrorCode(-32_603),
-                    e.to_string(),
-                    None,
-                )
-            })?
-            .map_or(Sensitivity::Medium, |s| s.sensitivity);
-
-        let _ = input.purpose; // audited inside RevealSecretCommand
-
-        let cmd = RevealSecretCommand {
-            namespace_id,
-            handle,
-            operator_confirmation,
-            challenge_id,
-            sensitivity: stored_sensitivity,
-            oob_threshold: Sensitivity::High,
-            security_profile: SecurityProfile::Relaxed,
-            // DEK bytes: the application layer retrieves the real DEK
-            // from the keychain internally. The adapter supplies zeroed bytes
-            // as a placeholder until Phase 7 full handle-resolution is wired.
-            dek_bytes: [0u8; 32],
-            companion_device: None,
-            oob_channel: OobChannel::DesktopNotif,
-            oob_timeout: std::time::Duration::from_secs(60),
-            required_device_class: CompanionDeviceClass::Software,
-        };
-
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
-        let plaintext = String::from_utf8_lossy(&out.plaintext).into_owned();
-
-        Ok(CallToolResult::success(vec![Content::text(
-            json!({
-                "plaintext": plaintext,
+        let outcome = self
+            .client
+            .reveal(RevealRequest {
+                handle,
+                reason: input.purpose,
+                session_id,
+                operator_confirmation: OperatorConfirmation {
+                    slash_command: input.operator_confirmation,
+                    oob_ack: false,
+                    oob_channel: None,
+                },
             })
-            .to_string(),
-        )]))
+            .await
+            .map_err(client_error_to_mcp)?;
+
+        match outcome {
+            RevealOutcome::Plaintext(resp) => Ok(CallToolResult::success(vec![Content::text(
+                json!({
+                    "plaintext": resp.plaintext,
+                    "revealed_at": resp.revealed_at.to_rfc3339(),
+                    "warning": resp.warning,
+                })
+                .to_string(),
+            )])),
+            RevealOutcome::OobPending(resp) => Ok(CallToolResult::success(vec![Content::text(
+                json!({
+                    "oob_pending": resp.oob_pending,
+                    "oob_channel": format!("{:?}", resp.oob_channel),
+                    "expires_at": resp.expires_at.to_rfc3339(),
+                    "request_nonce": resp.request_nonce,
+                    "instructions": "Acknowledge the OOB notification and re-issue vault.reveal.",
+                })
+                .to_string(),
+            )])),
+        }
     }
 }

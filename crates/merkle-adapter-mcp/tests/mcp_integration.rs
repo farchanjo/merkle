@@ -1,492 +1,433 @@
 //! Integration tests for `merkle-adapter-mcp`.
 //!
-//! Tests exercise `MerkleMcpServer` via its public API — direct tool-method
-//! calls — without a real MCP transport.
+//! The MCP adapter is now a thin translation layer over [`CompanionSocketClient`];
+//! it contains no domain logic. Tests therefore fall into two tiers:
+//!
+//! **Tier 1 — pure unit (no socket):** session-state invariants, error-code
+//! mappings, and guards executed before the socket is contacted.
+//!
+//! **Tier 2 — unreachable-agent smoke (nonexistent socket):** tools that reach
+//! the socket return [`codes::AGENT_UNREACHABLE`] when no agent is running.
+//! These confirm the adapter wiring is correct without requiring a live agent.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use merkle_adapter_crypto::RustCryptoAdapter;
-use merkle_adapter_external_services::MockExternalServices;
-use merkle_adapter_keychain::MockKeychainAdapter;
 use merkle_adapter_mcp::{
     MerkleMcpServer,
     errors::codes,
     tools::audit::VaultAuditQueryInput,
     tools::diagnostics::VaultDoctorInput,
-    tools::identity::{VaultBindInput, VaultUnsealInput},
+    tools::identity::{VaultBindInput, VaultSealInput, VaultUnsealInput},
+    tools::proxy::{VaultSshExecInput, VaultSshPortForwardInput},
     tools::reveal::VaultRevealInput,
-    tools::secrets::{VaultDeleteInput, VaultPutInput, VaultSearchInput},
+    tools::secrets::{VaultDeleteInput, VaultListInput, VaultPutInput, VaultSearchInput},
     tools::use_token::VaultUseInput,
 };
-use merkle_adapter_oob::mock::MockOobNotifier;
-use merkle_adapter_sqlite::SqliteStorage;
-use merkle_application::AppContext;
-use merkle_domain_identity::{KeychainEntry, RecoveryPublicKey, VaultIdentity};
-use merkle_types::Rfc3339Timestamp;
+use merkle_companion_client::CompanionSocketClient;
 use rmcp::{ServerHandler as _, handler::server::tool::Parameters};
 
 // ---------------------------------------------------------------------------
-// Test context helper
+// Test helpers
 // ---------------------------------------------------------------------------
 
-async fn make_ctx() -> Arc<AppContext> {
-    let storage = SqliteStorage::open("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-
-    let crypto = Arc::new(RustCryptoAdapter::new());
-    let keychain = Arc::new(MockKeychainAdapter::new());
-    let oob = Arc::new(MockOobNotifier::new());
-    let external = Arc::new(MockExternalServices::new());
-
-    let keychain_entry = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
-    let recovery_pubkey = RecoveryPublicKey::new(
-        "age1test000000000000000000000000000000000000000000000000000000".to_owned(),
-        "SHA256:test=".to_owned(),
-        Rfc3339Timestamp::now(),
-    );
-    let identity = VaultIdentity::new(keychain_entry, recovery_pubkey);
-
-    Arc::new(AppContext::new(
-        Arc::new(storage),
-        keychain,
-        crypto,
-        oob,
-        external,
-        identity,
-    ))
-}
-
-/// Seed the mock keychain with a test master key so `vault.unseal` succeeds.
-async fn seed_master_key(ctx: &AppContext) {
-    ctx.keychain
-        .store("dev.fapp.merkle", "master-v1", &[0xABu8; 32])
-        .await
-        .expect("seed master key");
-}
-
-/// Build an unsealed `MerkleMcpServer` with the test namespace already bound.
-///
-/// Sequence: seed keychain → unseal → bind("test-ns").
-async fn make_unsealed_server(ns_label: &str) -> MerkleMcpServer {
-    let ctx = make_ctx().await;
-    seed_master_key(&ctx).await;
-
-    let server = MerkleMcpServer::new(ctx);
-
-    server
-        .vault_unseal(Parameters(VaultUnsealInput { passphrase: None }))
-        .await
-        .expect("unseal should succeed after seeding keychain");
-
-    server
-        .vault_bind(Parameters(VaultBindInput {
-            label: ns_label.to_owned(),
-        }))
-        .await
-        .expect("bind should succeed on unsealed vault");
-
-    server
-}
-
-/// Put a single test secret into the bound namespace.
-/// Returns the handle string.
-async fn put_test_secret(server: &MerkleMcpServer) -> String {
-    let out = server
-        .vault_put(Parameters(VaultPutInput {
-            category: "token".to_owned(),
-            name: "ci-token".to_owned(),
-            value: serde_json::json!("s3cr3t"),
-            schema_id: None,
-            tags: Some(vec!["ci".to_owned()]),
-            sensitivity: Some("low".to_owned()),
-            expose: Some(true),
-        }))
-        .await
-        .expect("vault.put should succeed");
-
-    // Extract handle from the success JSON.
-    let text = out
-        .content
-        .first()
-        .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-        .expect("response has text content");
-    let v: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
-    v["handle"].as_str().expect("handle field present").to_owned()
+/// Build a `MerkleMcpServer` backed by a socket that does not exist.
+/// Any call that reaches the socket returns `AGENT_UNREACHABLE`.
+fn unreachable_server() -> MerkleMcpServer {
+    let client = Arc::new(CompanionSocketClient::new(PathBuf::from(
+        "/nonexistent/merkle-test.sock",
+    )));
+    MerkleMcpServer::new(client)
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Tier 1: pure unit tests (no socket contact)
 // ---------------------------------------------------------------------------
 
-/// The MCP server can be constructed and its `get_info` returns `"merkle"`.
+/// `get_info` must report server name `"merkle"`.
 #[tokio::test]
 async fn server_info_name_is_merkle() {
-    let ctx = make_ctx().await;
-    let server = MerkleMcpServer::new(ctx);
+    let server = unreachable_server();
     let info = server.get_info();
     assert_eq!(info.server_info.name, "merkle");
 }
 
-/// Calling `vault.unseal` with the mock keychain (no real key stored) should
-/// return a domain error, not a panic.
-#[tokio::test]
-async fn vault_unseal_returns_domain_error_without_key() {
-    let ctx = make_ctx().await;
-    let server = MerkleMcpServer::new(ctx);
-
-    let result = server
-        .vault_unseal(Parameters(VaultUnsealInput { passphrase: None }))
-        .await;
-
-    assert!(result.is_err(), "expected error when no key is stored");
-}
-
-/// `vault.reveal` without `operator_confirmation = true` must return
-/// `ToolNotImplemented`.
+/// `vault.reveal` with `operator_confirmation = false` must return
+/// `TOOL_NOT_IMPLEMENTED` (-32099) before contacting the socket.
 #[tokio::test]
 async fn vault_reveal_requires_operator_confirmation() {
-    let ctx = make_ctx().await;
-    let server = MerkleMcpServer::new(ctx);
+    let server = unreachable_server();
 
-    let result = server
+    let err = server
         .vault_reveal(Parameters(VaultRevealInput {
-            handle: "vault://default/test".to_owned(),
+            handle: "vault://default/token/test".to_owned(),
             purpose: "test".to_owned(),
             operator_confirmation: false,
-            signed_config_flag: None,
         }))
-        .await;
+        .await
+        .expect_err("should return error when operator_confirmation=false");
 
-    assert!(result.is_err());
     assert_eq!(
-        result.unwrap_err().code.0,
+        err.code.0,
         codes::TOOL_NOT_IMPLEMENTED,
+        "expected TOOL_NOT_IMPLEMENTED (-32099); got {}",
+        err.code.0
     );
 }
 
-/// `vault.bind` on a sealed vault returns `UnsealRequired` because
-/// `BindNamespaceCommand` calls `require_unsealed` internally.
-#[tokio::test]
-async fn vault_bind_returns_unseal_required_when_sealed() {
-    let ctx = make_ctx().await;
-    let server = MerkleMcpServer::new(ctx);
-
-    let result = server
-        .vault_bind(Parameters(VaultBindInput {
-            label: "test-project".to_owned(),
-        }))
-        .await;
-
-    assert!(result.is_err(), "bind on sealed vault should fail: {result:?}");
-    assert_eq!(
-        result.unwrap_err().code.0,
-        codes::UNSEAL_REQUIRED,
-    );
-}
-
-/// `vault.bind` called twice on the same session must return `AlreadyBound`.
-/// The second call is rejected at the session layer before reaching the domain.
+/// `vault.bind` called twice on the same session must return `ALREADY_BOUND`
+/// (-32008). The second call is rejected at the session layer, before the
+/// socket is contacted.
 #[tokio::test]
 async fn vault_bind_rejects_double_bind() {
-    let ctx = make_ctx().await;
-    let server = MerkleMcpServer::new(ctx);
+    let server = unreachable_server();
 
-    // First bind (will fail with UnsealRequired, but records the session label).
+    // First bind fails with AGENT_UNREACHABLE (socket absent), but the
+    // SessionState records the label regardless — the guard fires first.
     let _ = server
         .vault_bind(Parameters(VaultBindInput {
             label: "ns-one".to_owned(),
         }))
         .await;
 
-    // Second bind must be rejected with AlreadyBound before reaching the domain.
-    let second = server
+    // Second bind must be rejected before reaching the socket.
+    let err = server
         .vault_bind(Parameters(VaultBindInput {
             label: "ns-two".to_owned(),
         }))
-        .await;
-
-    assert!(second.is_err(), "second bind should return AlreadyBound");
-    assert_eq!(second.unwrap_err().code.0, codes::ALREADY_BOUND);
-}
-
-// ---------------------------------------------------------------------------
-// F6.B: new integration tests for tools wired from F5.B full commands
-// ---------------------------------------------------------------------------
-
-/// T-F6-01: `vault.delete` round-trip — put then delete returns `deleted: true`.
-#[tokio::test]
-async fn f6b_vault_delete_round_trip() {
-    let server = make_unsealed_server("del-ns").await;
-    let handle = put_test_secret(&server).await;
-
-    let result = server
-        .vault_delete(Parameters(VaultDeleteInput {
-            handle,
-            purpose: "f6b delete test".to_owned(),
-        }))
         .await
-        .expect("vault.delete should succeed");
+        .expect_err("second bind must return AlreadyBound");
 
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-        .expect("response has text content");
-    let v: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
-    assert_eq!(v["deleted"], true, "deleted flag should be true");
-}
-
-/// T-F6-02: `vault.use` returns a 43-character base64url use-token.
-///
-/// The token is generated by `UseTokenCommand` using 256 bits of CSPRNG.
-/// Base64url of 32 bytes = ceil(32 * 4/3) = 43 chars (with standard padding
-/// removed by the URL-safe encoder). The spec guarantees exactly 43 chars.
-#[tokio::test]
-async fn f6b_vault_use_returns_43_char_token() {
-    let server = make_unsealed_server("use-ns").await;
-    let handle = put_test_secret(&server).await;
-
-    let result = server
-        .vault_use(Parameters(VaultUseInput {
-            handle,
-            purpose: "f6b use-token test".to_owned(),
-        }))
-        .await
-        .expect("vault.use should succeed");
-
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-        .expect("response has text content");
-    let v: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
-    let token = v["use_token"].as_str().expect("use_token field present");
     assert_eq!(
-        token.len(),
-        43,
-        "use_token must be 43 characters (base64url of 32 bytes); got: {token}"
+        err.code.0,
+        codes::ALREADY_BOUND,
+        "expected ALREADY_BOUND (-32008); got {}",
+        err.code.0
     );
-    assert!(v["expires_at"].is_string(), "expires_at field must be present");
 }
 
-/// T-F6-03: `vault.audit.query` returns N entries after N secret puts.
-///
-/// Performs 3 puts then queries the audit log; expects at least 3 entries.
+/// Tools that require a bound namespace return `NAMESPACE_NOT_BOUND` (-32005)
+/// immediately, without contacting the socket, when `vault.bind` has not
+/// been called.
 #[tokio::test]
-async fn f6b_vault_audit_query_returns_entries_after_puts() {
-    let server = make_unsealed_server("audit-ns").await;
+async fn tools_return_namespace_not_bound_before_bind() {
+    let server = unreachable_server();
 
-    for i in 0..3u32 {
-        server
-            .vault_put(Parameters(VaultPutInput {
-                category: "token".to_owned(),
-                name: format!("audit-tok-{i}"),
-                value: serde_json::json!("val"),
-                schema_id: None,
-                tags: None,
-                sensitivity: Some("low".to_owned()),
-                expose: Some(true),
-            }))
-            .await
-            .unwrap_or_else(|e| panic!("put {i} should succeed: {e:?}"));
+    // vault.put — requires namespace.
+    let err = server
+        .vault_put(Parameters(VaultPutInput {
+            category: "token".to_owned(),
+            name: "tok".to_owned(),
+            value: serde_json::json!("secret"),
+            schema_id: None,
+            tags: None,
+            sensitivity: None,
+            expose: None,
+        }))
+        .await
+        .expect_err("vault.put without bind must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::NAMESPACE_NOT_BOUND,
+        "expected NAMESPACE_NOT_BOUND (-32005); got {}",
+        err.code.0
+    );
+
+    // vault.list — also requires namespace.
+    let err2 = server
+        .vault_list(Parameters(VaultListInput {
+            category: None,
+            tags: None,
+            name_pattern: None,
+            expires_before: None,
+            sensitivity: None,
+            fts_query: None,
+            limit: None,
+        }))
+        .await
+        .expect_err("vault.list without bind must return error");
+
+    assert_eq!(
+        err2.code.0,
+        codes::NAMESPACE_NOT_BOUND,
+        "expected NAMESPACE_NOT_BOUND (-32005); got {}",
+        err2.code.0
+    );
+}
+
+/// `vault.reveal` with `operator_confirmation = true` but without a bound
+/// namespace returns `NAMESPACE_NOT_BOUND` (-32005).
+#[tokio::test]
+async fn vault_reveal_unbound_returns_namespace_not_bound() {
+    let server = unreachable_server();
+
+    let err = server
+        .vault_reveal(Parameters(VaultRevealInput {
+            handle: "vault://default/token/test".to_owned(),
+            purpose: "unit-test".to_owned(),
+            operator_confirmation: true,
+        }))
+        .await
+        .expect_err("reveal without bind must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::NAMESPACE_NOT_BOUND,
+        "expected NAMESPACE_NOT_BOUND (-32005); got {}",
+        err.code.0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2: unreachable-agent smoke tests
+// ---------------------------------------------------------------------------
+//
+// These call tools that pass all session guards, then contact the socket.
+// Because no agent is listening, the socket layer returns AGENT_UNREACHABLE.
+//
+// They confirm:
+//   a) the tool implementation compiles with the current input struct shapes,
+//   b) the error-mapping path from ClientError::Unreachable is wired correctly,
+//   c) session-guard code paths for bound sessions are reachable.
+
+/// Build a server whose session already has a synthesised binding so tools
+/// that require `namespace_id` + `session_id` will pass the session guard
+/// and proceed to the socket call.
+async fn pre_bound_unreachable_server() -> MerkleMcpServer {
+    let server = unreachable_server();
+    // Directly mutate session state to simulate a successful bind.
+    {
+        let mut session = server.session.write().await;
+        let ns_id = uuid::Uuid::nil();
+        let sid = uuid::Uuid::nil();
+        // `bind` records the label and sets `namespace_bound = true`.
+        session
+            .bind("smoke-ns".to_owned())
+            .expect("first bind must succeed");
+        // `set_binding` stores the UUID pair.
+        session.set_binding(ns_id, sid);
     }
+    server
+}
 
-    let result = server
+/// `vault.unseal` with the socket absent returns `AGENT_UNREACHABLE` (-32100).
+#[tokio::test]
+async fn vault_unseal_returns_agent_unreachable() {
+    let server = unreachable_server();
+
+    let err = server
+        .vault_unseal(Parameters(VaultUnsealInput { passphrase: None }))
+        .await
+        .expect_err("unseal to dead socket must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
+}
+
+/// `vault.seal` with the socket absent returns `AGENT_UNREACHABLE`.
+#[tokio::test]
+async fn vault_seal_returns_agent_unreachable() {
+    let server = unreachable_server();
+
+    let err = server
+        .vault_seal(Parameters(VaultSealInput { reason: None }))
+        .await
+        .expect_err("seal to dead socket must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
+}
+
+/// `vault.bind` with the socket absent returns `AGENT_UNREACHABLE`.
+#[tokio::test]
+async fn vault_bind_first_call_returns_agent_unreachable() {
+    let server = unreachable_server();
+
+    let err = server
+        .vault_bind(Parameters(VaultBindInput {
+            label: "dead-ns".to_owned(),
+        }))
+        .await
+        .expect_err("bind to dead socket must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
+}
+
+/// `vault.use` with a pre-bound session and dead socket returns
+/// `AGENT_UNREACHABLE` (-32100).
+#[tokio::test]
+async fn vault_use_returns_agent_unreachable() {
+    let server = pre_bound_unreachable_server().await;
+
+    let err = server
+        .vault_use(Parameters(VaultUseInput {
+            handle: "vault://smoke-ns/token/ci-token".to_owned(),
+            purpose: "smoke test".to_owned(),
+        }))
+        .await
+        .expect_err("vault.use to dead socket must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
+}
+
+/// `vault.delete` with a pre-bound session and dead socket returns
+/// `AGENT_UNREACHABLE`.
+#[tokio::test]
+async fn vault_delete_returns_agent_unreachable() {
+    let server = pre_bound_unreachable_server().await;
+
+    let err = server
+        .vault_delete(Parameters(VaultDeleteInput {
+            handle: "vault://smoke-ns/token/tok".to_owned(),
+            purpose: "smoke".to_owned(),
+        }))
+        .await
+        .expect_err("vault.delete to dead socket must return error");
+
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
+}
+
+/// `vault.audit.query` with a pre-bound session and dead socket returns
+/// `AGENT_UNREACHABLE`. Also compiles the new `VaultAuditQueryInput` shape
+/// (no `since`/`until` fields).
+#[tokio::test]
+async fn vault_audit_query_returns_agent_unreachable() {
+    let server = pre_bound_unreachable_server().await;
+
+    let err = server
         .vault_audit_query(Parameters(VaultAuditQueryInput {
             handle: None,
             op: None,
-            since: None,
-            until: None,
             session_id: None,
-            limit: Some(50),
+            outcome: None,
+            limit: Some(10),
             verify_chain: Some(false),
         }))
         .await
-        .expect("vault.audit.query should succeed");
+        .expect_err("vault.audit.query to dead socket must return error");
 
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-        .expect("response has text content");
-    let v: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
-    let count = v["count"].as_u64().expect("count field present");
-    assert!(
-        count >= 3,
-        "audit log should have at least 3 entries after 3 puts; got {count}"
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
     );
 }
 
-/// T-F6-04: `vault.doctor` returns `chain_intact: true` on a freshly
-/// initialized vault.
+/// `vault.doctor` with a dead socket returns `AGENT_UNREACHABLE`.
 #[tokio::test]
-async fn f6b_vault_doctor_returns_chain_intact() {
-    let server = make_unsealed_server("doctor-ns").await;
+async fn vault_doctor_returns_agent_unreachable() {
+    let server = unreachable_server();
 
-    let result = server
+    let err = server
         .vault_doctor(Parameters(VaultDoctorInput::default()))
         .await
-        .expect("vault.doctor should succeed");
+        .expect_err("vault.doctor to dead socket must return error");
 
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-        .expect("response has text content");
-    let v: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
     assert_eq!(
-        v["chain_intact"], true,
-        "chain_intact should be true on a fresh vault; got: {v}"
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
     );
-    assert!(v["checks"].is_array(), "checks array must be present");
 }
 
-/// T-F6-05: `vault.search` returns matching secrets after puts.
-///
-/// Puts two secrets with distinct names then searches; confirms count > 0.
+/// `vault.search` with a pre-bound session and dead socket returns
+/// `AGENT_UNREACHABLE`.
 #[tokio::test]
-async fn f6b_vault_search_returns_matching_secrets() {
-    let server = make_unsealed_server("search-ns").await;
+async fn vault_search_returns_agent_unreachable() {
+    let server = pre_bound_unreachable_server().await;
 
-    for i in 0..2u32 {
-        server
-            .vault_put(Parameters(VaultPutInput {
-                category: "token".to_owned(),
-                name: format!("searchable-tok-{i}"),
-                value: serde_json::json!("val"),
-                schema_id: None,
-                tags: None,
-                sensitivity: Some("low".to_owned()),
-                expose: Some(true),
-            }))
-            .await
-            .unwrap_or_else(|e| panic!("put {i} should succeed: {e:?}"));
-    }
-
-    let result = server
+    let err = server
         .vault_search(Parameters(VaultSearchInput {
-            query: "searchable".to_owned(),
+            query: "test".to_owned(),
             limit: Some(10),
         }))
         .await
-        .expect("vault.search should succeed");
+        .expect_err("vault.search to dead socket must return error");
 
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-        .expect("response has text content");
-    let v: serde_json::Value = serde_json::from_str(text).expect("valid JSON");
-    let count = v["count"].as_u64().expect("count field present");
-    assert!(
-        count >= 2,
-        "search should return at least 2 results for 'searchable'; got {count}"
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
     );
 }
 
-/// T-F6-06a: `vault.ssh.port_forward` is no longer stubbed (-32099 gone).
-///
-/// With `operator_confirmation` omitted (defaults to `true`) and
-/// `sensitivity = Low`, the policy gate passes and `PortForwardCommand`
-/// attempts to spawn an `ssh -L` subprocess. The `ssh` binary exists on
-/// the test host so the spawn call succeeds and the MCP tool returns
-/// `Ok` with a JSON body containing `session_id` and `local_addr`.
-///
-/// The SSH tunnel will fail in the background (no valid key material,
-/// target host unreachable) but that is a runtime concern outside this
-/// integration test, which only validates the MCP adapter layer.
+/// `vault.ssh.exec` with a pre-bound session and dead socket returns
+/// `AGENT_UNREACHABLE`. Compiles the new `VaultSshExecInput` shape.
 #[tokio::test]
-async fn f6b_vault_port_forward_wired_returns_session_id_and_local_addr() {
-    use merkle_adapter_mcp::tools::proxy::VaultSshPortForwardInput;
+async fn vault_ssh_exec_returns_agent_unreachable() {
+    let server = pre_bound_unreachable_server().await;
 
-    let server = make_unsealed_server("pf-ns").await;
-
-    let result = server
-        .vault_ssh_port_forward(Parameters(VaultSshPortForwardInput {
-            handle: "vault://pf-ns/ssh/my-key".to_owned(),
-            direction: "local".to_owned(),
-            bind_address: None,
-            bind_port: 8080,
-            target_host: "db.internal".to_owned(),
-            target_port: 5432,
-            ttl_secs: None,
-            operator_confirmation: None, // defaults to true → slash_command=true
+    let err = server
+        .vault_ssh_exec(Parameters(VaultSshExecInput {
+            handle: "vault://smoke-ns/ssh/my-key".to_owned(),
+            target: "bastion.example.com:22".to_owned(),
+            command: "echo hello".to_owned(),
+            args: None,
+            env: None,
+            timeout_secs: None,
         }))
-        .await;
+        .await
+        .expect_err("vault.ssh.exec to dead socket must return error");
 
-    // The command may fail if `ssh` is unavailable; tolerate SPAWN_FAILED
-    // but NEVER accept TOOL_NOT_IMPLEMENTED (-32099).
-    if let Err(ref err) = result {
-        assert_ne!(
-            err.code.0,
-            codes::TOOL_NOT_IMPLEMENTED,
-            "port_forward must no longer return -32099 (not-implemented stub)"
-        );
-        // Acceptable failures: spawn error, tempfile error, or internal error.
-        assert!(
-            err.code.0 == codes::SPAWN_FAILED
-                || err.code.0 == codes::TEMPFILE_CREATE_FAILED
-                || err.code.0 == -32_603,
-            "unexpected MCP error code {} from port_forward",
-            err.code.0
-        );
-    } else {
-        // Happy path: ssh binary exists and spawn returned Ok.
-        let text = result
-            .unwrap()
-            .content
-            .first()
-            .and_then(|c| c.as_text().map(|t| t.text.as_str()))
-            .expect("response has text content")
-            .to_owned();
-        let v: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
-        assert!(v["session_id"].is_string(), "session_id must be present");
-        assert_eq!(
-            v["local_addr"].as_str(),
-            Some("127.0.0.1:8080"),
-            "local_addr must be 127.0.0.1:8080"
-        );
-    }
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
 }
 
-/// T-F6-06b: `vault.ssh.port_forward` with explicit `operator_confirmation=false`
-/// passes for `sensitivity = Low` (policy gate only blocks for `High`).
-///
-/// Confirmed by passing `operator_confirmation: Some(false)` — the adapter
-/// sets `slash_command = false`, but the gate only checks slash_command for
-/// `sensitivity=High`. For Low, the gate is satisfied and the command proceeds.
+/// `vault.ssh.port_forward` with a pre-bound session and dead socket returns
+/// `AGENT_UNREACHABLE`. Compiles the new `VaultSshPortForwardInput` shape
+/// (`target`, `local_port`, `remote_host`, `remote_port` — no `direction`,
+/// `bind_address`, `bind_port`, `target_host`, or `target_port`).
 #[tokio::test]
-async fn f6b_vault_port_forward_low_sensitivity_no_slash_command_allowed() {
-    use merkle_adapter_mcp::tools::proxy::VaultSshPortForwardInput;
+async fn vault_ssh_port_forward_returns_agent_unreachable() {
+    let server = pre_bound_unreachable_server().await;
 
-    let server = make_unsealed_server("pf-ns2").await;
-
-    let result = server
+    let err = server
         .vault_ssh_port_forward(Parameters(VaultSshPortForwardInput {
-            handle: "vault://pf-ns2/ssh/my-key".to_owned(),
-            direction: "local".to_owned(),
-            bind_address: None,
-            bind_port: 9000,
-            target_host: "db.internal".to_owned(),
-            target_port: 5432,
+            handle: "vault://smoke-ns/ssh/my-key".to_owned(),
+            target: "bastion.example.com:22".to_owned(),
+            local_port: 8080,
+            remote_host: "db.internal".to_owned(),
+            remote_port: 5432,
             ttl_secs: None,
-            operator_confirmation: Some(false), // slash_command=false, sensitivity=Low → allowed
+            operator_confirmation: None,
         }))
-        .await;
+        .await
+        .expect_err("vault.ssh.port_forward to dead socket must return error");
 
-    // Must NOT be a policy denial (-32003) — Low sensitivity never requires slash_command.
-    if let Err(ref err) = result {
-        assert_ne!(
-            err.code.0,
-            codes::REVEAL_DENIED,
-            "Low sensitivity port_forward must never return policy denial -32003"
-        );
-        assert_ne!(
-            err.code.0,
-            codes::TOOL_NOT_IMPLEMENTED,
-            "port_forward must no longer return -32099"
-        );
-    }
-    // (Happy-path: no extra assertion needed — if Ok, policy gate passed.)
+    assert_eq!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "expected AGENT_UNREACHABLE (-32100); got {}",
+        err.code.0
+    );
 }

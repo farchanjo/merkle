@@ -1,8 +1,9 @@
 //! Use Token and Tempfile tools:
 //! vault.use, vault.write_tempfile, vault.write_fifo, vault.revoke_tempfile.
 //!
-//! All four commands are fully implemented in `merkle-application` (F5.B).
-//! This module wires the real outputs into `CallToolResult` responses.
+//! All four tools forward to the Companion Socket endpoints added in PR3.
+//! The session_id from `vault.bind` is required for token issuance and
+//! is read from the per-session [`SessionState`].
 
 use rmcp::{
     ErrorData,
@@ -13,13 +14,11 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
 
-use crate::{MerkleMcpServer, errors::app_error_to_mcp};
-use merkle_application::commands::{
-    revoke_tempfile::RevokeTempfileCommand, use_token::UseTokenCommand,
-    write_fifo::WriteFifoCommand, write_tempfile::WriteTempfileCommand,
-};
-use merkle_types::{Handle, NamespaceId, UuidV7};
+use crate::{MerkleMcpServer, errors::client_error_to_mcp};
+use merkle_companion_client::dto::{UseTokenRequest, WriteFifoRequest, WriteTempfileRequest};
+use merkle_types::Handle;
 
 // ---------------------------------------------------------------------------
 // Input parameter structs
@@ -39,7 +38,8 @@ pub struct VaultUseInput {
 pub struct VaultWriteTempfileInput {
     /// Handle URI of the Secret to materialise.
     pub handle: String,
-    /// Octal permission mode string (default: "0600").
+    /// Octal permission mode string (default: "0600"). Informational only —
+    /// the agent always writes mode 0600.
     pub mode: Option<String>,
 }
 
@@ -53,7 +53,7 @@ pub struct VaultWriteFifoInput {
 /// Input for vault.revoke_tempfile.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultRevokeTempfileInput {
-    /// Absolute path previously returned by vault.write_tempfile or vault.write_fifo.
+    /// Opaque token previously returned by vault.write_tempfile or vault.write_fifo.
     pub path: String,
 }
 
@@ -73,23 +73,29 @@ impl UseTokenTools {
 }
 
 // ---------------------------------------------------------------------------
-// Helper
+// Session resolution helpers
 // ---------------------------------------------------------------------------
 
-fn resolve_namespace(
-    session: &crate::session::SessionState,
-) -> Result<NamespaceId, ErrorData> {
+fn resolve_namespace_id(session: &crate::session::SessionState) -> Result<Uuid, ErrorData> {
     session
-        .namespace_label()
-        .ok_or_else(crate::errors::namespace_not_bound)?;
-    Ok(NamespaceId::new())
+        .namespace_id()
+        .ok_or_else(crate::errors::namespace_not_bound)
+}
+
+fn resolve_session_id(session: &crate::session::SessionState) -> Result<Uuid, ErrorData> {
+    session
+        .session_id()
+        .ok_or_else(crate::errors::namespace_not_bound)
 }
 
 // ---------------------------------------------------------------------------
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-#[allow(missing_docs)]
+#[expect(
+    missing_docs,
+    reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
+)]
 #[rmcp::tool_router(router = use_token_router)]
 impl MerkleMcpServer {
     /// Issue a short-lived Use Token for a Secret. The plaintext never appears
@@ -108,21 +114,29 @@ impl MerkleMcpServer {
             .parse::<Handle>()
             .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
 
-        let namespace_id = {
+        let (namespace_id, session_id) = {
             let session = self.session.read().await;
-            resolve_namespace(&session)?
+            let ns = resolve_namespace_id(&session)?;
+            let sid = resolve_session_id(&session)?;
+            (ns, sid)
         };
 
         let _ = input.purpose;
-        // session_id tracks token ownership across the MCP session lifetime;
-        // a fresh UuidV7 is generated per invocation as a unique token issuance id.
-        let cmd = UseTokenCommand { namespace_id, handle, session_id: UuidV7::new() };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+
+        let resp = self
+            .client
+            .mint_use_token(UseTokenRequest {
+                namespace_id,
+                handle,
+                session_id,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "use_token": out.use_token,
-                "expires_at": out.expires_at.to_string(),
+                "use_token": resp.use_token,
+                "expires_at": resp.expires_at.to_rfc3339(),
             })
             .to_string(),
         )]))
@@ -144,21 +158,29 @@ impl MerkleMcpServer {
             .parse::<Handle>()
             .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
 
-        let namespace_id = {
+        let (namespace_id, session_id) = {
             let session = self.session.read().await;
-            resolve_namespace(&session)?
+            let ns = resolve_namespace_id(&session)?;
+            let sid = resolve_session_id(&session)?;
+            (ns, sid)
         };
 
-        let _ = input.mode;
-        // dek_bytes: zeroed placeholder — the application layer retrieves the
-        // real DEK from the keychain internally (the MCP adapter does not hold it).
-        let cmd = WriteTempfileCommand { namespace_id, handle, dek_bytes: [0u8; 32] };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let _ = input.mode; // agent always uses 0600
+
+        let resp = self
+            .client
+            .write_tempfile(WriteTempfileRequest {
+                namespace_id,
+                handle,
+                session_id,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "opaque_token": out.opaque_token,
-                "expires_at": out.expires_at.to_string(),
+                "opaque_token": resp.opaque_token,
+                "expires_at": resp.expires_at.to_rfc3339(),
             })
             .to_string(),
         )]))
@@ -180,20 +202,27 @@ impl MerkleMcpServer {
             .parse::<Handle>()
             .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
 
-        let namespace_id = {
+        let (namespace_id, session_id) = {
             let session = self.session.read().await;
-            resolve_namespace(&session)?
+            let ns = resolve_namespace_id(&session)?;
+            let sid = resolve_session_id(&session)?;
+            (ns, sid)
         };
 
-        // dek_bytes: zeroed placeholder — the application layer retrieves the
-        // real DEK from the keychain internally (the MCP adapter does not hold it).
-        let cmd = WriteFifoCommand { namespace_id, handle, dek_bytes: [0u8; 32] };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+        let resp = self
+            .client
+            .write_fifo(WriteFifoRequest {
+                namespace_id,
+                handle,
+                session_id,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
             json!({
-                "opaque_token": out.opaque_token,
-                "expires_at": out.expires_at.to_string(),
+                "opaque_token": resp.opaque_token,
+                "expires_at": resp.expires_at.to_rfc3339(),
             })
             .to_string(),
         )]))
@@ -209,17 +238,20 @@ impl MerkleMcpServer {
         &self,
         Parameters(input): Parameters<VaultRevokeTempfileInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let namespace_id = {
+        // Ensure a session is active (namespace must be bound).
+        {
             let session = self.session.read().await;
-            resolve_namespace(&session)?
-        };
-        // opaque_token: the MCP input supplies a path string; the application
-        // command expects an opaque token (same underlying string representation).
-        let cmd = RevokeTempfileCommand { namespace_id, opaque_token: input.path.clone() };
-        let out = cmd.execute(&self.app_ctx).await.map_err(app_error_to_mcp)?;
+            let _ = resolve_namespace_id(&session)?;
+        }
+
+        let resp = self
+            .client
+            .revoke_tempfile(&input.path)
+            .await
+            .map_err(client_error_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(
-            json!({"revoked": out.revoked}).to_string(),
+            json!({"revoked": resp.revoked}).to_string(),
         )]))
     }
 }

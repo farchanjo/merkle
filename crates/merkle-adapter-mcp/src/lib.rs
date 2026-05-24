@@ -4,12 +4,14 @@
 //! (rmcp 0.3).
 //!
 //! See `docs/arch/adr/0016-rmcp-official-rust-sdk-for-mcp.md`.
+//! See `docs/arch/adr/0024-mcp-adapter-consumes-companion-socket-client.md`.
 //!
 //! ## Role
 //!
 //! One process per MCP client window. Accepts MCP tool calls over stdio
-//! (newline-delimited JSON-RPC 2.0), calls `merkle_application` command
-//! structs on the shared `AppContext`, and returns the serialised outputs.
+//! (newline-delimited JSON-RPC 2.0), translates them into typed HTTP calls to
+//! the Vault Agent's Companion Socket via [`CompanionSocketClient`], and returns
+//! the serialised outputs. No `AppContext` or domain layer is imported.
 //!
 //! ## Tools exposed (29 total)
 //!
@@ -19,7 +21,7 @@
 //! Reveal (1): `vault.reveal`
 //! Use-token (4): `vault.use`, `vault.write_tempfile`, `vault.write_fifo`,
 //!                `vault.revoke_tempfile`
-//! Proxy (11): `vault.ssh.exec`, `vault.ssh.copy`, `vault.ssh.port_forward`,
+//! Proxy (10): `vault.ssh.exec`, `vault.ssh.copy`, `vault.ssh.port_forward`,
 //!              `vault.ssh.shell`, `vault.http.request`, `vault.http.download`,
 //!              `vault.http.upload`, `vault.spawn`,
 //!              `vault.crypto.sign`, `vault.crypto.decrypt`
@@ -30,15 +32,15 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use std::sync::Arc;
+//! use std::{path::PathBuf, sync::Arc};
 //! use merkle_adapter_mcp::MerkleMcpServer;
-//! use merkle_application::AppContext;
+//! use merkle_companion_client::CompanionSocketClient;
 //! use rmcp::ServiceExt as _;
 //!
-//! async fn run(ctx: Arc<AppContext>) -> anyhow::Result<()> {
-//!     // Requires the `transport-io` feature on the `rmcp` crate.
+//! async fn run(socket: PathBuf) -> anyhow::Result<()> {
+//!     let client = Arc::new(CompanionSocketClient::new(socket));
 //!     let transport = rmcp::transport::io::stdio();
-//!     let server = MerkleMcpServer::new(ctx);
+//!     let server = MerkleMcpServer::new(client);
 //!     server.serve(transport).await?.waiting().await?;
 //!     Ok(())
 //! }
@@ -52,45 +54,44 @@ pub mod tools;
 
 use std::sync::Arc;
 
+use merkle_companion_client::CompanionSocketClient;
 use rmcp::{
-    ServerHandler,
-    handler::server::router::tool::ToolRouter,
-    model::ServerInfo,
-    tool_handler,
+    ServerHandler, handler::server::router::tool::ToolRouter, model::ServerInfo, tool_handler,
 };
 use tokio::sync::RwLock;
 use tracing::info;
-
-use merkle_application::AppContext;
 
 pub use session::SessionState;
 
 /// MCP server that exposes all 29 Vault Agent capabilities as MCP tools.
 ///
-/// Wraps the shared `AppContext` and per-session `SessionState`. Constructed
-/// once per MCP session (one spawned process = one Claude Code window).
+/// Each instance wraps an [`Arc<CompanionSocketClient>`] pointing at the
+/// running Vault Agent's Companion Socket, plus per-session [`SessionState`].
+/// Constructed once per MCP session (one spawned process = one Claude Code
+/// window).
 #[derive(Clone, Debug)]
 pub struct MerkleMcpServer {
-    /// Shared driven-port handles + in-memory vault state.
-    pub app_ctx: Arc<AppContext>,
-    /// Per-session state: namespace binding, etc.
+    /// Shared typed client for the Vault Agent Companion Socket.
+    pub client: Arc<CompanionSocketClient>,
+    /// Per-session state: namespace binding, session ID, etc.
     pub session: Arc<RwLock<SessionState>>,
     /// The combined `ToolRouter` built from all tool sub-module routers.
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
 impl MerkleMcpServer {
-    /// Construct a new `MerkleMcpServer` wrapping the given `AppContext`.
+    /// Construct a new `MerkleMcpServer` targeting the given Companion Socket
+    /// client.
     ///
-    /// Builds the `ToolRouter` by merging the per-group sub-routers from
-    /// each tool sub-module (identity, secrets, reveal, use_token, proxy,
-    /// audit, backup, diagnostics).
+    /// Builds the `ToolRouter` by merging the per-group sub-routers from each
+    /// tool sub-module (identity, secrets, reveal, use_token, proxy, audit,
+    /// backup, diagnostics).
     #[must_use]
-    pub fn new(app_ctx: Arc<AppContext>) -> Self {
+    pub fn new(client: Arc<CompanionSocketClient>) -> Self {
         use tools::{
             audit::AuditTools, backup::BackupTools, diagnostics::DiagnosticsTools,
-            identity::IdentityTools, proxy::ProxyTools, reveal::RevealTools,
-            secrets::SecretsTools, use_token::UseTokenTools,
+            identity::IdentityTools, proxy::ProxyTools, reveal::RevealTools, secrets::SecretsTools,
+            use_token::UseTokenTools,
         };
 
         let tool_router = IdentityTools::router()
@@ -103,7 +104,7 @@ impl MerkleMcpServer {
             + DiagnosticsTools::router();
 
         Self {
-            app_ctx,
+            client,
             session: Arc::new(RwLock::new(SessionState::default())),
             tool_router,
         }
@@ -129,10 +130,7 @@ impl ServerHandler for MerkleMcpServer {
         }
     }
 
-    async fn on_initialized(
-        &self,
-        _context: rmcp::service::NotificationContext<rmcp::RoleServer>,
-    ) {
+    async fn on_initialized(&self, _context: rmcp::service::NotificationContext<rmcp::RoleServer>) {
         info!("MCP client initialized — Merkle vault adapter ready");
     }
 }
