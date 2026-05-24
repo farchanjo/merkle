@@ -1,0 +1,41 @@
+[package]
+name         = "merkle-cli"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Merkle CLI: operator command-line interface (clap). Communicates with the Vault Agent over the Companion Socket (Unix socket transport)."
+
+[[bin]]
+name = "merkle"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
+hyper        = { workspace = true, features = ["client", "http1"] }
+hyper-util   = { version = "0.1", features = ["client-legacy", "tokio", "client", "http1"] }
+http-body-util = "0.1"
+tower        = { workspace = true }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+rpassword    = { workspace = true }
+chrono       = { workspace = true }
+clap         = { workspace = true, features = ["derive", "env"] }
+config       = { workspace = true, features = ["toml"] }
+toml         = { version = "0.8" }
+
+[dev-dependencies]
+tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+hyper        = { workspace = true, features = ["client", "http1"] }
+hyper-util   = { version = "0.1", features = ["client-legacy", "tokio", "client", "http1"] }
+http-body-util = "0.1"
+tower        = { workspace = true }
+anyhow       = { workspace = true }

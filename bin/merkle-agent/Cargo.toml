@@ -1,0 +1,50 @@
+[package]
+name         = "merkle-agent"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Merkle Vault Agent: long-running daemon that hosts the Companion Socket driving port, MCP adapter, domain core, audit log, backup scheduler, and tempfile reaper."
+
+[[bin]]
+name = "merkle-agent"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-application              = { workspace = true }
+merkle-adapter-sqlite           = { workspace = true }
+merkle-adapter-keychain         = { workspace = true }
+merkle-adapter-crypto           = { workspace = true }
+merkle-adapter-oob              = { workspace = true }
+merkle-adapter-external-services = { workspace = true }
+merkle-adapter-mcp              = { workspace = true }
+merkle-adapter-companion-socket = { workspace = true }
+# rmcp with transport-io enables tokio::io::stdin/stdout for the MCP stdio transport.
+rmcp                            = { workspace = true, features = ["transport-io"] }
+merkle-domain-identity          = { workspace = true }
+merkle-ports                    = { workspace = true }
+merkle-types                    = { workspace = true }
+tokio                           = { workspace = true }
+tokio-util                      = { workspace = true }
+tracing                         = { workspace = true }
+tracing-subscriber              = { workspace = true, features = ["env-filter", "fmt", "json"] }
+config                          = { workspace = true }
+toml                            = { workspace = true }
+anyhow                          = { workspace = true }
+thiserror                       = { workspace = true }
+clap                            = { workspace = true }
+rpassword                       = { workspace = true }
+secrecy                         = { workspace = true }
+serde                           = { workspace = true }
+axum                            = { workspace = true }
+prometheus                      = { workspace = true }
+hyper                           = { workspace = true }
+tower                           = { workspace = true }
+
+[dev-dependencies]
+tempfile                        = { workspace = true }
+tokio                           = { workspace = true, features = ["full", "test-util"] }
+libc                            = "0.2"
