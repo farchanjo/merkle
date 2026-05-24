@@ -46,7 +46,7 @@ edition      = "2024"
 rust-version = "1.85"
 license      = "Apache-2.0"
 authors      = ["Merkle Contributors"]
-repository   = "https://github.com/farchanjo/mcp-vault"
+repository   = "https://github.com/farchanjo/merkle"
 readme       = "README.md"
 
 # ---------------------------------------------------------------------------

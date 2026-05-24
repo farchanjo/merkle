@@ -2,7 +2,7 @@
   "name": "Merkle",
   "version": "0.1.0",
   "description": "House style rules for the Merkle MCP vault architecture documentation.",
-  "url": "https://github.com/farchanjo/mcp-vault",
+  "url": "https://github.com/farchanjo/merkle",
   "rules": [
     "Capitalization.yml",
     "Terminology.yml",

@@ -17,8 +17,8 @@ By participating you agree to abide by its terms.
 ### 1. Clone and build
 
 ```sh
-git clone https://gitlab.com/farchanjo/mcp-vault.git
-cd mcp-vault
+git clone https://github.com/farchanjo/merkle.git
+cd merkle
 cargo build --release
 ```
 
