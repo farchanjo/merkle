@@ -153,3 +153,26 @@ flowchart TD
 * Related: [0001-use-rust-as-implementation-language.md](0001-use-rust-as-implementation-language.md)
 * Related: [0015-rust-keyring-crate-for-multi-os-keychain.md](0015-rust-keyring-crate-for-multi-os-keychain.md)
 * Related: [0016-rmcp-official-rust-sdk-for-mcp.md](0016-rmcp-official-rust-sdk-for-mcp.md)
+
+## Status Update — 2026-05-24
+
+The topology described in this ADR was not fully implemented as specified.
+Two violations were introduced during Phase 5:
+
+1. `crates/merkle-adapter-mcp` imports `merkle_application::commands::*` and
+   holds a direct `Arc<AppContext>`, bypassing the Companion Socket entirely.
+   The MCP Adapter is not an external client of the driving port as prescribed
+   here; it is wired in-process to the domain layer.
+
+2. `bin/merkle-agent/src/run.rs::mcp_task` runs the rmcp stdio server inside
+   the agent daemon itself, consuming the daemon's own stdin and stdout. This
+   makes multi-window MCP impossible and contradicts the thin-adapter model
+   illustrated in the diagram above.
+
+The original decision (Option A) remains correct and is still accepted. The
+violations are implementation drift, not a change of intent.
+
+ADR-0024 documents the corrective migration plan: extracting a
+`CompanionSocketClient` crate, refactoring the MCP adapter to use it, and
+introducing a new thin `bin/merkle-mcp` binary that satisfies the external-
+client relationship prescribed by this ADR.
