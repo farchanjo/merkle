@@ -330,6 +330,12 @@ impl CompanionSocketClient {
         if let Some(ref cur) = params.cursor {
             let _ = write!(path, "&cursor={cur}");
         }
+        if let Some(ref fts) = params.fts_query {
+            let _ = write!(path, "&fts_query={fts}");
+        }
+        if params.offset > 0 {
+            let _ = write!(path, "&offset={}", params.offset);
+        }
         self.get(&path).await
     }
 

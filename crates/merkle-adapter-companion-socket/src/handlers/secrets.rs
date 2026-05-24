@@ -17,7 +17,7 @@ use axum::{
 use merkle_application::commands::{
     delete_secret::DeleteSecretCommand, describe_secret::DescribeSecretCommand,
     list_secrets::ListSecretsCommand, put_secret::PutSecretCommand,
-    rotate_secret::RotateSecretCommand,
+    rotate_secret::RotateSecretCommand, search_secrets::SearchSecretsCommand,
 };
 use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation as DomainOperatorConfirmation;
 use merkle_types::{Handle, NamespaceId, Sensitivity, Tag};
@@ -30,8 +30,8 @@ use crate::{
     dto::{
         DeleteSecretRequest, DeleteSecretResponse, ListSecretVersionsResponse, ListSecretsParams,
         ListSecretsResponse, PublicMetadataDto, PutSecretRequest, PutSecretResponse,
-        RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse, SecretDto,
-        SecretVersionDto, TagDto,
+        RankedSecretDto, RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse,
+        SearchHighlightDto, SecretDto, SecretVersionDto, TagDto,
     },
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
@@ -161,6 +161,12 @@ fn invalid_ns_id_problem() -> Problem {
 // ---------------------------------------------------------------------------
 
 /// `GET /v1/namespaces/{namespace_id}/secrets`
+///
+/// When `fts_query` is present the response uses ranked BM25 mode (ADR-0027):
+/// `ranked_items` carries `RankedSecretDto` entries ordered by score;
+/// `has_more` indicates additional pages; `next_cursor` is absent.
+///
+/// When `fts_query` is absent the response is the standard unranked listing.
 #[instrument(skip(ctx))]
 pub async fn list_secrets(
     State(ctx): State<Arc<AppContext>>,
@@ -171,6 +177,52 @@ pub async fn list_secrets(
         return invalid_ns_id_problem().into_response();
     };
 
+    // Ranked mode: FTS5 query present → use SearchSecretsCommand.
+    if let Some(ref fts_query) = params.fts_query {
+        let limit = params.limit.clamp(1, 50);
+        let cmd = SearchSecretsCommand {
+            namespace_id,
+            query: fts_query.clone(),
+            limit,
+            offset: params.offset,
+        };
+        return match cmd.execute(&ctx).await {
+            Ok(output) => {
+                let ranked_items: Vec<RankedSecretDto> = output
+                    .result
+                    .items
+                    .iter()
+                    .map(|rs| RankedSecretDto {
+                        secret: secret_to_dto(&rs.secret),
+                        score: rs.score,
+                        bm25_rank: rs.bm25_rank,
+                        highlights: rs
+                            .highlights
+                            .iter()
+                            .map(|h| SearchHighlightDto {
+                                field: h.field.clone(),
+                                snippet: h.snippet.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect();
+                (
+                    StatusCode::OK,
+                    Json(ListSecretsResponse {
+                        items: vec![],
+                        total: output.result.total,
+                        next_cursor: None,
+                        ranked_items: Some(ranked_items),
+                        has_more: Some(output.result.has_more),
+                    }),
+                )
+                    .into_response()
+            }
+            Err(err) => app_error_to_problem(err).into_response(),
+        };
+    }
+
+    // Non-ranked mode: standard listing.
     let tag_match = params.tags.as_deref().and_then(|t_str| {
         // Tags query param: comma-separated `key:value` pairs.
         let tags: Vec<Tag> = t_str
@@ -202,6 +254,8 @@ pub async fn list_secrets(
                     items,
                     total,
                     next_cursor: None,
+                    ranked_items: None,
+                    has_more: None,
                 }),
             )
                 .into_response()

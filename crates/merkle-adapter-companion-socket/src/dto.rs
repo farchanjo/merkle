@@ -226,6 +226,39 @@ pub struct ListSecretsResponse {
     pub total: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Present only when `fts_query` is active — ranked items with score +
+    /// highlights. When present, `items` is empty (use `ranked_items`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ranked_items: Option<Vec<RankedSecretDto>>,
+    /// `true` when more ranked results exist beyond `offset + limit`.
+    /// Only present in ranked mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+}
+
+/// Per-field highlight snippet (ADR-0027 §Response Contract).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHighlightDto {
+    /// FTS5 column that produced this highlight.
+    pub field: String,
+    /// Extracted text with matched terms wrapped in `<b>` tags.
+    pub snippet: String,
+}
+
+/// A ranked secret result (ADR-0027 §Response Contract).
+///
+/// Extends [`SecretDto`] with BM25 ranking fields. The `score`, `bm25_rank`,
+/// and `highlights` fields are absent in non-ranked (list) responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankedSecretDto {
+    #[serde(flatten)]
+    pub secret: SecretDto,
+    /// Raw BM25 score (negative; more negative = better match per SQLite FTS5).
+    pub score: f64,
+    /// 1-based rank within this page. Global rank = `offset + bm25_rank - 1`.
+    pub bm25_rank: u32,
+    /// Per-field highlight snippets.
+    pub highlights: Vec<SearchHighlightDto>,
 }
 
 /// Encoding of the payload bytes in `value` / `new_value` fields.
@@ -627,6 +660,9 @@ pub struct ListSecretsParams {
     #[serde(default = "default_limit")]
     pub limit: u32,
     pub cursor: Option<String>,
+    /// Zero-based offset for ranked (fts_query) pagination (ADR-0027).
+    #[serde(default)]
+    pub offset: u32,
 }
 
 /// Query parameters for listing backup snapshots.
