@@ -93,7 +93,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
 
                 # ── Secret Storage bounded context ────────────────────────────
 
-                secretStorageDomain = component "Secret Storage Domain" "Bounded context owning the Secret aggregate lifecycle: create, read, rotate, delete, and version management. Manages Namespaces (UUIDv7, Namespace binding by cwd hash or .merklerc override), Categories, Sensitivity levels, Tags, Public Metadata, Private Blob encryption, and the FTS5 Index over public metadata. Enforces retain_count from the Namespace Policy." "Rust / Domain core (AggregateRoot: Secret, Entity: SecretVersion, ValueObject: Handle, DomainService: NamespaceBindingService)" {
+                secretStorageDomain = component "Secret Storage Domain" "Bounded context owning the Secret aggregate lifecycle: create, read, rotate, delete, and version management. Manages Namespaces (UUIDv7, Namespace binding by cwd hash or .merklerc override), Categories, Sensitivity levels, Tags, Public Metadata, Private Blob encryption, and the FTS5 Index over public metadata. Full-text search is ranked by weighted BM25 (ADR-0027 weight vector: name=10.0, tags=5.0, description=3.0, category=2.0, namespace_label=1.0); results expose score, bm25_rank, and highlight snippets. Enforces retain_count from the Namespace Policy." "Rust / Domain core (AggregateRoot: Secret, Entity: SecretVersion, ValueObject: Handle, DomainService: NamespaceBindingService)" {
                     tags "Domain"
                     properties {
                         "ddd-role" "AggregateRoot"
@@ -153,7 +153,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
 
                 # ── Driven-port adapters ─────────────────────────────────────
 
-                storageAdapter = component "Storage Adapter" "Driven-port adapter. Wraps SQLite in WAL mode. Implements per-blob XChaCha20-Poly1305 AEAD encryption on the private_blob column with per-secret 24-byte Nonces. Maintains FTS5 Index over public metadata. Enforces append-only discipline on audit tables via SQLite triggers. Stores Vault Root Key wrapped twice: by Master Key and by Recovery Public Key." "Rust / rusqlite, SQLite WAL" {
+                storageAdapter = component "Storage Adapter" "Driven-port adapter. Wraps SQLite in WAL mode. Implements per-blob XChaCha20-Poly1305 AEAD encryption on the private_blob column with per-secret 24-byte Nonces. Maintains FTS5 virtual table secrets_fts over public metadata columns (name, tags, description, category, namespace_label) with weighted BM25 ranking (ADR-0027); INSERT, UPDATE, and DELETE triggers keep the index in strong consistency with the secrets table. Ranked queries use bm25(secrets_fts, 10.0, 5.0, 3.0, 2.0, 1.0) and expose score, bm25_rank, and highlight() / snippet() results. Enforces append-only discipline on audit tables via SQLite triggers. Stores Vault Root Key wrapped twice: by Master Key and by Recovery Public Key." "Rust / rusqlite, SQLite WAL, FTS5 with porter unicode61 tokenizer" {
                     tags "Adapter"
                     properties {
                         "ddd-role" "DrivenAdapter"

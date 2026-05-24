@@ -172,3 +172,8 @@ domain service rather than adding per-category FTS5 tables.
   `https://sqlite.org/fts5.html#_content_and_content_rowid_options`.
 * Related: [0003-sqlite-with-per-blob-encryption.md](0003-sqlite-with-per-blob-encryption.md)
 * Related: [0012-eleven-built-in-categories-plus-cue-schema-for-custom.md](0012-eleven-built-in-categories-plus-cue-schema-for-custom.md)
+* Superseded in part by: [0027-weighted-bm25-ranking-for-fts5-search.md](0027-weighted-bm25-ranking-for-fts5-search.md)
+  — ADR-0027 corrects the implementation gap (wrong columns in migration 001,
+  missing UPDATE trigger, no BM25 ordering) and specifies the authoritative
+  per-column weight vector and query template. The tokenizer choice and
+  privacy scope defined here remain unchanged.

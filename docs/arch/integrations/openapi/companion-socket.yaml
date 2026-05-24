@@ -331,8 +331,19 @@ paths:
         Returns Public Metadata for all Secrets in the specified Namespace.
         The Private Blob is never included. Supports filtering by category,
         sensitivity, tags (AND semantics), name glob, expiry date, and FTS5
-        full-text query. Results are ordered by `created_at` descending and
-        support cursor-based pagination.
+        full-text query.
+
+
+        When `fts_query` is absent, results are ordered by `created_at`
+        descending and support cursor-based pagination via `next_cursor`.
+
+
+        When `fts_query` is present, results are ordered by weighted BM25
+        relevance score ascending (more negative = better match, per SQLite
+        FTS5 convention). Each item includes `score`, `bm25_rank`, and
+        `highlights` fields. Pagination in ranked mode uses `limit` and
+        `offset`; `next_cursor` is not returned. See ADR-0027 for the
+        weight vector and query template.
       tags:
         - secret-storage
       x-merkle-sensitivity: low
@@ -371,9 +382,25 @@ paths:
             format: date-time
         - name: fts_query
           in: query
-          description: FTS5 MATCH expression over public metadata fields.
+          description: >
+            FTS5 MATCH expression over public metadata fields (`name`,
+            `tags`, `description`, `category`, `namespace_label`). When
+            present, results are ranked by weighted BM25 score
+            (ADR-0027 weight vector: name=10.0, tags=5.0, description=3.0,
+            category=2.0, namespace_label=1.0) and pagination switches to
+            offset mode.
           schema:
             type: string
+        - name: offset
+          in: query
+          description: >
+            Zero-based offset for ranked (fts_query) pagination. Ignored
+            when `fts_query` is absent; use `cursor` for non-ranked
+            pagination. Default 0.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
         - $ref: "#/components/parameters/LimitParam"
         - $ref: "#/components/parameters/CursorParam"
       responses:
@@ -390,12 +417,29 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: "#/components/schemas/Secret"
+                      $ref: "#/components/schemas/RankedSecret"
+                    description: >
+                      When `fts_query` is absent, items are `Secret` objects
+                      ordered by `created_at` descending. When `fts_query`
+                      is present, items are `RankedSecret` objects ordered
+                      by weighted BM25 score (best match first). The
+                      `RankedSecret` schema extends `Secret` with `score`,
+                      `bm25_rank`, and `highlights`; those fields are absent
+                      when `fts_query` is not used.
                   total:
                     type: integer
+                  has_more:
+                    type: boolean
+                    description: >
+                      Present when `fts_query` is active. True when
+                      additional ranked results exist beyond `offset + limit`.
                   next_cursor:
                     type: string
-                    description: Absent when this is the final page.
+                    description: >
+                      Opaque cursor for the next page. Present only when
+                      `fts_query` is absent (non-ranked mode). Absent when
+                      this is the final page or when `fts_query` is active
+                      (use `offset` instead).
         "403":
           description: Caller not authorized for this Namespace.
           content:
@@ -2550,6 +2594,80 @@ components:
             Present when expires_at is within 7 days of the current time.
             Value: expires_in_N_days where N is the number of whole days
             remaining.
+
+    SearchHighlight:
+      type: object
+      description: >-
+        Per-field highlight snippet produced by the FTS5 `highlight()` or
+        `snippet()` auxiliary function. Each item identifies the FTS5 column
+        that matched and the extracted text with matched terms wrapped in
+        `<b>` tags. Returned only when `fts_query` is active (ADR-0027).
+        Private field names (`private_blob`, `ciphertext`, `nonce`,
+        `aead_tag`) MUST never appear as a `field` value.
+      required:
+        - field
+        - snippet
+      properties:
+        field:
+          type: string
+          description: >-
+            Name of the FTS5 column that produced this highlight. One of:
+            `name`, `tags`, `description`, `category`, `namespace_label`.
+          enum:
+            - name
+            - tags
+            - description
+            - category
+            - namespace_label
+        snippet:
+          type: string
+          description: >-
+            Extracted text with matched terms wrapped in `<b>...</b>` tags.
+            For the `description` field, the snippet is bounded to 20 tokens
+            with `...` as the ellipsis marker (FTS5 `snippet()` function).
+            For shorter fields (`name`, `category`, `namespace_label`,
+            `tags`), the full field text is returned with highlights
+            (FTS5 `highlight()` function).
+
+    RankedSecret:
+      description: >-
+        A `Secret` augmented with BM25 ranking metadata. Returned when
+        `fts_query` is active on the list-secrets endpoint. The `score`,
+        `bm25_rank`, and `highlights` fields are absent when `fts_query` is
+        not supplied (the item degrades to a plain `Secret`). Callers MUST
+        NOT attempt to compare `score` values across different queries.
+        ADR-0027 is the authoritative specification for the weight vector
+        and query template that produces these values.
+      allOf:
+        - $ref: "#/components/schemas/Secret"
+        - type: object
+          properties:
+            score:
+              type: number
+              format: double
+              description: >-
+                Raw BM25 score from `bm25(secrets_fts, 10.0, 5.0, 3.0, 2.0,
+                1.0)`. Negative value; more negative means a better match (per
+                SQLite FTS5 convention). Exposed as-is; callers MUST NOT
+                assume a specific range or compare scores across different
+                queries or vault instances.
+            bm25_rank:
+              type: integer
+              description: >-
+                1-based position within the current page (not global rank).
+                `bm25_rank = 1` is the best match on this page. To compute
+                the global rank add the page `offset` to `bm25_rank - 1`.
+              minimum: 1
+            highlights:
+              type: array
+              description: >-
+                Per-field highlight snippets for matched FTS5 columns.
+                Present for every column that has at least one token match.
+                Capped at 5 entries per result. The `field` enum is
+                constrained to the approved public metadata columns;
+                private field names MUST NOT appear.
+              items:
+                $ref: "#/components/schemas/SearchHighlight"
 
     SecretVersion:
       type: object

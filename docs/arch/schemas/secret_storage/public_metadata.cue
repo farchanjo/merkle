@@ -13,9 +13,22 @@ package secret_storage
 // Per-category schemas in schemas/secret_storage/categories/ embed and extend
 // this mixin, adding category-specific public fields (e.g., username for
 // "password", host/port for "ssh").
+//
+// FTS5 indexed fields (ADR-0013, ADR-0027): the following fields from
+// #PublicMetadata are indexed in the secrets_fts virtual table with weighted
+// BM25 scoring — description (weight 3.0).  Additionally, the Secret
+// aggregate's name (weight 10.0), tags (weight 5.0), category (weight 2.0),
+// and the owning namespace label (weight 1.0) are indexed.  No field here
+// may contain credentials or key material.
 #PublicMetadata: {
 	// tags mirrors the Secret.tags list for convenient filtering in list views.
 	tags?: [...#Tag]
+
+	// description is a free-form human-readable description of the Secret.
+	// It is indexed by the FTS5 full-text search engine (ADR-0013, ADR-0027)
+	// with weight 3.0.  MUST NOT contain credentials, keys, or any plaintext
+	// material derived from the Secret value.
+	description?: string
 
 	// notes_public is free-form operator commentary that the LLM may read.
 	// Must never contain credentials or key material.
