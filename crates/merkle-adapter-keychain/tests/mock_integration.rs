@@ -65,8 +65,14 @@ async fn delete_removes_from_index() {
     kc.delete(SVC, "master-v1").await.unwrap();
 
     let accounts = kc.list(SVC).await.unwrap();
-    assert!(!accounts.contains(&"master-v1".to_owned()), "master-v1 must be gone");
-    assert!(accounts.contains(&"master-v2".to_owned()), "master-v2 must remain");
+    assert!(
+        !accounts.contains(&"master-v1".to_owned()),
+        "master-v1 must be gone"
+    );
+    assert!(
+        accounts.contains(&"master-v2".to_owned()),
+        "master-v2 must remain"
+    );
 }
 
 #[tokio::test]
@@ -112,7 +118,10 @@ async fn store_same_account_twice_not_duplicated_in_index() {
     kc.store(SVC, "master-v1", b"v1-updated").await.unwrap();
 
     let accounts = kc.list(SVC).await.unwrap();
-    let count = accounts.iter().filter(|a| a.as_str() == "master-v1").count();
+    let count = accounts
+        .iter()
+        .filter(|a| a.as_str() == "master-v1")
+        .count();
     assert_eq!(count, 1, "index must not contain duplicates");
 
     // Most-recent value must be returned.

@@ -35,8 +35,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use merkle_domain_access_mediation as am;
 use merkle_domain_access_mediation::oob::resolution::OobResolution;
-use merkle_ports::error::OobError;
 use merkle_ports::OobNotifier;
+use merkle_ports::error::OobError;
 use merkle_types::{ChallengeId, OobChallengeOutcome, Rfc3339Timestamp};
 use serde::Deserialize;
 use tracing::{debug, warn};
@@ -95,10 +95,8 @@ impl FileFixtureOobNotifier {
         }
 
         // Parse optional authorized_at.
-        let authorized_at: Option<Rfc3339Timestamp> = blob
-            .authorized_at
-            .as_deref()
-            .and_then(|s| s.parse().ok());
+        let authorized_at: Option<Rfc3339Timestamp> =
+            blob.authorized_at.as_deref().and_then(|s| s.parse().ok());
 
         let resolution = OobResolution::new(
             *target_id,

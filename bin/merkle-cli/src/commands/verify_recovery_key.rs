@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::cli::VerifyRecoveryKeyArgs;
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, OutputFormat};
+use crate::output::{OutputFormat, print_ok};
 
 /// Run `merkle verify-recovery-key`.
 pub async fn run(
@@ -25,9 +25,7 @@ pub async fn run(
         "recovery_key": key_material,
     });
 
-    let resp: serde_json::Value = client
-        .post("/v1/agent/verify-recovery-key", &body)
-        .await?;
+    let resp: serde_json::Value = client.post("/v1/agent/verify-recovery-key", &body).await?;
 
     let matches = resp
         .get("matches")
@@ -38,9 +36,7 @@ pub async fn run(
         print_ok("recovery key matches recovery_pubkey in config.toml");
     } else {
         eprintln!("mismatch: recovery key does NOT match recovery_pubkey in config.toml");
-        return Err(CliError::Other(anyhow::anyhow!(
-            "recovery key mismatch"
-        )));
+        return Err(CliError::Other(anyhow::anyhow!("recovery key mismatch")));
     }
 
     Ok(())

@@ -4,9 +4,9 @@
 //! calls. The adapter implementation is deferred; no concrete adapter crate
 //! exists in Phase 1.
 
+use crate::error::ExternalError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use crate::error::ExternalError;
 
 /// Output captured from a remote SSH command execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,10 +66,19 @@ pub trait ExternalServices: Send + Sync {
     ///
     /// `target` is a `host:port` string. `key_material` is the PEM-encoded
     /// private key used for authentication.
-    async fn ssh_exec(&self, target: &str, key_material: &[u8], command: &str) -> Result<SshExecOutput, ExternalError>;
+    async fn ssh_exec(
+        &self,
+        target: &str,
+        key_material: &[u8],
+        command: &str,
+    ) -> Result<SshExecOutput, ExternalError>;
 
     /// Perform an outbound HTTP request.
     ///
     /// `auth` is merged into the request before it is sent.
-    async fn http_request(&self, req: HttpRequestSpec, auth: HttpAuth) -> Result<HttpResponse, ExternalError>;
+    async fn http_request(
+        &self,
+        req: HttpRequestSpec,
+        auth: HttpAuth,
+    ) -> Result<HttpResponse, ExternalError>;
 }

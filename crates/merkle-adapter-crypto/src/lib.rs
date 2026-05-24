@@ -48,11 +48,11 @@ mod rng;
 mod x25519_keys;
 
 use merkle_domain_identity::Argon2idParams;
+use merkle_ports::error::CryptoError;
 use merkle_ports::{
     AgeIdentity, AgeRecipient, EciesEnvelopeBytes, Ed25519PrivateKey, Ed25519PublicKey,
     X25519PrivateKey, X25519PublicKey,
 };
-use merkle_ports::error::CryptoError;
 use merkle_types::{Blake3Hash, HmacSignature};
 use thiserror::Error;
 

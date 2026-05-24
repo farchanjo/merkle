@@ -53,7 +53,7 @@ use secrecy::ExposeSecret as _;
 use tracing::debug;
 
 use crate::index::{
-    decode_index, encode_index, index_add, index_remove, sentinel_account, INDEX_SUFFIX,
+    INDEX_SUFFIX, decode_index, encode_index, index_add, index_remove, sentinel_account,
 };
 
 /// Key type for the in-memory snapshot: `(service, account)`.
@@ -144,25 +144,16 @@ impl FileKeystoreAdapter {
     /// file share the same directory to satisfy that requirement.
     ///
     /// All blocking I/O is performed via `tokio::task::spawn_blocking`.
-    async fn persist(
-        &self,
-        snapshot: &HashMap<StoreKey, Vec<u8>>,
-    ) -> Result<(), KeychainError> {
+    async fn persist(&self, snapshot: &HashMap<StoreKey, Vec<u8>>) -> Result<(), KeychainError> {
         use secrecy::ExposeSecret as _;
 
         // Rebuild the nested JSON structure (in async context — pure CPU, fast).
         let mut nested: Snapshot = HashMap::new();
         for ((service, account), secret) in snapshot {
-            nested
-                .entry(service.clone())
-                .or_default()
-                .insert(
-                    account.clone(),
-                    base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        secret,
-                    ),
-                );
+            nested.entry(service.clone()).or_default().insert(
+                account.clone(),
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, secret),
+            );
         }
 
         let plaintext = serde_json::to_vec(&nested)
@@ -189,10 +180,7 @@ impl FileKeystoreAdapter {
                 KeychainError::Backend(format!("write tmp {}: {e}", tmp_path.display()))
             })?;
             std::fs::rename(&tmp_path, &path).map_err(|e| {
-                KeychainError::Backend(format!(
-                    "rename tmp → keystore {}: {e}",
-                    path.display()
-                ))
+                KeychainError::Backend(format!("rename tmp → keystore {}: {e}", path.display()))
             })?;
             debug!(path = %path.display(), "file keystore: persisted");
             Ok(())
@@ -218,7 +206,12 @@ impl Keychain for FileKeystoreAdapter {
         account: &str,
         secret: &[u8],
     ) -> Result<(), KeychainError> {
-        debug!(service, account, bytes = secret.len(), "file keystore store");
+        debug!(
+            service,
+            account,
+            bytes = secret.len(),
+            "file keystore store"
+        );
         let mut guard = self.inner.lock().await;
 
         guard.insert((service.to_owned(), account.to_owned()), secret.to_vec());
@@ -302,11 +295,12 @@ impl Keychain for FileKeystoreAdapter {
 // ---------------------------------------------------------------------------
 
 /// Encrypt `plaintext` with `passphrase` using age passphrase-based encryption.
-fn age_encrypt(plaintext: &[u8], passphrase: &secrecy::SecretString) -> Result<Vec<u8>, KeychainError> {
+fn age_encrypt(
+    plaintext: &[u8],
+    passphrase: &secrecy::SecretString,
+) -> Result<Vec<u8>, KeychainError> {
     // age uses its own re-exported secrecy crate (0.8); we bridge via expose_secret.
-    let age_passphrase = age::secrecy::SecretString::new(
-        passphrase.expose_secret().to_owned(),
-    );
+    let age_passphrase = age::secrecy::SecretString::new(passphrase.expose_secret().to_owned());
     let encryptor = age::Encryptor::with_user_passphrase(age_passphrase);
     let mut ciphertext: Vec<u8> = Vec::new();
     let mut writer = encryptor
@@ -322,13 +316,13 @@ fn age_encrypt(plaintext: &[u8], passphrase: &secrecy::SecretString) -> Result<V
 }
 
 /// Decrypt age ciphertext with `passphrase`.  Returns the plaintext bytes.
-fn age_decrypt(ciphertext: &[u8], passphrase: &secrecy::SecretString) -> Result<Vec<u8>, KeychainError> {
-    let age_passphrase = age::secrecy::SecretString::new(
-        passphrase.expose_secret().to_owned(),
-    );
-    let decryptor =
-        age::Decryptor::new(ciphertext)
-            .map_err(|e| KeychainError::Backend(format!("age decryptor: {e}")))?;
+fn age_decrypt(
+    ciphertext: &[u8],
+    passphrase: &secrecy::SecretString,
+) -> Result<Vec<u8>, KeychainError> {
+    let age_passphrase = age::secrecy::SecretString::new(passphrase.expose_secret().to_owned());
+    let decryptor = age::Decryptor::new(ciphertext)
+        .map_err(|e| KeychainError::Backend(format!("age decryptor: {e}")))?;
     match decryptor {
         age::Decryptor::Passphrase(d) => {
             let mut reader = d
@@ -351,25 +345,21 @@ fn load_snapshot(
     path: &PathBuf,
     passphrase: &secrecy::SecretString,
 ) -> Result<HashMap<StoreKey, Vec<u8>>, KeychainError> {
-    let ciphertext = std::fs::read(path).map_err(|e| {
-        KeychainError::Backend(format!("read keystore {}: {e}", path.display()))
-    })?;
+    let ciphertext = std::fs::read(path)
+        .map_err(|e| KeychainError::Backend(format!("read keystore {}: {e}", path.display())))?;
 
     let plaintext = age_decrypt(&ciphertext, passphrase)?;
 
-    let nested: Snapshot = serde_json::from_slice(&plaintext).map_err(|e| {
-        KeychainError::Backend(format!("parse keystore JSON: {e}"))
-    })?;
+    let nested: Snapshot = serde_json::from_slice(&plaintext)
+        .map_err(|e| KeychainError::Backend(format!("parse keystore JSON: {e}")))?;
 
     let mut flat: HashMap<StoreKey, Vec<u8>> = HashMap::new();
     for (service, accounts) in nested {
         for (account, b64) in accounts {
             let secret = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64)
                 .map_err(|e| {
-                    KeychainError::Backend(format!(
-                        "base64 decode for ({service}, {account}): {e}"
-                    ))
-                })?;
+                KeychainError::Backend(format!("base64 decode for ({service}, {account}): {e}"))
+            })?;
             flat.insert((service.clone(), account), secret);
         }
     }
@@ -529,9 +519,7 @@ mod tests {
             let a = FileKeystoreAdapter::open(path.clone(), passphrase("correct"))
                 .await
                 .expect("open");
-            a.store("svc", "acct", &[1u8; 4])
-                .await
-                .expect("store");
+            a.store("svc", "acct", &[1u8; 4]).await.expect("store");
         }
 
         // Re-open with wrong passphrase.

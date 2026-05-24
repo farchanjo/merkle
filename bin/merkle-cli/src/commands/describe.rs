@@ -4,9 +4,9 @@
 //! Identical to `get` but semantically signals read-only metadata intent.
 
 use crate::cli::DescribeArgs;
+use crate::cli::GetArgs;
 use crate::client::CompanionSocketClient;
 use crate::commands::get::run as get_run;
-use crate::cli::GetArgs;
 use crate::error::CliError;
 use crate::output::OutputFormat;
 

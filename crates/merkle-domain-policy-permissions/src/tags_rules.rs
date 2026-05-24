@@ -77,7 +77,9 @@ impl TagsRules {
         // Rule 1: required keys present.
         for key in &self.required_keys {
             if !tags.iter().any(|t| &t.key == key) {
-                return Err(PolicyError::RequiredTagMissing { key: key.to_string() });
+                return Err(PolicyError::RequiredTagMissing {
+                    key: key.to_string(),
+                });
             }
         }
 
@@ -102,7 +104,9 @@ impl TagsRules {
         if !self.allowed_keys.is_empty() {
             for tag in tags {
                 if !self.allowed_keys.contains(&tag.key) {
-                    return Err(PolicyError::UnknownTagKey { key: tag.key.to_string() });
+                    return Err(PolicyError::UnknownTagKey {
+                        key: tag.key.to_string(),
+                    });
                 }
             }
         }

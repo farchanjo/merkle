@@ -57,7 +57,9 @@ mod tests {
     use super::*;
     use crate::private_blob::PrivateBlob;
     use crate::secret_version::{SecretVersion, SecretVersionId};
-    use merkle_types::{CategoryName, Handle, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName};
+    use merkle_types::{
+        CategoryName, Handle, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
+    };
 
     fn make_handle() -> Handle {
         Handle::new(
@@ -96,8 +98,7 @@ mod tests {
     #[test]
     fn prune_delegates_to_policy() {
         let handle = make_handle();
-        let mut versions: Vec<SecretVersion> =
-            (1..=5).map(|n| make_version(&handle, n)).collect();
+        let mut versions: Vec<SecretVersion> = (1..=5).map(|n| make_version(&handle, n)).collect();
         let policy = RetentionPolicy::default(); // retain 3
         SecretVersioning::prune(&mut versions, &policy);
         assert_eq!(versions.len(), 3);

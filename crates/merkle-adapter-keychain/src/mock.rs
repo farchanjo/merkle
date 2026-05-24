@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 use tracing::debug;
 
 use crate::index::{
-    decode_index, encode_index, index_add, index_remove, sentinel_account, INDEX_SUFFIX,
+    INDEX_SUFFIX, decode_index, encode_index, index_add, index_remove, sentinel_account,
 };
 
 /// Key type for the internal store: `(service, account)`.
@@ -128,7 +128,12 @@ impl Keychain for MockKeychainAdapter {
         account: &str,
         secret: &[u8],
     ) -> Result<(), KeychainError> {
-        debug!(service, account, bytes = secret.len(), "mock keychain store");
+        debug!(
+            service,
+            account,
+            bytes = secret.len(),
+            "mock keychain store"
+        );
         // Check global write-unavailable flag.
         if *self.write_unavailable.lock() {
             return Err(KeychainError::Backend("keychain_unavailable".into()));
@@ -274,7 +279,10 @@ mod tests {
 
         // First store should fail.
         let first = mock.store("svc", "acct", &[1u8; 32]).await;
-        assert!(matches!(first, Err(KeychainError::PersistenceFailed { .. })));
+        assert!(matches!(
+            first,
+            Err(KeychainError::PersistenceFailed { .. })
+        ));
 
         // After clearing the injection, store should succeed.
         mock.clear_persistence_failure_for("svc", "acct");

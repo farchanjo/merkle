@@ -74,9 +74,7 @@ impl ExecuteRestoreCommand {
         // deserialization and upsert is a Phase 6 concern. In Phase 5 we
         // validate that the artifact can be decrypted (integration test) and
         // count the secrets captured in the backup metadata.
-        let _plaintext = ctx
-            .crypto
-            .age_decrypt(&self.age_identity, &ciphertext)?;
+        let _plaintext = ctx.crypto.age_decrypt(&self.age_identity, &ciphertext)?;
 
         let secrets_restored = backup.secret_count;
 
@@ -96,7 +94,10 @@ impl ExecuteRestoreCommand {
         ctx.storage.append_audit_entry(&entry).await?;
         ctx.storage.update_pinned_head(&pinned).await?;
 
-        info!(secrets_restored = secrets_restored, "execute_restore: complete");
+        info!(
+            secrets_restored = secrets_restored,
+            "execute_restore: complete"
+        );
         Ok(ExecuteRestoreOutput { secrets_restored })
     }
 }

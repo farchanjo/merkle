@@ -72,7 +72,12 @@ impl Argon2idParams {
     ///
     /// Returns [`DomainError::Argon2idBelowFloor`] if any parameter is below
     /// its minimum value.
-    pub fn try_new(m_cost: u32, t_cost: u32, p_cost: u32, salt: [u8; 16]) -> Result<Self, DomainError> {
+    pub fn try_new(
+        m_cost: u32,
+        t_cost: u32,
+        p_cost: u32,
+        salt: [u8; 16],
+    ) -> Result<Self, DomainError> {
         if m_cost < MIN_M_COST {
             return Err(DomainError::Argon2idBelowFloor {
                 field: "m_cost",
@@ -94,7 +99,12 @@ impl Argon2idParams {
                 min: MIN_P_COST,
             });
         }
-        Ok(Self { m_cost, t_cost, p_cost, salt })
+        Ok(Self {
+            m_cost,
+            t_cost,
+            p_cost,
+            salt,
+        })
     }
 
     /// Memory cost in KiB (>= [`MIN_M_COST`]).
@@ -330,19 +340,37 @@ mod tests {
     #[test]
     fn try_new_m_cost_below_floor_fails() {
         let err = Argon2idParams::try_new(32_768, 3, 1, [0u8; 16]).unwrap_err();
-        assert!(matches!(err, DomainError::Argon2idBelowFloor { field: "m_cost", .. }));
+        assert!(matches!(
+            err,
+            DomainError::Argon2idBelowFloor {
+                field: "m_cost",
+                ..
+            }
+        ));
     }
 
     #[test]
     fn try_new_t_cost_below_floor_fails() {
         let err = Argon2idParams::try_new(65_536, 2, 1, [0u8; 16]).unwrap_err();
-        assert!(matches!(err, DomainError::Argon2idBelowFloor { field: "t_cost", .. }));
+        assert!(matches!(
+            err,
+            DomainError::Argon2idBelowFloor {
+                field: "t_cost",
+                ..
+            }
+        ));
     }
 
     #[test]
     fn try_new_p_cost_zero_fails() {
         let err = Argon2idParams::try_new(65_536, 3, 0, [0u8; 16]).unwrap_err();
-        assert!(matches!(err, DomainError::Argon2idBelowFloor { field: "p_cost", .. }));
+        assert!(matches!(
+            err,
+            DomainError::Argon2idBelowFloor {
+                field: "p_cost",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -366,7 +394,10 @@ mod tests {
         let mut mk = MasterKey::new(1, Rfc3339Timestamp::now());
         mk.load_key_bytes([0xABu8; 32]);
         let cloned = mk.clone();
-        assert!(cloned.key_bytes().is_none(), "clone must not propagate key bytes");
+        assert!(
+            cloned.key_bytes().is_none(),
+            "clone must not propagate key bytes"
+        );
     }
 
     #[test]
@@ -374,15 +405,24 @@ mod tests {
         let mut mk = MasterKey::new(1, Rfc3339Timestamp::now());
         mk.load_key_bytes([0u8; 32]);
         let debug = format!("{mk:?}");
-        assert!(debug.contains("[REDACTED]"), "debug output must redact key bytes");
-        assert!(!debug.contains("0, 0, 0"), "raw bytes must not appear in debug");
+        assert!(
+            debug.contains("[REDACTED]"),
+            "debug output must redact key bytes"
+        );
+        assert!(
+            !debug.contains("0, 0, 0"),
+            "raw bytes must not appear in debug"
+        );
     }
 
     #[test]
     fn argon2id_params_debug_redacts_salt() {
         let params = Argon2idParams::try_new(65_536, 3, 1, [0xFFu8; 16]).unwrap();
         let debug = format!("{params:?}");
-        assert!(debug.contains("[REDACTED]"), "salt must be redacted in Debug");
+        assert!(
+            debug.contains("[REDACTED]"),
+            "salt must be redacted in Debug"
+        );
     }
 
     #[test]

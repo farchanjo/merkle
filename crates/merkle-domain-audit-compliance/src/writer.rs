@@ -18,15 +18,11 @@
 
 use merkle_types::{
     AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, DenialReason, Handle, HmacSignature,
-    NamespaceId, Rfc3339Timestamp, Sensitivity,
-    hash::GENESIS,
+    NamespaceId, Rfc3339Timestamp, Sensitivity, hash::GENESIS,
 };
 
 use crate::{
-    audit_entry::AuditEntry,
-    audit_log::AuditLog,
-    error::DomainError,
-    pinned_head::PinnedHead,
+    audit_entry::AuditEntry, audit_log::AuditLog, error::DomainError, pinned_head::PinnedHead,
 };
 
 /// All parameters required to append one entry to the audit log.
@@ -138,9 +134,12 @@ impl AuditWriter {
         }
 
         // Validated above — infallible.
-        let key_array: &[u8; 32] = hmac_key
-            .try_into()
-            .map_err(|_| DomainError::InvalidHmacKeyLength { actual_len: hmac_key.len() })?;
+        let key_array: &[u8; 32] =
+            hmac_key
+                .try_into()
+                .map_err(|_| DomainError::InvalidHmacKeyLength {
+                    actual_len: hmac_key.len(),
+                })?;
 
         let id = AuditEntryId::new();
         let ts = Rfc3339Timestamp::now();

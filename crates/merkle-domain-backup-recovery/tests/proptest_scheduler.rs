@@ -1,9 +1,7 @@
 //! Property-based tests for [`BackupScheduler`].
 
 use merkle_domain_backup_recovery::{
-    anacron_state::AnacronState,
-    scheduler::BackupScheduler,
-    trigger::BackupTrigger,
+    anacron_state::AnacronState, scheduler::BackupScheduler, trigger::BackupTrigger,
 };
 use merkle_types::Rfc3339Timestamp;
 use proptest::prelude::*;

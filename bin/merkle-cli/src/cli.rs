@@ -19,12 +19,7 @@ use crate::output::OutputFormat;
 )]
 pub struct Cli {
     /// Path to the Companion Socket (overrides config).
-    #[arg(
-        long,
-        env = "MERKLE_SOCKET",
-        global = true,
-        value_name = "PATH"
-    )]
+    #[arg(long, env = "MERKLE_SOCKET", global = true, value_name = "PATH")]
     pub socket: Option<PathBuf>,
 
     /// Output format.
@@ -425,9 +420,8 @@ mod tests {
 
     #[test]
     fn parse_delete_requires_no_implicit_confirm() {
-        let cli =
-            Cli::try_parse_from(["merkle", "delete", "vault://ns/password/example"])
-                .expect("parse delete without --confirm");
+        let cli = Cli::try_parse_from(["merkle", "delete", "vault://ns/password/example"])
+            .expect("parse delete without --confirm");
         let Commands::Delete(args) = cli.command else {
             panic!("expected Delete");
         };
@@ -436,8 +430,7 @@ mod tests {
 
     #[test]
     fn parse_backup_now() {
-        let cli = Cli::try_parse_from(["merkle", "backup", "now"])
-            .expect("parse backup now");
+        let cli = Cli::try_parse_from(["merkle", "backup", "now"]).expect("parse backup now");
         let Commands::Backup(b) = cli.command else {
             panic!("expected Backup");
         };
@@ -467,7 +460,13 @@ mod tests {
     #[test]
     fn parse_device_pair() {
         let cli = Cli::try_parse_from([
-            "merkle", "device", "pair", "--name", "yubikey-5", "--class", "hw",
+            "merkle",
+            "device",
+            "pair",
+            "--name",
+            "yubikey-5",
+            "--class",
+            "hw",
         ])
         .expect("parse device pair");
         let Commands::Device(d) = cli.command else {

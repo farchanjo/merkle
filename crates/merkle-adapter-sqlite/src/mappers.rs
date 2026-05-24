@@ -38,9 +38,9 @@ pub(crate) fn blob_to_uuid(bytes: &[u8]) -> Result<UuidV7, AdapterError> {
             bytes.len()
         )));
     }
-    let arr: [u8; 16] = bytes.try_into().map_err(|_| {
-        AdapterError::Parse("UUID blob length mismatch".to_owned())
-    })?;
+    let arr: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| AdapterError::Parse("UUID blob length mismatch".to_owned()))?;
     let uuid = uuid::Uuid::from_bytes(arr);
     // Accept any UUID version stored in the DB (we write v7, tests may use v4
     // for brevity). Reconstruct as UuidV7 via string round-trip where version
@@ -113,10 +113,7 @@ pub(crate) fn row_to_namespace(row: &SqliteRow) -> Result<Namespace, AdapterErro
     let cwd_hash: Option<String> = row.try_get("cwd_hash")?;
 
     let policy_id_bytes: Option<Vec<u8>> = row.try_get("policy_id")?;
-    let policy_id = policy_id_bytes
-        .as_deref()
-        .map(blob_to_uuid)
-        .transpose()?;
+    let policy_id = policy_id_bytes.as_deref().map(blob_to_uuid).transpose()?;
 
     let dek_version: i64 = row.try_get("dek_version")?;
     let created_at_str: String = row.try_get("created_at")?;
@@ -213,14 +210,20 @@ pub(crate) fn row_to_secret_version(row: &SqliteRow) -> Result<SecretVersion, Ad
     let aead_tag_bytes: Vec<u8> = row.try_get("aead_tag")?;
     let associated_data: Vec<u8> = row.try_get("associated_data")?;
 
-    let nonce: [u8; 24] = nonce_bytes.try_into().map_err(|_| {
-        AdapterError::Parse("nonce must be exactly 24 bytes".to_owned())
-    })?;
-    let aead_tag: [u8; 16] = aead_tag_bytes.try_into().map_err(|_| {
-        AdapterError::Parse("aead_tag must be exactly 16 bytes".to_owned())
-    })?;
+    let nonce: [u8; 24] = nonce_bytes
+        .try_into()
+        .map_err(|_| AdapterError::Parse("nonce must be exactly 24 bytes".to_owned()))?;
+    let aead_tag: [u8; 16] = aead_tag_bytes
+        .try_into()
+        .map_err(|_| AdapterError::Parse("aead_tag must be exactly 16 bytes".to_owned()))?;
 
-    let blob = PrivateBlob::new(ciphertext, nonce, aead_tag, associated_data, u32::try_from(dek_version).unwrap_or(0));
+    let blob = PrivateBlob::new(
+        ciphertext,
+        nonce,
+        aead_tag,
+        associated_data,
+        u32::try_from(dek_version).unwrap_or(0),
+    );
 
     let created_at_str: String = row.try_get("created_at")?;
     let created_at = created_at_str
@@ -349,14 +352,14 @@ pub(crate) fn row_to_companion_device(row: &SqliteRow) -> Result<CompanionDevice
     let device_id = blob_to_uuid(&device_id_bytes)?;
 
     let ed25519_bytes: Vec<u8> = row.try_get("ed25519_pubkey")?;
-    let ed25519_pubkey: [u8; 32] = ed25519_bytes.try_into().map_err(|_| {
-        AdapterError::Parse("ed25519_pubkey must be 32 bytes".to_owned())
-    })?;
+    let ed25519_pubkey: [u8; 32] = ed25519_bytes
+        .try_into()
+        .map_err(|_| AdapterError::Parse("ed25519_pubkey must be 32 bytes".to_owned()))?;
 
     let x25519_bytes: Vec<u8> = row.try_get("x25519_pubkey")?;
-    let x25519_pubkey: [u8; 32] = x25519_bytes.try_into().map_err(|_| {
-        AdapterError::Parse("x25519_pubkey must be 32 bytes".to_owned())
-    })?;
+    let x25519_pubkey: [u8; 32] = x25519_bytes
+        .try_into()
+        .map_err(|_| AdapterError::Parse("x25519_pubkey must be 32 bytes".to_owned()))?;
 
     let class_str: String = row.try_get("class")?;
     let class = class_str
@@ -395,5 +398,7 @@ pub(crate) fn row_to_companion_device(row: &SqliteRow) -> Result<CompanionDevice
 // Keep the type alias to satisfy the public interface if needed.
 #[allow(dead_code)]
 pub(crate) fn row_to_backup_unused(_: &SqliteRow) -> Result<Backup, AdapterError> {
-    Err(AdapterError::Parse("use decode_backup_row instead".to_owned()))
+    Err(AdapterError::Parse(
+        "use decode_backup_row instead".to_owned(),
+    ))
 }

@@ -37,19 +37,13 @@ pub(crate) async fn http_request(
     builder = match auth {
         HttpAuth::Bearer(token) => {
             debug!(auth_variant = "bearer", "applying auth header");
-            builder.header(
-                header::AUTHORIZATION,
-                format!("Bearer {token}"),
-            )
+            builder.header(header::AUTHORIZATION, format!("Bearer {token}"))
         }
         HttpAuth::Basic { user, pass } => {
             debug!(auth_variant = "basic", "applying auth header");
-            let encoded = base64::engine::general_purpose::STANDARD
-                .encode(format!("{user}:{pass}"));
-            builder.header(
-                header::AUTHORIZATION,
-                format!("Basic {encoded}"),
-            )
+            let encoded =
+                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+            builder.header(header::AUTHORIZATION, format!("Basic {encoded}"))
         }
         HttpAuth::None => {
             debug!(auth_variant = "none", "no auth header applied");
@@ -83,9 +77,10 @@ pub(crate) async fn http_request(
         })
         .collect();
 
-    let body = response.bytes().await.map_err(|e| {
-        ExternalError::Backend(format!("failed to read HTTP response body: {e}"))
-    })?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| ExternalError::Backend(format!("failed to read HTTP response body: {e}")))?;
 
     debug!(status, body_bytes = body.len(), "HTTP response received");
 

@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use merkle_types::{HmacSignature, NamespaceId, Rfc3339Timestamp, UuidV7};
 
 use crate::{
-    artifact::BackupArtifact,
-    error::BackupError,
-    recipient::BackupRecipient,
+    artifact::BackupArtifact, error::BackupError, recipient::BackupRecipient,
     trigger::BackupTrigger,
 };
 
@@ -155,7 +153,10 @@ mod tests {
     #[test]
     fn valid_backup_succeeds() {
         let b = make_backup(
-            [BackupRecipient::MasterPubkey, BackupRecipient::RecoveryPublicKey],
+            [
+                BackupRecipient::MasterPubkey,
+                BackupRecipient::RecoveryPublicKey,
+            ],
             5,
         );
         assert!(b.is_ok());
@@ -168,13 +169,19 @@ mod tests {
             5,
         )
         .unwrap_err();
-        assert!(matches!(err, BackupError::DuplicateRecipients(BackupRecipient::MasterPubkey)));
+        assert!(matches!(
+            err,
+            BackupError::DuplicateRecipients(BackupRecipient::MasterPubkey)
+        ));
     }
 
     #[test]
     fn duplicate_recipients_recovery_rejected() {
         let err = make_backup(
-            [BackupRecipient::RecoveryPublicKey, BackupRecipient::RecoveryPublicKey],
+            [
+                BackupRecipient::RecoveryPublicKey,
+                BackupRecipient::RecoveryPublicKey,
+            ],
             5,
         )
         .unwrap_err();
@@ -187,7 +194,10 @@ mod tests {
     #[test]
     fn zero_secret_count_rejected() {
         let err = make_backup(
-            [BackupRecipient::MasterPubkey, BackupRecipient::RecoveryPublicKey],
+            [
+                BackupRecipient::MasterPubkey,
+                BackupRecipient::RecoveryPublicKey,
+            ],
             0,
         )
         .unwrap_err();
@@ -198,7 +208,10 @@ mod tests {
     fn reversed_recipient_order_also_valid() {
         // [RecoveryPublicKey, MasterPubkey] is distinct — must be accepted.
         let b = make_backup(
-            [BackupRecipient::RecoveryPublicKey, BackupRecipient::MasterPubkey],
+            [
+                BackupRecipient::RecoveryPublicKey,
+                BackupRecipient::MasterPubkey,
+            ],
             1,
         );
         assert!(b.is_ok());
@@ -207,7 +220,10 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let b = make_backup(
-            [BackupRecipient::MasterPubkey, BackupRecipient::RecoveryPublicKey],
+            [
+                BackupRecipient::MasterPubkey,
+                BackupRecipient::RecoveryPublicKey,
+            ],
             3,
         )
         .expect("valid backup");

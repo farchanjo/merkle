@@ -37,14 +37,11 @@ pub fn assert_entropy_gate() -> Result<(), CryptoAdapterError> {
         let content = fs::read_to_string("/proc/sys/kernel/random/entropy_avail")
             .map_err(|e| CryptoAdapterError::EntropyUnavailable(e.to_string()))?;
 
-        let bits: u32 = content
-            .trim()
-            .parse()
-            .map_err(|_| {
-                CryptoAdapterError::EntropyUnavailable(
-                    "failed to parse /proc/sys/kernel/random/entropy_avail".to_owned(),
-                )
-            })?;
+        let bits: u32 = content.trim().parse().map_err(|_| {
+            CryptoAdapterError::EntropyUnavailable(
+                "failed to parse /proc/sys/kernel/random/entropy_avail".to_owned(),
+            )
+        })?;
 
         if bits < MIN_ENTROPY_BITS {
             return Err(CryptoAdapterError::EntropyUnavailable(format!(

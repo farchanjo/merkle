@@ -42,7 +42,9 @@ impl SearchSecretsCommand {
         ctx.require_unsealed().await?;
 
         if self.query.trim().is_empty() {
-            return Err(AppError::InvalidInput("search query must not be empty".into()));
+            return Err(AppError::InvalidInput(
+                "search query must not be empty".into(),
+            ));
         }
 
         info!(namespace = %self.namespace_id, query = %self.query, "search_secrets: executing FTS5 query");

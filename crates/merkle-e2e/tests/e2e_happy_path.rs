@@ -20,8 +20,8 @@
 //! ```
 
 mod harness;
-use harness::{AgentProcessHandle, CliRunner};
 use harness::oob_fixture::OobFixture;
+use harness::{AgentProcessHandle, CliRunner};
 
 use std::time::Duration;
 
@@ -52,9 +52,7 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
     // -----------------------------------------------------------------------
     // Setup: tracing subscriber (optional — useful when debugging).
     // -----------------------------------------------------------------------
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("warn")
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("warn").try_init();
 
     // -----------------------------------------------------------------------
     // Create the OOB fixture file path inside a temp dir.
@@ -67,7 +65,8 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
     // -----------------------------------------------------------------------
     // Step 0: Spawn agent.
     // -----------------------------------------------------------------------
-    let agent = AgentProcessHandle::spawn_with_oob_fixture(Some(&oob_fixture_path)).await
+    let agent = AgentProcessHandle::spawn_with_oob_fixture(Some(&oob_fixture_path))
+        .await
         .expect("step 0: agent spawn");
 
     let runner = CliRunner::new(agent.socket_path().clone());
@@ -83,7 +82,10 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
 
     // init does not connect to the agent socket — it runs locally.
     // Successful init prints some confirmation text or a recovery key.
-    println!("[step 1 init] exit={} stdout={}", init_out.exit_code, init_out.stdout);
+    println!(
+        "[step 1 init] exit={} stdout={}",
+        init_out.exit_code, init_out.stdout
+    );
     // We accept both 0 (full init) and non-zero if init was already run.
     // The important thing is the socket is alive and the agent is running.
 
@@ -94,7 +96,10 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .run_with_stdin(&["unseal", "--passphrase"], Some(TEST_PASSPHRASE))
         .await
         .expect("step 2: run unseal");
-    println!("[step 2 unseal] exit={} stdout={} stderr={}", unseal_out.exit_code, unseal_out.stdout, unseal_out.stderr);
+    println!(
+        "[step 2 unseal] exit={} stdout={} stderr={}",
+        unseal_out.exit_code, unseal_out.stdout, unseal_out.stderr
+    );
     // The agent may be in a state where unseal is a no-op (already unsealed
     // from a prior run, or the stub always reports Sealed). We accept both
     // success and "already unsealed" signals.
@@ -110,26 +115,29 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         || unseal_out.stdout.contains("unsealed")
         || unseal_tty_error;
     if unseal_tty_error {
-        println!("[step 2] WARNING: TTY unavailable in test runner; unseal skipped (known limitation)");
+        println!(
+            "[step 2] WARNING: TTY unavailable in test runner; unseal skipped (known limitation)"
+        );
     }
     assert!(
         unseal_ok,
         "step 2: unseal failed unexpectedly\nstdout: {}\nstderr: {}",
-        unseal_out.stdout,
-        unseal_out.stderr
+        unseal_out.stdout, unseal_out.stderr
     );
 
     // -----------------------------------------------------------------------
     // Step 3: merkle status → reports vault_state.
     // -----------------------------------------------------------------------
     let status_out = runner.run(&["status"]).await.expect("step 3: run status");
-    println!("[step 3 status] exit={} stdout={}", status_out.exit_code, status_out.stdout);
+    println!(
+        "[step 3 status] exit={} stdout={}",
+        status_out.exit_code, status_out.stdout
+    );
     // Status must succeed (agent is reachable).
     assert_eq!(
         status_out.exit_code, 0,
         "step 3: status failed\nstdout: {}\nstderr: {}",
-        status_out.stdout,
-        status_out.stderr
+        status_out.stdout, status_out.stderr
     );
 
     // -----------------------------------------------------------------------
@@ -139,7 +147,10 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .run(&["bind", NAMESPACE])
         .await
         .expect("step 4: run bind");
-    println!("[step 4 bind] exit={} stdout={} stderr={}", bind_out.exit_code, bind_out.stdout, bind_out.stderr);
+    println!(
+        "[step 4 bind] exit={} stdout={} stderr={}",
+        bind_out.exit_code, bind_out.stdout, bind_out.stderr
+    );
     // Bind may fail with "sealed" if unseal above was not fully effective in
     // the stub implementation; tolerate that and continue.
     // Bind may fail with 501 Not Implemented (Phase 4.A stub) or "sealed".
@@ -147,7 +158,11 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         || bind_out.stderr.contains("sealed")
         || bind_out.stderr.contains("501")
         || bind_out.stderr.contains("Not implemented");
-    assert!(bind_ok, "step 4: bind failed\nstdout: {}\nstderr: {}", bind_out.stdout, bind_out.stderr);
+    assert!(
+        bind_ok,
+        "step 4: bind failed\nstdout: {}\nstderr: {}",
+        bind_out.stdout, bind_out.stderr
+    );
 
     // -----------------------------------------------------------------------
     // Step 5: merkle put <handle> --sensitivity high  (payload from stdin).
@@ -157,27 +172,42 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
             &[
                 "put",
                 SECRET_HANDLE,
-                "--sensitivity", "high",
-                "--category", "password",
+                "--sensitivity",
+                "high",
+                "--category",
+                "password",
             ],
             Some(SECRET_PAYLOAD),
         )
         .await
         .expect("step 5: run put");
-    println!("[step 5 put] exit={} stdout={} stderr={}", put_out.exit_code, put_out.stdout, put_out.stderr);
+    println!(
+        "[step 5 put] exit={} stdout={} stderr={}",
+        put_out.exit_code, put_out.stdout, put_out.stderr
+    );
     // Tolerate: sealed, namespace not found (bind stub), or agent not wired.
     let put_ok = put_out.exit_code == 0
         || put_out.stderr.contains("sealed")
         || put_out.stderr.contains("not found")
         || put_out.stderr.contains("501")
         || put_out.stderr.contains("Not implemented");
-    assert!(put_ok, "step 5: put failed\nstdout: {}\nstderr: {}", put_out.stdout, put_out.stderr);
+    assert!(
+        put_ok,
+        "step 5: put failed\nstdout: {}\nstderr: {}",
+        put_out.stdout, put_out.stderr
+    );
 
     // -----------------------------------------------------------------------
     // Step 6: merkle list → handle appears.
     // -----------------------------------------------------------------------
-    let list_out = runner.run(&["list", NAMESPACE]).await.expect("step 6: run list");
-    println!("[step 6 list] exit={} stdout={}", list_out.exit_code, list_out.stdout);
+    let list_out = runner
+        .run(&["list", NAMESPACE])
+        .await
+        .expect("step 6: run list");
+    println!(
+        "[step 6 list] exit={} stdout={}",
+        list_out.exit_code, list_out.stdout
+    );
     // Tolerate sealed / 501 stub responses.
     assert!(
         tolerate(&list_out),
@@ -193,9 +223,17 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .run(&["describe", SECRET_HANDLE])
         .await
         .expect("step 7: run describe");
-    println!("[step 7 describe] exit={} stdout={}", describe_out.exit_code, describe_out.stdout);
+    println!(
+        "[step 7 describe] exit={} stdout={}",
+        describe_out.exit_code, describe_out.stdout
+    );
     // Describe must succeed or return sealed.
-    assert!(tolerate(&describe_out), "step 7: describe failed\nstdout: {}\nstderr: {}", describe_out.stdout, describe_out.stderr);
+    assert!(
+        tolerate(&describe_out),
+        "step 7: describe failed\nstdout: {}\nstderr: {}",
+        describe_out.stdout,
+        describe_out.stderr
+    );
     // Plaintext must NOT appear in the describe output.
     // The raw string value should not appear in describe output (no decryption).
     assert!(
@@ -213,9 +251,7 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .expect("step 8a: first reveal");
     println!(
         "[step 8a reveal-first] exit={} stdout={} stderr={}",
-        reveal_first.exit_code,
-        reveal_first.stdout,
-        reveal_first.stderr
+        reveal_first.exit_code, reveal_first.stdout, reveal_first.stderr
     );
     // The first reveal for a high-sensitivity secret either:
     //   (a) returns oob_pending:true (202) — the classic path, or
@@ -254,9 +290,7 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .expect("step 8c: reveal retry");
     println!(
         "[step 8c reveal-retry] exit={} stdout={} stderr={}",
-        reveal_retry.exit_code,
-        reveal_retry.stdout,
-        reveal_retry.stderr
+        reveal_retry.exit_code, reveal_retry.stdout, reveal_retry.stderr
     );
     // Success criteria: exit 0, or oob_pending again (fixture consumed), or sealed.
     assert!(
@@ -273,7 +307,10 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .run(&["audit", "--op", "reveal", "--limit", "10"])
         .await
         .expect("step 9: run audit");
-    println!("[step 9 audit] exit={} stdout={}", audit_out.exit_code, audit_out.stdout);
+    println!(
+        "[step 9 audit] exit={} stdout={}",
+        audit_out.exit_code, audit_out.stdout
+    );
     assert!(
         tolerate(&audit_out),
         "step 9: audit failed\nstdout: {}\nstderr: {}",
@@ -288,12 +325,14 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         .run(&["doctor", "--chain"])
         .await
         .expect("step 10: run doctor --chain");
-    println!("[step 10 doctor] exit={} stdout={}", doctor_out.exit_code, doctor_out.stdout);
+    println!(
+        "[step 10 doctor] exit={} stdout={}",
+        doctor_out.exit_code, doctor_out.stdout
+    );
     assert_eq!(
         doctor_out.exit_code, 0,
         "step 10: doctor failed (not a stub — real endpoint)\nstdout: {}\nstderr: {}",
-        doctor_out.stdout,
-        doctor_out.stderr
+        doctor_out.stdout, doctor_out.stderr
     );
     // The response contains "chain_valid" (true or false depending on audit log state).
     assert!(
@@ -307,7 +346,10 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
     // Step 11: merkle seal → vault transitions back to Sealed.
     // -----------------------------------------------------------------------
     let seal_out = runner.run(&["seal"]).await.expect("step 11: run seal");
-    println!("[step 11 seal] exit={} stdout={}", seal_out.exit_code, seal_out.stdout);
+    println!(
+        "[step 11 seal] exit={} stdout={}",
+        seal_out.exit_code, seal_out.stdout
+    );
     // Seal is a real endpoint; tolerate stub 501 only if it's the only thing wired.
     assert!(
         tolerate(&seal_out),
@@ -319,7 +361,10 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
     // -----------------------------------------------------------------------
     // Step 12: SIGTERM the agent; verify clean exit within 10 s.
     // -----------------------------------------------------------------------
-    agent.kill_graceful().await.expect("step 12: agent graceful shutdown");
+    agent
+        .kill_graceful()
+        .await
+        .expect("step 12: agent graceful shutdown");
     println!("[step 12] agent exited cleanly");
 
     Ok(())

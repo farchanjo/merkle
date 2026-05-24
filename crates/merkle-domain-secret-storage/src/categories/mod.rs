@@ -108,7 +108,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines, reason = "one assert per built-in category variant")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one assert per built-in category variant"
+    )]
     fn all_builtin_variants_serialize() {
         use crate::categories::{
             cert::{CertCategory, KeyAlgo},

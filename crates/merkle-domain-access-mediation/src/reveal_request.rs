@@ -123,10 +123,7 @@ impl RevealRequest {
         resolution: OobResolution,
         authorization: RevealAuthorization,
     ) -> Result<RevealAuthorization, DomainError> {
-        if !matches!(
-            self.state,
-            RevealState::Pending | RevealState::AwaitingOob
-        ) {
+        if !matches!(self.state, RevealState::Pending | RevealState::AwaitingOob) {
             return Err(DomainError::InvalidStateTransition(
                 format!("{:?}", self.state),
                 "resolve",
@@ -161,10 +158,7 @@ impl RevealRequest {
     pub fn expire(&mut self) -> Result<(), DomainError> {
         if matches!(
             self.state,
-            RevealState::Approved
-                | RevealState::Denied
-                | RevealState::Expired
-                | RevealState::Error
+            RevealState::Approved | RevealState::Denied | RevealState::Expired | RevealState::Error
         ) {
             return Err(DomainError::InvalidStateTransition(
                 format!("{:?}", self.state),
@@ -180,7 +174,7 @@ impl RevealRequest {
 mod tests {
     use super::*;
     use merkle_types::{
-        ChallengeId, DenialReason, Handle, NamespaceId, OobChannel, OobChallengeOutcome,
+        ChallengeId, DenialReason, Handle, NamespaceId, OobChallengeOutcome, OobChannel,
         Rfc3339Timestamp, Sensitivity, UuidV7,
     };
 
@@ -252,7 +246,10 @@ mod tests {
         let err = r
             .issue_challenge(make_challenge("018f4c1a-0000-7000-8000-000000000011"))
             .expect_err("second challenge");
-        assert!(matches!(err, DomainError::InvalidStateTransition(_, "issue_challenge")));
+        assert!(matches!(
+            err,
+            DomainError::InvalidStateTransition(_, "issue_challenge")
+        ));
     }
 
     #[test]
@@ -314,9 +311,13 @@ mod tests {
         r.issue_challenge(make_challenge(cid)).expect("issue");
         r.operator_confirmation.oob_ack = true;
         let resolution = make_resolution(cid, OobChallengeOutcome::Approved);
-        r.resolve(resolution, RevealAuthorization::Allow).expect("resolve");
+        r.resolve(resolution, RevealAuthorization::Allow)
+            .expect("resolve");
         let err = r.expire().expect_err("expire from approved");
-        assert!(matches!(err, DomainError::InvalidStateTransition(_, "expire")));
+        assert!(matches!(
+            err,
+            DomainError::InvalidStateTransition(_, "expire")
+        ));
     }
 
     #[test]

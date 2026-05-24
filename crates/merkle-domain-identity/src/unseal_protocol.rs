@@ -102,8 +102,8 @@ mod tests {
     #[test]
     fn derive_master_key_stub_returns_not_implemented() {
         let params = Argon2idParams::try_new(65_536, 3, 1, [0u8; 16]).unwrap();
-        let err = UnsealProtocol::derive_master_key_from_passphrase(b"passphrase", &params)
-            .unwrap_err();
+        let err =
+            UnsealProtocol::derive_master_key_from_passphrase(b"passphrase", &params).unwrap_err();
         assert!(matches!(err, DomainError::DerivationNotImplemented));
     }
 }

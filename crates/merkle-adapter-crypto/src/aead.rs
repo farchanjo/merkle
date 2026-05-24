@@ -5,10 +5,7 @@
 //! output (ciphertext bytes + 16-byte Poly1305 tag, concatenated by the
 //! `chacha20poly1305` crate).
 
-use chacha20poly1305::{
-    AeadInPlace, Key, KeyInit, XChaCha20Poly1305, XNonce,
-    aead::Aead,
-};
+use chacha20poly1305::{AeadInPlace, Key, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use merkle_ports::error::CryptoError;
 
 /// Encrypt `plaintext` with `key` and `nonce`, binding `aad` as associated
@@ -27,7 +24,10 @@ pub(crate) fn xchacha20_encrypt(
     // `encrypt_in_place_detached` is not used here because the ports trait
     // wants a single Vec<u8> containing ciphertext || tag.  We use the
     // higher-level `encrypt` API with a Payload to bind the AAD.
-    let payload = chacha20poly1305::aead::Payload { msg: plaintext, aad };
+    let payload = chacha20poly1305::aead::Payload {
+        msg: plaintext,
+        aad,
+    };
     cipher
         .encrypt(xnonce, payload)
         .map_err(|_| CryptoError::AeadVerifyFailed)
@@ -47,7 +47,10 @@ pub(crate) fn xchacha20_decrypt(
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
     let xnonce = XNonce::from_slice(nonce);
 
-    let payload = chacha20poly1305::aead::Payload { msg: ciphertext, aad };
+    let payload = chacha20poly1305::aead::Payload {
+        msg: ciphertext,
+        aad,
+    };
     cipher
         .decrypt(xnonce, payload)
         .map_err(|_| CryptoError::AeadVerifyFailed)

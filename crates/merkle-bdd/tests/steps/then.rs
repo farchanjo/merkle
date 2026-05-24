@@ -1730,7 +1730,9 @@ async fn then_audit_rollback(
 #[then("the Vault Agent generates a 32-byte Master Key using OsRng")]
 async fn then_generates_master_key(_world: &mut MerkleWorld) {}
 
-#[then(expr = "the Vault Agent stores the Master Key in the OS Keychain under service {string} account {string}")]
+#[then(
+    expr = "the Vault Agent stores the Master Key in the OS Keychain under service {string} account {string}"
+)]
 async fn then_stores_master_key(world: &mut MerkleWorld, _service: String, _account: String) {
     assert!(
         world.init_http_status == 201 || world.last_error.is_none(),
@@ -1757,7 +1759,10 @@ async fn then_atomic_transaction(_world: &mut MerkleWorld) {}
     expr = "the agent responds with HTTP 201 containing fields vault_id, recovery_key, and master_key_keychain_ref"
 )]
 async fn then_http_201_with_fields(world: &mut MerkleWorld) {
-    assert_eq!(world.init_http_status, 201, "expected HTTP 201 init response");
+    assert_eq!(
+        world.init_http_status, 201,
+        "expected HTTP 201 init response"
+    );
 }
 
 #[then("the recovery_key field is a valid age X25519 public key string")]
@@ -1770,7 +1775,11 @@ async fn then_recovery_key_is_age(world: &mut MerkleWorld) {
 
 #[then(expr = "the master_key_keychain_ref value is {string}")]
 async fn then_keychain_ref_value(world: &mut MerkleWorld, expected: String) {
-    let expected_ref = format!("{}/{}", crate::steps::KEYCHAIN_SERVICE, crate::steps::KEYCHAIN_ACCOUNT);
+    let expected_ref = format!(
+        "{}/{}",
+        crate::steps::KEYCHAIN_SERVICE,
+        crate::steps::KEYCHAIN_ACCOUNT
+    );
     assert_eq!(
         expected, expected_ref,
         "keychain ref must be dev.fapp.merkle/master-v1"
@@ -1810,7 +1819,10 @@ async fn then_http_201(world: &mut MerkleWorld) {
 
 #[then("the recovery_key field in the response body contains the age public key string")]
 async fn then_recovery_key_in_body(world: &mut MerkleWorld) {
-    assert!(world.init_recovery_key.is_some(), "recovery key must be set");
+    assert!(
+        world.init_recovery_key.is_some(),
+        "recovery key must be set"
+    );
 }
 
 #[then("the CLI prints the recovery_key to stdout before any other output")]
@@ -1942,7 +1954,9 @@ async fn then_sealed_after_second(world: &mut MerkleWorld) {
     assert!(!world.app_ctx.is_unsealed().await, "must be sealed");
 }
 
-#[then(expr = "two Audit Entries with op {string} and outcome {string} are present in the Audit Log")]
+#[then(
+    expr = "two Audit Entries with op {string} and outcome {string} are present in the Audit Log"
+)]
 async fn then_two_audit_entries(world: &mut MerkleWorld, op_str: String, outcome_str: String) {
     let query = merkle_domain_audit_compliance::AuditQuery::default();
     let entries = world
@@ -2000,10 +2014,12 @@ async fn then_audit_entry_with_note_appended(
     assert!(
         entries.iter().any(|e| e.op == op && e.outcome == outcome),
         "expected audit entry op={op_str} outcome={outcome_str}, found: {:?}",
-        entries.iter().map(|e| (e.op, e.outcome)).collect::<Vec<_>>()
+        entries
+            .iter()
+            .map(|e| (e.op, e.outcome))
+            .collect::<Vec<_>>()
     );
 }
-
 
 // ---------------------------------------------------------------------------
 // put_secret value_format Then steps
@@ -2066,7 +2082,9 @@ async fn then_error_identifies_missing_field(world: &mut MerkleWorld, _field: St
     );
 }
 
-#[then(expr = "the error response lists the available built-in categories: ssh, password, token, env, cert, key, database, note, otp, cloud, gpg")]
+#[then(
+    expr = "the error response lists the available built-in categories: ssh, password, token, env, cert, key, database, note, otp, cloud, gpg"
+)]
 async fn then_error_lists_categories(world: &mut MerkleWorld) {
     assert!(
         world.last_error.is_some(),
@@ -2136,9 +2154,7 @@ async fn then_command_executes(world: &mut MerkleWorld, _command: String) {
 }
 
 /// `the Reveal Policy is not consulted because no plaintext is returned to the MCP transport`
-#[then(
-    "the Reveal Policy is not consulted because no plaintext is returned to the MCP transport"
-)]
+#[then("the Reveal Policy is not consulted because no plaintext is returned to the MCP transport")]
 async fn then_reveal_policy_not_consulted(world: &mut MerkleWorld) {
     assert!(
         world.last_error.is_none(),
@@ -2178,11 +2194,7 @@ async fn then_audit_entry_op_handle_outcome_note(
 
 /// `an Audit Entry with op {string} and note {string} is appended`
 #[then(expr = "an Audit Entry with op {string} and note {string} is appended")]
-async fn then_audit_entry_op_and_note(
-    world: &mut MerkleWorld,
-    op_str: String,
-    _note: String,
-) {
+async fn then_audit_entry_op_and_note(world: &mut MerkleWorld, op_str: String, _note: String) {
     let query = merkle_domain_audit_compliance::AuditQuery::default();
     let entries = world
         .app_ctx
@@ -2208,14 +2220,8 @@ async fn then_no_backup_triggered(world: &mut MerkleWorld) {
 }
 
 /// `the previous Version {int} remains decryptable using Associated Data {string}`
-#[then(
-    expr = "the previous Version {int} remains decryptable using Associated Data {string}"
-)]
-async fn then_previous_version_decryptable(
-    world: &mut MerkleWorld,
-    _version: u32,
-    _ad: String,
-) {
+#[then(expr = "the previous Version {int} remains decryptable using Associated Data {string}")]
+async fn then_previous_version_decryptable(world: &mut MerkleWorld, _version: u32, _ad: String) {
     assert!(
         world.last_error.is_none(),
         "rotate must succeed; previous version AD binding must hold"
@@ -2251,7 +2257,9 @@ async fn then_no_audit_sealed_vault(_world: &mut MerkleWorld) {
 }
 
 /// proxy_ssh — audit entry records caller_program
-#[then("the Audit Entry records the caller_program field identifying the MCP client process that initiated the request")]
+#[then(
+    "the Audit Entry records the caller_program field identifying the MCP client process that initiated the request"
+)]
 async fn then_audit_records_caller_program(world: &mut MerkleWorld) {
     assert!(
         world.last_error.is_none(),
@@ -2264,9 +2272,7 @@ async fn then_audit_records_caller_program(world: &mut MerkleWorld) {
 // ---------------------------------------------------------------------------
 
 /// port_forward — ssh child process was spawned (success path).
-#[then(
-    expr = "a tokio child process for {string} is spawned"
-)]
+#[then(expr = "a tokio child process for {string} is spawned")]
 async fn then_ssh_child_spawned(world: &mut MerkleWorld, _cmd_spec: String) {
     assert!(
         world.last_error.is_none(),
@@ -2288,10 +2294,7 @@ async fn then_session_id_returned(world: &mut MerkleWorld) {
 /// port_forward — policy denial with specific reason.
 #[then(expr = "the Vault Agent denies with denial_reason {string}")]
 async fn then_vault_agent_denies_reason(world: &mut MerkleWorld, reason: String) {
-    let err = world
-        .last_error
-        .as_deref()
-        .unwrap_or_default();
+    let err = world.last_error.as_deref().unwrap_or_default();
     assert!(
         err.contains(&reason) || err.contains("policy denied") || err.contains("PolicyDenied"),
         "expected denial reason {reason:?} in error but got: {err:?}"
@@ -2395,9 +2398,7 @@ async fn then_audit_entry_op_outcome_short(
 ///
 /// Produced by the JWT reveal success scenario:
 /// `"an Audit Entry with op {string} outcome {string} attestation {string} is appended"`.
-#[then(
-    expr = "an Audit Entry with op {string} outcome {string} attestation {string} is appended"
-)]
+#[then(expr = "an Audit Entry with op {string} outcome {string} attestation {string} is appended")]
 async fn then_audit_entry_op_outcome_attestation(
     world: &mut MerkleWorld,
     op_str: String,

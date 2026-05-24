@@ -12,9 +12,9 @@
 //!
 //! Decryption is the exact reverse.
 
-use x25519_dalek::{PublicKey, StaticSecret};
-use merkle_ports::{EciesEnvelopeBytes, X25519PrivateKey, X25519PublicKey};
 use merkle_ports::error::CryptoError;
+use merkle_ports::{EciesEnvelopeBytes, X25519PrivateKey, X25519PublicKey};
+use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::aead::{xchacha20_decrypt_detached, xchacha20_encrypt_detached};
 use crate::rng::{random_24, random_32};

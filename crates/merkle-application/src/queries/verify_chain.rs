@@ -5,7 +5,7 @@
 //! [`ChainVerifier::verify_full`].
 
 use merkle_domain_audit_compliance::{
-    AuditLog, AuditWriter, AppendParams, ChainVerifier, ChainVerifyResult,
+    AppendParams, AuditLog, AuditWriter, ChainVerifier, ChainVerifyResult,
 };
 use tracing::info;
 
@@ -62,11 +62,9 @@ impl VerifyChainQuery {
         }
 
         // Load the pinned head.
-        let pinned_head = ctx
-            .storage
-            .pinned_head()
-            .await?
-            .ok_or_else(|| AppError::Domain("no pinned head found — vault may be uninitialized".into()))?;
+        let pinned_head = ctx.storage.pinned_head().await?.ok_or_else(|| {
+            AppError::Domain("no pinned head found — vault may be uninitialized".into())
+        })?;
 
         let result = ChainVerifier::verify_full(&log, &pinned_head, &hmac_key);
 

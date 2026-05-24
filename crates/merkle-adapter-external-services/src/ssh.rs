@@ -66,9 +66,8 @@ pub(crate) async fn ssh_exec(
 async fn write_identity(key_material: &[u8]) -> Result<NamedTempFile, ExternalError> {
     // NamedTempFile::new() is synchronous (single syscall); acceptable on the
     // async executor for this brief operation.
-    let mut file = NamedTempFile::new().map_err(|e| {
-        ExternalError::Backend(format!("failed to create identity tempfile: {e}"))
-    })?;
+    let mut file = NamedTempFile::new()
+        .map_err(|e| ExternalError::Backend(format!("failed to create identity tempfile: {e}")))?;
 
     // Restrict permissions to owner-read-write only (0600) before writing.
     #[cfg(unix)]

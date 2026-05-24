@@ -52,8 +52,8 @@ pub mod vault_identity;
 pub mod vault_root_key;
 
 pub use error::DomainError;
-pub use keychain_entry::{KeychainEntry, KEYCHAIN_ACCOUNT_MASTER_KEY, KEYCHAIN_SERVICE};
-pub use master_key::{Argon2idParams, MasterKey, MIN_M_COST, MIN_P_COST, MIN_T_COST};
+pub use keychain_entry::{KEYCHAIN_ACCOUNT_MASTER_KEY, KEYCHAIN_SERVICE, KeychainEntry};
+pub use master_key::{Argon2idParams, MIN_M_COST, MIN_P_COST, MIN_T_COST, MasterKey};
 pub use namespace_dek::{NamespaceDek, WrappedDek};
 pub use recovery_key::{RecoveryKey, RecoveryPublicKey};
 pub use sealed_state::SealedState;

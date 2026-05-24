@@ -27,16 +27,13 @@ pub(crate) fn derive(
     params: &Argon2idParams,
 ) -> Result<[u8; 32], CryptoError> {
     // Enforce floor (belt-and-suspenders; Argon2idParams::try_new also validates).
-    if params.m_cost() < MIN_M_COST
-        || params.t_cost() < MIN_T_COST
-        || params.p_cost() < MIN_P_COST
+    if params.m_cost() < MIN_M_COST || params.t_cost() < MIN_T_COST || params.p_cost() < MIN_P_COST
     {
         return Err(CryptoError::InvalidArgon2idParams);
     }
 
-    let argon2_params =
-        Params::new(params.m_cost(), params.t_cost(), params.p_cost(), Some(32))
-            .map_err(|e| CryptoError::Backend(e.to_string()))?;
+    let argon2_params = Params::new(params.m_cost(), params.t_cost(), params.p_cost(), Some(32))
+        .map_err(|e| CryptoError::Backend(e.to_string()))?;
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
 

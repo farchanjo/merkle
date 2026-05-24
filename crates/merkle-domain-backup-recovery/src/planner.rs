@@ -63,9 +63,7 @@ impl RestorePlanner {
 
         for (backup_handle, backup_ts) in source_backup_secrets {
             // Check whether this handle also exists in the vault.
-            let vault_entry = current_secrets
-                .iter()
-                .find(|(h, _)| h == backup_handle);
+            let vault_entry = current_secrets.iter().find(|(h, _)| h == backup_handle);
 
             if let Some((_vault_handle, vault_ts)) = vault_entry {
                 // Both sides have this secret — it is a conflict.
@@ -163,8 +161,12 @@ mod tests {
         let src_id = UuidV7::new();
         let h = handle("vault://my-ns/cat/my-secret");
         let ts = Rfc3339Timestamp::now();
-        let plan =
-            RestorePlanner::plan(src_id, &[(h.clone(), ts)], &[(h, ts)], RestoreMode::ConflictHalt);
+        let plan = RestorePlanner::plan(
+            src_id,
+            &[(h.clone(), ts)],
+            &[(h, ts)],
+            RestoreMode::ConflictHalt,
+        );
         assert_eq!(plan.conflicts.len(), 1);
         assert_eq!(plan.conflicts[0].resolution, ConflictResolution::Halt);
     }
@@ -184,7 +186,10 @@ mod tests {
             &[(h, ts)],
             RestoreMode::MergePreserveBoth,
         );
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::PreserveBoth);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::PreserveBoth
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -203,7 +208,10 @@ mod tests {
             &[(h, vault_ts)],
             RestoreMode::NewestWinsBackup,
         );
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::NewestWinsBackup);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::NewestWinsBackup
+        );
     }
 
     #[test]
@@ -218,7 +226,10 @@ mod tests {
             &[(h, vault_ts)],
             RestoreMode::NewestWinsBackup,
         );
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::NewestWinsExisting);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::NewestWinsExisting
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -237,7 +248,10 @@ mod tests {
             &[(h, vault_ts)],
             RestoreMode::NewestWinsExisting,
         );
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::NewestWinsExisting);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::NewestWinsExisting
+        );
     }
 
     #[test]
@@ -252,7 +266,10 @@ mod tests {
             &[(h, vault_ts)],
             RestoreMode::NewestWinsExisting,
         );
-        assert_eq!(plan.conflicts[0].resolution, ConflictResolution::NewestWinsBackup);
+        assert_eq!(
+            plan.conflicts[0].resolution,
+            ConflictResolution::NewestWinsBackup
+        );
     }
 
     // -----------------------------------------------------------------------

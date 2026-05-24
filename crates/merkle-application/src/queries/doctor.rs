@@ -13,8 +13,8 @@ use merkle_domain_audit_compliance::ChainOutcome;
 use merkle_domain_identity::SealedState;
 use tracing::info;
 
-use crate::{AppContext, AppError};
 use crate::queries::verify_chain::VerifyChainQuery;
+use crate::{AppContext, AppError};
 
 /// Input for doctor query (unit-struct; no parameters required).
 #[derive(Debug, Default)]
@@ -76,9 +76,10 @@ impl DoctorQuery {
         let chain_ok = chain_result
             .as_ref()
             .is_ok_and(|r| r.result.outcome == ChainOutcome::Intact);
-        let chain_detail = chain_result
-            .as_ref()
-            .map_or_else(|e| format!("error: {e}"), |r| format!("entries_checked={}", r.result.entries_checked));
+        let chain_detail = chain_result.as_ref().map_or_else(
+            |e| format!("error: {e}"),
+            |r| format!("entries_checked={}", r.result.entries_checked),
+        );
         checks.push(DoctorCheckResult {
             name: "audit_chain_integrity".into(),
             ok: chain_ok,
@@ -103,7 +104,11 @@ impl DoctorQuery {
 
         let all_ok = checks.iter().all(|c| c.ok);
 
-        info!(all_ok = all_ok, checks = checks.len(), "doctor: health check complete");
+        info!(
+            all_ok = all_ok,
+            checks = checks.len(),
+            "doctor: health check complete"
+        );
         Ok(DoctorOutput {
             sealed_state: sealed_state_str,
             checks,

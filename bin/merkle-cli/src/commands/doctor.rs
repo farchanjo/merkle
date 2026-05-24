@@ -5,7 +5,7 @@
 use crate::cli::DoctorArgs;
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_value, OutputFormat};
+use crate::output::{OutputFormat, print_value};
 
 /// Run `merkle doctor`.
 pub async fn run(

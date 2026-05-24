@@ -11,8 +11,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use merkle_domain_access_mediation as am;
 use merkle_domain_access_mediation::oob::resolution::OobResolution;
-use merkle_ports::error::OobError;
 use merkle_ports::OobNotifier;
+use merkle_ports::error::OobError;
 use merkle_types::{ChallengeId, OobChallengeOutcome};
 use parking_lot::Mutex;
 

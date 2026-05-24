@@ -91,7 +91,9 @@ mod tests {
     use super::*;
     use crate::private_blob::PrivateBlob;
     use crate::secret_version::{SecretVersion, SecretVersionId};
-    use merkle_types::{CategoryName, Handle, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName};
+    use merkle_types::{
+        CategoryName, Handle, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
+    };
 
     fn make_version(version_no: u32) -> SecretVersion {
         let handle = Handle::new(

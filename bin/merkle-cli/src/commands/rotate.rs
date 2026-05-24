@@ -11,7 +11,7 @@ use crate::cli::RotateArgs;
 use crate::client::CompanionSocketClient;
 use crate::commands::put::{parse_handle, resolve_namespace_id};
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle rotate`.
 pub async fn run(

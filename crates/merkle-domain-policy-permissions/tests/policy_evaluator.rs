@@ -55,11 +55,7 @@ fn base_input(op: AuditOp) -> PolicyDecisionInput {
     }
 }
 
-fn reveal_input_with(
-    slash: bool,
-    oob: bool,
-    sensitivity: Sensitivity,
-) -> PolicyDecisionInput {
+fn reveal_input_with(slash: bool, oob: bool, sensitivity: Sensitivity) -> PolicyDecisionInput {
     PolicyDecisionInput {
         op: AuditOp::Reveal,
         sensitivity: Some(sensitivity),
@@ -100,7 +96,10 @@ fn cross_ns_master_switch_off_denies_different_namespaces() {
     let decision = PolicyEvaluator::evaluate(&policy, &input);
     assert!(decision.is_deny());
 
-    assert_eq!(decision.denial_code(), Some(DenialCode::CrossNamespaceDenied));
+    assert_eq!(
+        decision.denial_code(),
+        Some(DenialCode::CrossNamespaceDenied)
+    );
 }
 
 #[test]
@@ -164,7 +163,10 @@ fn rate_limit_at_max_count_denied() {
     // Set the plaintext_reads limit to 3 explicitly.
     policy.rate_limit.per_class.insert(
         OpClass::PlaintextReads,
-        RateLimitEntry { max_count: 3, window_seconds: 60 },
+        RateLimitEntry {
+            max_count: 3,
+            window_seconds: 60,
+        },
     );
     let input = PolicyDecisionInput {
         current_rate_window: RateWindowView {
@@ -185,7 +187,10 @@ fn rate_limit_exceed_above_max_count_denied() {
     let mut policy = balanced_policy();
     policy.rate_limit.per_class.insert(
         OpClass::Reveals,
-        RateLimitEntry { max_count: 2, window_seconds: 60 },
+        RateLimitEntry {
+            max_count: 2,
+            window_seconds: 60,
+        },
     );
     let input = PolicyDecisionInput {
         current_rate_window: RateWindowView {
@@ -199,7 +204,10 @@ fn rate_limit_exceed_above_max_count_denied() {
     let mut policy_r = relaxed_policy();
     policy_r.rate_limit.per_class.insert(
         OpClass::Reveals,
-        RateLimitEntry { max_count: 2, window_seconds: 60 },
+        RateLimitEntry {
+            max_count: 2,
+            window_seconds: 60,
+        },
     );
     let decision = PolicyEvaluator::evaluate(&policy_r, &input);
     assert!(decision.is_deny());
@@ -252,7 +260,10 @@ fn reveal_denied_master_switch_off() {
     let decision = PolicyEvaluator::evaluate(&policy, &input);
     assert!(decision.is_deny());
 
-    assert_eq!(decision.denial_code(), Some(DenialCode::AdministrativeDisabled));
+    assert_eq!(
+        decision.denial_code(),
+        Some(DenialCode::AdministrativeDisabled)
+    );
 }
 
 #[test]
@@ -262,7 +273,10 @@ fn reveal_denied_no_slash_command() {
     let decision = PolicyEvaluator::evaluate(&policy, &input);
     assert!(decision.is_deny());
 
-    assert_eq!(decision.denial_code(), Some(DenialCode::SlashCommandMissing));
+    assert_eq!(
+        decision.denial_code(),
+        Some(DenialCode::SlashCommandMissing)
+    );
 }
 
 #[test]
@@ -332,7 +346,9 @@ fn sensitivity_high_requires_oob_denied_without() {
 #[test]
 fn sensitivity_high_with_oob_allowed() {
     let mut policy = relaxed_policy();
-    policy.device_policy = DevicePolicy { required_class: CompanionDeviceClass::Software };
+    policy.device_policy = DevicePolicy {
+        required_class: CompanionDeviceClass::Software,
+    };
     let input = PolicyDecisionInput {
         bound_device_class: CompanionDeviceClass::Software,
         ..reveal_input_with(true, true, Sensitivity::High)
@@ -361,7 +377,9 @@ fn sensitivity_medium_at_medium_threshold_with_oob_allowed() {
         require_oob_above: Sensitivity::Medium,
         require_slash_command: false,
     };
-    policy.device_policy = DevicePolicy { required_class: CompanionDeviceClass::Software };
+    policy.device_policy = DevicePolicy {
+        required_class: CompanionDeviceClass::Software,
+    };
     let input = PolicyDecisionInput {
         bound_device_class: CompanionDeviceClass::Software,
         ..reveal_input_with(true, true, Sensitivity::Medium)
@@ -410,10 +428,7 @@ fn tags_required_key_present_allowed() {
         allowed_keys: vec![],
         forbidden_values: vec![],
     };
-    let input = put_input(
-        vec!["env:prod".parse().unwrap()],
-        Sensitivity::Low,
-    );
+    let input = put_input(vec!["env:prod".parse().unwrap()], Sensitivity::Low);
     assert!(PolicyEvaluator::evaluate(&policy, &input).is_allow());
 }
 
@@ -421,10 +436,7 @@ fn tags_required_key_present_allowed() {
 fn tags_high_sensitivity_missing_env_denied() {
     let mut policy = balanced_policy();
     policy.tags_rules = TagsRules::default_empty();
-    let input = put_input(
-        vec!["project:acme".parse().unwrap()],
-        Sensitivity::High,
-    );
+    let input = put_input(vec!["project:acme".parse().unwrap()], Sensitivity::High);
     assert!(PolicyEvaluator::evaluate(&policy, &input).is_deny());
 }
 
@@ -436,10 +448,7 @@ fn tags_forbidden_value_denied() {
         allowed_keys: vec![],
         forbidden_values: vec![(merkle_types::TagKey::Env, "none".to_owned())],
     };
-    let input = put_input(
-        vec!["env:none".parse().unwrap()],
-        Sensitivity::Low,
-    );
+    let input = put_input(vec!["env:none".parse().unwrap()], Sensitivity::Low);
     assert!(PolicyEvaluator::evaluate(&policy, &input).is_deny());
 }
 
@@ -500,7 +509,12 @@ fn unseal_required_unsealing_allows_doctor() {
 #[test]
 fn unseal_required_shutting_down_denies_all() {
     let policy = balanced_policy();
-    for op in [AuditOp::List, AuditOp::Unseal, AuditOp::Doctor, AuditOp::Reveal] {
+    for op in [
+        AuditOp::List,
+        AuditOp::Unseal,
+        AuditOp::Doctor,
+        AuditOp::Reveal,
+    ] {
         let input = PolicyDecisionInput {
             vault_state: SealedState::ShuttingDown,
             ..base_input(op)
@@ -542,7 +556,10 @@ fn device_class_software_denied_on_secure_enclave_policy() {
     let decision = PolicyEvaluator::evaluate(&policy, &input);
     assert!(decision.is_deny());
 
-    assert_eq!(decision.denial_code(), Some(DenialCode::DeviceClassInsufficient));
+    assert_eq!(
+        decision.denial_code(),
+        Some(DenialCode::DeviceClassInsufficient)
+    );
 }
 
 #[test]

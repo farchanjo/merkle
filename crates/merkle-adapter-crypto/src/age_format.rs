@@ -5,8 +5,8 @@
 
 use std::io::{Read, Write};
 
-use merkle_ports::{AgeIdentity, AgeRecipient};
 use merkle_ports::error::CryptoError;
+use merkle_ports::{AgeIdentity, AgeRecipient};
 
 /// Encrypt `plaintext` for each `recipient` and return the binary age ciphertext.
 ///
@@ -51,26 +51,22 @@ pub(crate) fn encrypt(
 /// # Errors
 ///
 /// Returns [`CryptoError::Age`] on parse or decryption failures.
-pub(crate) fn decrypt(
-    identity: &AgeIdentity,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>, CryptoError> {
+pub(crate) fn decrypt(identity: &AgeIdentity, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let id: age::x25519::Identity = identity
         .0
         .parse()
         .map_err(|e| CryptoError::Age(format!("invalid identity: {e}")))?;
 
-    let decryptor =
-        match age::Decryptor::new(ciphertext)
-            .map_err(|e| CryptoError::Age(format!("decryptor creation failed: {e}")))?
-        {
-            age::Decryptor::Recipients(d) => d,
-            age::Decryptor::Passphrase(_) => {
-                return Err(CryptoError::Age(
-                    "expected recipient-based age file, got passphrase-based".to_owned(),
-                ));
-            }
-        };
+    let decryptor = match age::Decryptor::new(ciphertext)
+        .map_err(|e| CryptoError::Age(format!("decryptor creation failed: {e}")))?
+    {
+        age::Decryptor::Recipients(d) => d,
+        age::Decryptor::Passphrase(_) => {
+            return Err(CryptoError::Age(
+                "expected recipient-based age file, got passphrase-based".to_owned(),
+            ));
+        }
+    };
 
     let mut output = Vec::new();
     let mut reader = decryptor

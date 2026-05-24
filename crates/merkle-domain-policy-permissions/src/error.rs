@@ -55,14 +55,18 @@ pub enum PolicyError {
     },
 
     /// No rate-limit entry is configured for the given class (closed-policy deny).
-    #[error("no rate-limit policy entry for op_class '{class}'; closed policy denies the operation")]
+    #[error(
+        "no rate-limit policy entry for op_class '{class}'; closed policy denies the operation"
+    )]
     RateLimitNotConfigured {
         /// The operation class with no configured entry.
         class: String,
     },
 
     /// The observed window size does not match the policy window.
-    #[error("window mismatch for op_class '{class}': caller reports {observed}s but policy requires {expected}s")]
+    #[error(
+        "window mismatch for op_class '{class}': caller reports {observed}s but policy requires {expected}s"
+    )]
     RateLimitWindowMismatch {
         /// The operation class with mismatched windows.
         class: String,

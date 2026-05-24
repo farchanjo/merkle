@@ -21,7 +21,7 @@ use anyhow::Context as _;
 use crate::cli::PutArgs;
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle put`.
 pub async fn run(
@@ -42,12 +42,11 @@ pub async fn run(
         let trimmed = String::from_utf8_lossy(&payload_raw).trim().to_owned();
         (trimmed, "base64")
     } else {
-        let s = String::from_utf8(payload_raw)
-            .map_err(|_| {
-                CliError::Other(anyhow::anyhow!(
-                    "stdin contains non-UTF-8 bytes. Use --base64 for binary secrets."
-                ))
-            })?;
+        let s = String::from_utf8(payload_raw).map_err(|_| {
+            CliError::Other(anyhow::anyhow!(
+                "stdin contains non-UTF-8 bytes. Use --base64 for binary secrets."
+            ))
+        })?;
         (s.trim_end().to_owned(), "utf8")
     };
 
@@ -104,9 +103,7 @@ pub async fn run(
 /// - `vault://<ns>/<cat>/<name>`
 /// - `<ns>/<cat>/<name>`
 pub fn parse_handle(handle: &str) -> Result<(String, String, String), CliError> {
-    let stripped = handle
-        .strip_prefix("vault://")
-        .unwrap_or(handle);
+    let stripped = handle.strip_prefix("vault://").unwrap_or(handle);
 
     let parts: Vec<&str> = stripped.splitn(3, '/').collect();
     if parts.len() != 3 {
@@ -114,7 +111,11 @@ pub fn parse_handle(handle: &str) -> Result<(String, String, String), CliError> 
             "invalid handle '{handle}': expected vault://<ns>/<category>/<name>"
         )));
     }
-    Ok((parts[0].to_owned(), parts[1].to_owned(), parts[2].to_owned()))
+    Ok((
+        parts[0].to_owned(),
+        parts[1].to_owned(),
+        parts[2].to_owned(),
+    ))
 }
 
 /// Parse `key:value` tag strings into a JSON array.
@@ -144,15 +145,16 @@ pub async fn resolve_namespace_id(
         .ok_or_else(|| CliError::Other(anyhow::anyhow!("invalid namespace list response")))?;
 
     for ns in items {
-        let ns_label = ns.get("label").and_then(serde_json::Value::as_str).unwrap_or("");
+        let ns_label = ns
+            .get("label")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
         if ns_label == label {
             return ns
                 .get("id")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
-                .ok_or_else(|| {
-                    CliError::Other(anyhow::anyhow!("namespace '{label}' has no id"))
-                });
+                .ok_or_else(|| CliError::Other(anyhow::anyhow!("namespace '{label}' has no id")));
         }
     }
 

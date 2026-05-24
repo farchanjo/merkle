@@ -101,10 +101,7 @@ impl VaultIdentity {
     ///
     /// Called exactly once at `merkle init`.
     #[must_use]
-    pub fn new(
-        master_key_keychain_ref: KeychainEntry,
-        recovery_pubkey: RecoveryPublicKey,
-    ) -> Self {
+    pub fn new(master_key_keychain_ref: KeychainEntry, recovery_pubkey: RecoveryPublicKey) -> Self {
         Self {
             id: UuidV7::new(),
             created_at: Rfc3339Timestamp::now(),
@@ -260,7 +257,10 @@ impl VaultIdentity {
         preconditions: UnsealPreconditions,
     ) -> Result<UnsealGuard<'_>, DomainError> {
         self.begin_unseal(preconditions)?;
-        Ok(UnsealGuard { identity: self, committed: false })
+        Ok(UnsealGuard {
+            identity: self,
+            committed: false,
+        })
     }
 
     /// Transition `Unsealed → ShuttingDown`.
@@ -520,7 +520,10 @@ mod tests {
         id.begin_unseal(ok_preconditions()).unwrap();
         id.complete_unseal(VaultRootKey::generate()).unwrap();
         let debug = format!("{id:?}");
-        assert!(debug.contains("[REDACTED]"), "VRK must be redacted in Debug");
+        assert!(
+            debug.contains("[REDACTED]"),
+            "VRK must be redacted in Debug"
+        );
     }
 
     #[test]

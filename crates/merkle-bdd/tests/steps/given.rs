@@ -84,9 +84,18 @@ mod given_keystore_marker_tests {
                    dev.fapp.merkle/master-v1; run agent with file-backed \
                    keystore fallback (Phase 9)";
         let lower = msg.to_lowercase();
-        assert!(lower.contains("keystore"), "canonical msg must mention 'keystore'");
-        assert!(lower.contains("keychain"), "canonical msg must mention 'keychain'");
-        assert!(lower.contains("persist"), "canonical msg must mention 'persist'");
+        assert!(
+            lower.contains("keystore"),
+            "canonical msg must mention 'keystore'"
+        );
+        assert!(
+            lower.contains("keychain"),
+            "canonical msg must mention 'keychain'"
+        );
+        assert!(
+            lower.contains("persist"),
+            "canonical msg must mention 'persist'"
+        );
     }
 
     #[test]
@@ -108,33 +117,22 @@ async fn given_keystore_tempdir(_world: &mut MerkleWorld) {
     // the real file/passphrase setup is encapsulated in adapter unit tests.
 }
 
-#[given(
-    expr = "a FileKeystoreAdapter opened at the temporary path with passphrase {string}"
-)]
+#[given(expr = "a FileKeystoreAdapter opened at the temporary path with passphrase {string}")]
 async fn given_file_keystore_opened(_world: &mut MerkleWorld, _passphrase: String) {
     // No-op: adapter open path exercised by `file::tests::store_retrieve_round_trip`.
 }
 
-#[given(
-    expr = "I have stored 32 bytes for service {string} account {string} using the adapter"
-)]
+#[given(expr = "I have stored 32 bytes for service {string} account {string} using the adapter")]
 async fn given_stored_32_bytes(world: &mut MerkleWorld, service: String, account: String) {
     // Store via the world's existing keychain mock — represents the adapter
     // had data persisted before the scenario branch.
-    let _ = world
-        .keychain
-        .store(&service, &account, &[0u8; 32])
-        .await;
+    let _ = world.keychain.store(&service, &account, &[0u8; 32]).await;
 }
 
 #[given(
     expr = "a MockKeychainAdapter configured to return PersistenceFailed for service {string} account {string}"
 )]
-async fn given_mock_persistence_failed(
-    world: &mut MerkleWorld,
-    service: String,
-    account: String,
-) {
+async fn given_mock_persistence_failed(world: &mut MerkleWorld, service: String, account: String) {
     world
         .keychain
         .with_persistence_failure_for(&service, &account);
@@ -896,14 +894,20 @@ async fn given_secret_with_ad(
     let path = handle_str.trim_start_matches("vault://");
     let parts: Vec<&str> = path.splitn(3, '/').collect();
     let ns_label = if parts.is_empty() { "acme" } else { parts[0] };
-    let cat_str = if parts.len() >= 2 { parts[1] } else { "password" };
+    let cat_str = if parts.len() >= 2 {
+        parts[1]
+    } else {
+        "password"
+    };
 
     let ns_id = world.ensure_namespace(ns_label).await;
     let label_parsed: NamespaceLabel = ns_label.parse().unwrap_or_else(|_| "acme".parse().unwrap());
     world.session_namespace = Some(label_parsed);
     world.session_namespace_id = Some(ns_id);
 
-    let cat: CategoryName = cat_str.parse().unwrap_or_else(|_| "password".parse().unwrap());
+    let cat: CategoryName = cat_str
+        .parse()
+        .unwrap_or_else(|_| "password".parse().unwrap());
     let cmd = PutSecretCommand {
         namespace_id: ns_id,
         handle: handle.clone(),
@@ -1086,9 +1090,7 @@ async fn given_vault_first_time(_world: &mut MerkleWorld) {
     // No additional setup needed; the background is consistent with a first boot.
 }
 
-#[given(
-    expr = "the OS Keychain does not contain any entry for service {string}"
-)]
+#[given(expr = "the OS Keychain does not contain any entry for service {string}")]
 async fn given_os_keychain_does_not_contain(world: &mut MerkleWorld, service: String) {
     use merkle_ports::Keychain as _;
     // Remove any pre-seeded entries for this service so that init scenarios
@@ -1109,9 +1111,7 @@ async fn given_sqlite_empty(_world: &mut MerkleWorld) {
     // The test world always spins up a fresh in-memory database. No-op.
 }
 
-#[given(
-    expr = "the OS Keychain already contains entry service {string} account {string}"
-)]
+#[given(expr = "the OS Keychain already contains entry service {string} account {string}")]
 async fn given_os_keychain_already_contains(
     world: &mut MerkleWorld,
     service: String,
@@ -1126,9 +1126,7 @@ async fn given_os_keychain_already_contains(
         .expect("keychain store for already-initialized state");
 }
 
-#[given(
-    expr = "the OS Keychain backend returns error {string} for write operations"
-)]
+#[given(expr = "the OS Keychain backend returns error {string} for write operations")]
 async fn given_keychain_backend_error_for_writes(world: &mut MerkleWorld, _error: String) {
     // Configure the mock to fail all store() calls.
     world.keychain.set_write_unavailable(true);
@@ -1159,16 +1157,20 @@ async fn given_keychain_error_for_service_account(
 // Unseal AEAD mismatch Given
 // ---------------------------------------------------------------------------
 
-#[given("the wrapped Vault Root Key in the database cannot be decrypted with the retrieved Master Key")]
+#[given(
+    "the wrapped Vault Root Key in the database cannot be decrypted with the retrieved Master Key"
+)]
 async fn given_vrk_cannot_decrypt(world: &mut MerkleWorld) {
     // Simulate AEAD decryption failure by injecting a Backend error that
     // unseal_vault interprets as a keychain/decryption failure.
     // The injected error causes the keychain retrieve step to return an error,
     // which unseal_vault maps to AppError::Keychain — propagated as last_error.
     use merkle_adapter_keychain::mock::InjectedError;
-    world
-        .keychain
-        .inject_error(super::KEYCHAIN_SERVICE, super::KEYCHAIN_ACCOUNT, InjectedError::Unavailable);
+    world.keychain.inject_error(
+        super::KEYCHAIN_SERVICE,
+        super::KEYCHAIN_ACCOUNT,
+        InjectedError::Unavailable,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1294,9 +1296,7 @@ async fn given_enrolled_jwt_attestation_key_short(world: &mut MerkleWorld) {
 /// passed as `signed_config_flag` in the next vault.reveal call.
 ///
 /// kid is supplied verbatim from the step expression.
-#[given(
-    expr = "the MCP client supplies a valid JWT with kid={string} matching the challenge_id"
-)]
+#[given(expr = "the MCP client supplies a valid JWT with kid={string} matching the challenge_id")]
 async fn given_valid_jwt_with_kid(world: &mut MerkleWorld, _kid: String) {
     use ed25519_dalek::Signer as _;
 

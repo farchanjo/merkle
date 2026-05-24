@@ -55,7 +55,11 @@ async fn make_app_ctx() -> Arc<AppContext> {
     // Pre-seed the mock keychain so UnsealVaultCommand can load the master key.
     let test_master_key = [0x42u8; 32];
     keychain
-        .store(keychain_ref.service(), keychain_ref.account(), &test_master_key)
+        .store(
+            keychain_ref.service(),
+            keychain_ref.account(),
+            &test_master_key,
+        )
         .await
         .expect("seed test master key");
 
@@ -237,7 +241,9 @@ async fn test_agent_status_returns_200() {
     let json: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON body");
     // agent_version comes from env!("CARGO_PKG_VERSION") — check it is non-empty.
     assert!(
-        json["agent_version"].as_str().is_some_and(|v| !v.is_empty()),
+        json["agent_version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty()),
         "agent_version should be a non-empty string, got: {}",
         json["agent_version"]
     );
@@ -270,8 +276,7 @@ async fn test_reveal_without_slash_command_returns_403() {
         String::from_utf8_lossy(&resp_body)
     );
 
-    let json: serde_json::Value =
-        serde_json::from_slice(&resp_body).expect("valid JSON body");
+    let json: serde_json::Value = serde_json::from_slice(&resp_body).expect("valid JSON body");
     assert_eq!(
         json["type"], "operator_confirmation_required",
         "wrong problem type: {json}"
@@ -286,8 +291,7 @@ async fn test_close_session_route_exists() {
     let (_dir, sock) = spawn_server(ctx).await;
 
     let session_id = "00000000-0000-7000-8000-000000000001";
-    let (status, body) =
-        http(&sock, "DELETE", &format!("/v1/sessions/{session_id}"), None).await;
+    let (status, body) = http(&sock, "DELETE", &format!("/v1/sessions/{session_id}"), None).await;
 
     // Phase 6: close_session is a no-op 200; 404 would mean the route is missing.
     assert_eq!(
@@ -357,7 +361,11 @@ async fn test_create_session_returns_201() {
 
     // session_id must be a non-empty UUID-shaped string.
     assert!(!session_id.is_empty(), "session_id is empty");
-    assert_eq!(session_id.len(), 36, "session_id not UUID length: {session_id}");
+    assert_eq!(
+        session_id.len(),
+        36,
+        "session_id not UUID length: {session_id}"
+    );
 }
 
 /// 7. `GET /v1/namespaces?label=test-ns` finds the created namespace by label.
@@ -384,7 +392,10 @@ async fn test_list_namespaces_by_label_after_create_session() {
         json["items"].is_array(),
         "expected items array in response, got: {json}"
     );
-    assert_eq!(json["total"].as_u64().unwrap_or(0), json["items"].as_array().map_or(0, |a| a.len() as u64));
+    assert_eq!(
+        json["total"].as_u64().unwrap_or(0),
+        json["items"].as_array().map_or(0, |a| a.len() as u64)
+    );
 }
 
 /// 8. PUT secret → GET secret round-trip returns matching name.
@@ -415,7 +426,10 @@ async fn test_put_and_get_secret_round_trip() {
     );
     let json: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
     let items = json["items"].as_array().expect("items array");
-    assert!(!items.is_empty(), "expected at least one secret in namespace");
+    assert!(
+        !items.is_empty(),
+        "expected at least one secret in namespace"
+    );
     assert_eq!(items[0]["name"], "my-api-key");
 }
 

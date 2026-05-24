@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use crate::cli::AuditArgs;
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_value, OutputFormat};
+use crate::output::{OutputFormat, print_value};
 
 /// Run `merkle audit`.
 pub async fn run(

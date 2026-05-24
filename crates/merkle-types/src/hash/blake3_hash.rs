@@ -141,10 +141,7 @@ mod tests {
 
     #[test]
     fn genesis_is_all_zeroes() {
-        assert_eq!(
-            GENESIS.to_string(),
-            format!("blake3:{}", "0".repeat(64))
-        );
+        assert_eq!(GENESIS.to_string(), format!("blake3:{}", "0".repeat(64)));
     }
 
     #[test]

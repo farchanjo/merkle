@@ -195,9 +195,7 @@ async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
                             }
                         }
                         if !k.is_empty() {
-                            if let (Ok(tk), Ok(tv)) =
-                                (k.parse::<TagKey>(), v.parse::<TagValue>())
-                            {
+                            if let (Ok(tk), Ok(tv)) = (k.parse::<TagKey>(), v.parse::<TagValue>()) {
                                 tags.push(Tag { key: tk, value: tv });
                             }
                         }
@@ -211,7 +209,8 @@ async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
     // If there is a `value` field but no `value_format`, that is a schema
     // validation error — the spec requires value_format when value is present.
     if has_value_field && !has_value_format_field {
-        world.last_error = Some("schema_validation_failed: missing required field value_format".into());
+        world.last_error =
+            Some("schema_validation_failed: missing required field value_format".into());
         world.last_handle = None;
         return;
     }
@@ -265,8 +264,17 @@ async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
             let err_str = e.to_string();
             // Write synthetic rejected_policy audit entry when high-sensitivity
             // policy rejects the put (env tag required but missing).
-            if err_str.contains("env") || err_str.contains("tag") || err_str.contains("policy") || err_str.contains("sensitivity") {
-                world.write_synthetic_audit(merkle_types::AuditOp::Put, merkle_types::AuditOutcome::Deny).await;
+            if err_str.contains("env")
+                || err_str.contains("tag")
+                || err_str.contains("policy")
+                || err_str.contains("sensitivity")
+            {
+                world
+                    .write_synthetic_audit(
+                        merkle_types::AuditOp::Put,
+                        merkle_types::AuditOutcome::Deny,
+                    )
+                    .await;
             }
             world.last_error = Some(err_str);
             world.last_handle = None;
@@ -970,7 +978,9 @@ async fn when_execute_unseal_first(world: &mut MerkleWorld) {
             world.last_error = Some(e.to_string());
             // Write synthetic audit entry — unseal_vault only audits on success,
             // so we write the error entry here for BDD audit assertions.
-            world.write_synthetic_audit(AuditOp::Unseal, AuditOutcome::Error).await;
+            world
+                .write_synthetic_audit(AuditOp::Unseal, AuditOutcome::Error)
+                .await;
         }
     }
 }
@@ -992,7 +1002,9 @@ async fn when_execute_unseal_second(world: &mut MerkleWorld) {
         Err(e) => {
             world.last_error = Some(e.to_string());
             // Write synthetic audit entry for the second failed attempt.
-            world.write_synthetic_audit(AuditOp::Unseal, AuditOutcome::Error).await;
+            world
+                .write_synthetic_audit(AuditOp::Unseal, AuditOutcome::Error)
+                .await;
         }
     }
 }
@@ -1009,7 +1021,10 @@ async fn when_post_init_with_body(world: &mut MerkleWorld, step: &Step) {
     // Check whether the vault keychain already has an entry (409 path).
     match world
         .keychain
-        .retrieve(crate::steps::KEYCHAIN_SERVICE, crate::steps::KEYCHAIN_ACCOUNT)
+        .retrieve(
+            crate::steps::KEYCHAIN_SERVICE,
+            crate::steps::KEYCHAIN_ACCOUNT,
+        )
         .await
     {
         Ok(_existing) => {
@@ -1048,7 +1063,12 @@ async fn when_post_init_with_body(world: &mut MerkleWorld, step: &Step) {
                 world.init_recovery_key =
                     Some("age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpq".into());
                 // Write synthetic audit entry for the successful init.
-                world.write_synthetic_audit(merkle_types::AuditOp::Init, merkle_types::AuditOutcome::Allow).await;
+                world
+                    .write_synthetic_audit(
+                        merkle_types::AuditOp::Init,
+                        merkle_types::AuditOutcome::Allow,
+                    )
+                    .await;
             } else {
                 world.last_error = Some("keychain_unavailable".into());
                 world.init_http_status = 503;
@@ -1126,23 +1146,20 @@ async fn when_reveal_with_signed_config_flag_inner(world: &mut MerkleWorld) {
     // When `last_handle` is None (no explicit prior vault.put in this scenario),
     // fall back to the medium-sensitivity deploy token from the Background table
     // that is always seeded for reveal_with_oob.feature scenarios.
-    let handle = world
-        .last_handle
-        .clone()
-        .unwrap_or_else(|| {
-            let ns = world
-                .session_namespace
-                .as_ref()
-                .map_or_else(|| "acme-backend".to_owned(), |l| l.as_str().to_owned());
-            // Use the deploy-token-prod handle seeded by the Background.
-            format!("vault://{ns}/token/deploy-token-prod")
-                .parse::<Handle>()
-                .unwrap_or_else(|_| {
-                    "vault://acme-backend/token/deploy-token-prod"
-                        .parse()
-                        .expect("static handle")
-                })
-        });
+    let handle = world.last_handle.clone().unwrap_or_else(|| {
+        let ns = world
+            .session_namespace
+            .as_ref()
+            .map_or_else(|| "acme-backend".to_owned(), |l| l.as_str().to_owned());
+        // Use the deploy-token-prod handle seeded by the Background.
+        format!("vault://{ns}/token/deploy-token-prod")
+            .parse::<Handle>()
+            .unwrap_or_else(|_| {
+                "vault://acme-backend/token/deploy-token-prod"
+                    .parse()
+                    .expect("static handle")
+            })
+    });
 
     let stored_sensitivity = world
         .app_ctx

@@ -31,12 +31,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use merkle_domain_access_mediation as am;
 use merkle_domain_access_mediation::oob::resolution::OobResolution;
-use merkle_ports::error::OobError;
 use merkle_ports::OobNotifier;
+use merkle_ports::error::OobError;
 use merkle_types::ChallengeId;
-use tracing::{debug, warn};
 #[cfg(feature = "localhost-confirm-real")]
 use tracing::info;
+use tracing::{debug, warn};
 
 use crate::desktop_notif::DEFAULT_LOCALHOST_PORT;
 use crate::pending::PendingChallengeRegistry;
@@ -166,13 +166,12 @@ h1{{color:{color};}}</style></head>
             _ => None,
         };
 
-        let resolution =
-            OobResolution::new(id, outcome, authorized_at, None).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("resolution build error: {e}"),
-                )
-            })?;
+        let resolution = OobResolution::new(id, outcome, authorized_at, None).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("resolution build error: {e}"),
+            )
+        })?;
 
         info!(%id, ?outcome, "Localhost confirm: recording resolution");
         registry.resolve(id, resolution);
@@ -330,7 +329,10 @@ impl OobNotifier for LocalhostConfirmChannel {
             // Spawn the axum server if not already running.
             {
                 let mut guard = self.server_handle.lock().await;
-                if guard.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
+                if guard
+                    .as_ref()
+                    .is_none_or(tokio::task::JoinHandle::is_finished)
+                {
                     let handle = real::spawn_server(&self.pending, self.port);
                     *guard = Some(handle);
                 }
@@ -540,11 +542,7 @@ mod tests {
 
         match resp {
             Ok(r) => {
-                assert!(
-                    r.status().is_success(),
-                    "expected 200, got {}",
-                    r.status()
-                );
+                assert!(r.status().is_success(), "expected 200, got {}", r.status());
             }
             Err(e) => panic!("HTTP POST failed: {e}"),
         }
@@ -610,7 +608,9 @@ mod tests {
 
     // ---- helpers ----
 
-    fn make_challenge(id: ChallengeId) -> merkle_domain_access_mediation::oob::challenge::OobChallenge {
+    fn make_challenge(
+        id: ChallengeId,
+    ) -> merkle_domain_access_mediation::oob::challenge::OobChallenge {
         use merkle_types::{Handle, NamespaceId, OobChannel, Sensitivity};
 
         merkle_domain_access_mediation::oob::challenge::OobChallenge {
@@ -618,7 +618,9 @@ mod tests {
             namespace_id: "018f4c1a-0000-7000-8000-000000000010"
                 .parse::<NamespaceId>()
                 .expect("ns id"),
-            secret_handle: "vault://prod/ssh-key/bastion".parse::<Handle>().expect("handle"),
+            secret_handle: "vault://prod/ssh-key/bastion"
+                .parse::<Handle>()
+                .expect("handle"),
             sensitivity: Sensitivity::High,
             oob_channel: OobChannel::LocalhostConfirm,
             expires_at: merkle_types::Rfc3339Timestamp::now(),

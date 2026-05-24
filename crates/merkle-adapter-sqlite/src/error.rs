@@ -20,9 +20,7 @@ impl From<AdapterError> for StorageError {
     fn from(e: AdapterError) -> Self {
         match e {
             AdapterError::Sqlx(sqlx::Error::RowNotFound) => StorageError::NotFound,
-            AdapterError::Sqlx(sqlx::Error::Database(db))
-                if db.message().contains("UNIQUE") =>
-            {
+            AdapterError::Sqlx(sqlx::Error::Database(db)) if db.message().contains("UNIQUE") => {
                 StorageError::Conflict(db.message().to_owned())
             }
             AdapterError::Sqlx(sqlx::Error::Database(db)) => {

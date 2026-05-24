@@ -1,7 +1,9 @@
 //! `PairDeviceCommand` — enroll a new Companion Device.
 
 use merkle_domain_access_mediation::companion_device::CompanionDevice;
-use merkle_types::{AuditOp, AuditOutcome, CompanionDeviceClass, NamespaceId, Rfc3339Timestamp, UuidV7};
+use merkle_types::{
+    AuditOp, AuditOutcome, CompanionDeviceClass, NamespaceId, Rfc3339Timestamp, UuidV7,
+};
 use tracing::info;
 
 use crate::{AppContext, AppError};

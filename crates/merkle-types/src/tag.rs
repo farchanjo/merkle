@@ -20,9 +20,8 @@ use crate::ParseError;
 /// The CUE pattern is `^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$` which requires at
 /// least 2 chars. We accept 1-char values separately for usability (single-char
 /// env names like "a" are valid).
-static TAG_VALUE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-z0-9]([a-z0-9\-]{0,62}[a-z0-9])?$").expect("valid regex")
-});
+static TAG_VALUE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z0-9]([a-z0-9\-]{0,62}[a-z0-9])?$").expect("valid regex"));
 
 // ---------------------------------------------------------------------------
 // TagKey
@@ -262,10 +261,7 @@ mod tests {
     #[test]
     fn tag_value_rejects_invalid() {
         for v in ["-leading", "Uppercase", "has space", ""] {
-            assert!(
-                v.parse::<TagValue>().is_err(),
-                "should reject: {v:?}"
-            );
+            assert!(v.parse::<TagValue>().is_err(), "should reject: {v:?}");
         }
     }
 

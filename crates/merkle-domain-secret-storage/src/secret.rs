@@ -321,7 +321,10 @@ mod tests {
             PublicMetadata::default(),
             v,
         );
-        assert!(matches!(result, Err(DomainError::HandleCategoryMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(DomainError::HandleCategoryMismatch { .. })
+        ));
     }
 
     #[test]
@@ -356,10 +359,7 @@ mod tests {
             PublicMetadata::new(true), // expose = true
             v,
         );
-        assert!(matches!(
-            result,
-            Err(DomainError::ExposeOnHighSensitivity)
-        ));
+        assert!(matches!(result, Err(DomainError::ExposeOnHighSensitivity)));
     }
 
     #[test]

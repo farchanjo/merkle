@@ -11,17 +11,14 @@
 use std::time::Duration;
 
 use merkle_domain_access_mediation::{
-    companion_device::CompanionDevice,
-    decision,
-    operator_confirmation::OperatorConfirmation,
-    oob::challenge::OobChallenge,
-    reveal_authorization::RevealAuthorization,
+    companion_device::CompanionDevice, decision, oob::challenge::OobChallenge,
+    operator_confirmation::OperatorConfirmation, reveal_authorization::RevealAuthorization,
 };
 use merkle_domain_identity::keychain_entry::KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION;
 use merkle_domain_identity::keychain_entry::KEYCHAIN_SERVICE;
 use merkle_types::{
-    AuditOp, AuditOutcome, ChallengeId, CompanionDeviceClass, Handle, NamespaceId,
-    OobChannel, Rfc3339Timestamp, SecurityProfile, Sensitivity,
+    AuditOp, AuditOutcome, ChallengeId, CompanionDeviceClass, Handle, NamespaceId, OobChannel,
+    Rfc3339Timestamp, SecurityProfile, Sensitivity,
 };
 use tracing::info;
 
@@ -121,16 +118,22 @@ impl RevealSecretCommand {
                     .keychain
                     .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION)
                     .await
-                    .map_err(|_| AppError::PolicyDenied("invalid_signed_config_flag: key_not_enrolled".into()))?;
+                    .map_err(|_| {
+                        AppError::PolicyDenied(
+                            "invalid_signed_config_flag: key_not_enrolled".into(),
+                        )
+                    })?;
 
-                let key_arr: [u8; 32] = pubkey_bytes
-                    .try_into()
-                    .map_err(|_| AppError::PolicyDenied("invalid_signed_config_flag: key malformed".into()))?;
+                let key_arr: [u8; 32] = pubkey_bytes.try_into().map_err(|_| {
+                    AppError::PolicyDenied("invalid_signed_config_flag: key malformed".into())
+                })?;
                 let operator_pubkey = Ed25519PublicKey(key_arr);
 
-                let challenge_id = self
-                    .challenge_id
-                    .ok_or_else(|| AppError::PolicyDenied("invalid_signed_config_flag: missing challenge_id".into()))?;
+                let challenge_id = self.challenge_id.ok_or_else(|| {
+                    AppError::PolicyDenied(
+                        "invalid_signed_config_flag: missing challenge_id".into(),
+                    )
+                })?;
 
                 let flag = crate::jwt_verifier::SignedConfigFlag {
                     jwt: scf.jwt.clone(),
@@ -179,9 +182,10 @@ impl RevealSecretCommand {
                 .sensitivity(self.sensitivity)
                 .denial_reason(reason.clone())
                 .caller_program("merkle-agent");
-                let (entry, pinned) =
-                    merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                        .map_err(|e| AppError::Domain(e.to_string()))?;
+                let (entry, pinned) = merkle_domain_audit_compliance::AuditWriter::append(
+                    &mut log, params, &hmac_key,
+                )
+                .map_err(|e| AppError::Domain(e.to_string()))?;
                 drop(log);
                 ctx.storage.append_audit_entry(&entry).await?;
                 ctx.storage.update_pinned_head(&pinned).await?;
@@ -221,7 +225,9 @@ impl RevealSecretCommand {
 
             // Verify that the resolution is an approval.
             if resolution.outcome != merkle_types::OobChallengeOutcome::Approved {
-                return Err(AppError::PolicyDenied("oob resolution denied or expired".into()));
+                return Err(AppError::PolicyDenied(
+                    "oob resolution denied or expired".into(),
+                ));
             }
         }
 
@@ -244,9 +250,9 @@ impl RevealSecretCommand {
         let mut cipher_with_tag = blob.ciphertext.clone();
         cipher_with_tag.extend_from_slice(&blob.aead_tag);
 
-        let plaintext = ctx
-            .crypto
-            .aead_decrypt(&self.dek_bytes, &blob.nonce, &cipher_with_tag, &aad)?;
+        let plaintext =
+            ctx.crypto
+                .aead_decrypt(&self.dek_bytes, &blob.nonce, &cipher_with_tag, &aad)?;
         aad.clear(); // defensive; aad is just the handle URI bytes
 
         // 6. Audit success.

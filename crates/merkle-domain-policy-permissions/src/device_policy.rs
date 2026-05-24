@@ -33,7 +33,9 @@ pub struct DevicePolicy {
 impl Default for DevicePolicy {
     /// Default class is `SecureEnclave` per ADR-0020.
     fn default() -> Self {
-        Self { required_class: CompanionDeviceClass::SecureEnclave }
+        Self {
+            required_class: CompanionDeviceClass::SecureEnclave,
+        }
     }
 }
 

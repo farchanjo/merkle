@@ -5,7 +5,7 @@
 use crate::cli::{DeviceAction, DeviceArgs};
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle device`.
 pub async fn run(

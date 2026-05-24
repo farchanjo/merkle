@@ -115,7 +115,10 @@ impl PrivateBlob {
 impl fmt::Debug for PrivateBlob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PrivateBlob")
-            .field("ciphertext", &format_args!("<{} bytes>", self.ciphertext.len()))
+            .field(
+                "ciphertext",
+                &format_args!("<{} bytes>", self.ciphertext.len()),
+            )
             .field("nonce", &"<24 bytes>")
             .field("aead_tag", &"<16 bytes>")
             .field("associated_data_len", &self.associated_data.len())
@@ -139,13 +142,7 @@ mod tests {
 
     fn make_blob(handle: &Handle) -> PrivateBlob {
         let ad = handle.to_string().into_bytes();
-        PrivateBlob::new(
-            vec![0xAB; 32],
-            [0u8; 24],
-            [0u8; 16],
-            ad,
-            1,
-        )
+        PrivateBlob::new(vec![0xAB; 32], [0u8; 24], [0u8; 16], ad, 1)
     }
 
     #[test]
@@ -173,8 +170,14 @@ mod tests {
         let blob = make_blob(&handle);
         let debug = format!("{blob:?}");
         // The raw ciphertext bytes (0xAB = 171 decimal) must NOT appear verbatim.
-        assert!(!debug.contains("171, 171"), "ciphertext leaked in Debug output");
-        assert!(debug.contains("32 bytes"), "ciphertext length should appear");
+        assert!(
+            !debug.contains("171, 171"),
+            "ciphertext leaked in Debug output"
+        );
+        assert!(
+            debug.contains("32 bytes"),
+            "ciphertext length should appear"
+        );
     }
 
     #[test]

@@ -33,8 +33,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use merkle_domain_access_mediation as am;
 use merkle_domain_access_mediation::oob::resolution::OobResolution;
-use merkle_ports::error::OobError;
 use merkle_ports::OobNotifier;
+use merkle_ports::error::OobError;
 use merkle_types::{ChallengeId, OobChallengeOutcome, Rfc3339Timestamp};
 use parking_lot::Mutex;
 use tracing::{debug, warn};
@@ -299,10 +299,7 @@ impl OobNotifier for TerminalPromptChannel {
 fn open_tty_write() -> Box<dyn io::Write + Send> {
     #[cfg(unix)]
     {
-        if let Ok(f) = std::fs::OpenOptions::new()
-            .write(true)
-            .open("/dev/tty")
-        {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
             return Box::new(f);
         }
     }
@@ -350,7 +347,10 @@ mod tests {
     #[tokio::test]
     async fn auto_deny_resolves_immediately() {
         let channel = TerminalPromptChannel::new_auto_deny_for_test();
-        assert!(channel.available().await, "should be available in auto-deny mode");
+        assert!(
+            channel.available().await,
+            "should be available in auto-deny mode"
+        );
 
         let challenge = make_challenge(cid(0x01));
         let device = make_device();
@@ -417,7 +417,10 @@ mod tests {
         let challenge = make_challenge(cid(0x20));
         let device = make_device();
 
-        channel.dispatch(&challenge, &device).await.expect("dispatch ok");
+        channel
+            .dispatch(&challenge, &device)
+            .await
+            .expect("dispatch ok");
 
         let res = channel
             .await_resolution(cid(0x20), Duration::from_secs(1))
@@ -434,7 +437,9 @@ mod tests {
 
     // ---- helpers ----
 
-    fn make_challenge(id: ChallengeId) -> merkle_domain_access_mediation::oob::challenge::OobChallenge {
+    fn make_challenge(
+        id: ChallengeId,
+    ) -> merkle_domain_access_mediation::oob::challenge::OobChallenge {
         use merkle_types::{Handle, NamespaceId, OobChannel, Sensitivity};
 
         merkle_domain_access_mediation::oob::challenge::OobChallenge {
@@ -442,7 +447,9 @@ mod tests {
             namespace_id: "018f4c1a-0000-7000-8000-000000000010"
                 .parse::<NamespaceId>()
                 .expect("ns id"),
-            secret_handle: "vault://prod/ssh-key/bastion".parse::<Handle>().expect("handle"),
+            secret_handle: "vault://prod/ssh-key/bastion"
+                .parse::<Handle>()
+                .expect("handle"),
             sensitivity: Sensitivity::High,
             oob_channel: OobChannel::TerminalPrompt,
             expires_at: merkle_types::Rfc3339Timestamp::now(),

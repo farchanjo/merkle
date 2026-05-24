@@ -69,11 +69,7 @@ mod tests {
 
     #[test]
     fn serde_round_trip() {
-        let a = BackupArtifact::new(
-            PathBuf::from("/tmp/test.merkle.age"),
-            1,
-            dummy_tag(),
-        );
+        let a = BackupArtifact::new(PathBuf::from("/tmp/test.merkle.age"), 1, dummy_tag());
         let json = serde_json::to_string(&a).expect("serialize");
         let b: BackupArtifact = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(a, b);

@@ -5,14 +5,9 @@ use serde::{Deserialize, Serialize};
 use merkle_types::{NamespaceId, Rfc3339Timestamp, SecurityProfile, UuidV7};
 
 use crate::{
-    allowed_consumers::AllowedConsumers,
-    argon2id_floor::Argon2idMinFloor,
-    cross_namespace::CrossNamespacePolicy,
-    device_policy::DevicePolicy,
-    rate_limit::RateLimit,
-    retention::RetentionPolicy,
-    reveal_policy::RevealPolicy,
-    tags_rules::TagsRules,
+    allowed_consumers::AllowedConsumers, argon2id_floor::Argon2idMinFloor,
+    cross_namespace::CrossNamespacePolicy, device_policy::DevicePolicy, rate_limit::RateLimit,
+    retention::RetentionPolicy, reveal_policy::RevealPolicy, tags_rules::TagsRules,
     unseal_preconditions::UnsealPreconditionsPolicy,
 };
 

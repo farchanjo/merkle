@@ -10,7 +10,7 @@ use crate::cli::GetArgs;
 use crate::client::CompanionSocketClient;
 use crate::commands::put::resolve_namespace_id;
 use crate::error::CliError;
-use crate::output::{print_value, OutputFormat};
+use crate::output::{OutputFormat, print_value};
 
 /// Run `merkle get`.
 pub async fn run(

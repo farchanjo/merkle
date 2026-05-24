@@ -94,8 +94,7 @@ impl UnsealPreconditionsPolicy {
         // Rule 2: entropy required for all profiles.
         if self.all_profiles_require_entropy && !input.entropy_seeded {
             return Err(PolicyError::UnsealPreconditionFailed {
-                reason:
-                    "entropy source not seeded: OsRng failed to initialise".to_owned(),
+                reason: "entropy source not seeded: OsRng failed to initialise".to_owned(),
             });
         }
 
@@ -105,9 +104,7 @@ impl UnsealPreconditionsPolicy {
             && !input.keychain_reachable
         {
             return Err(PolicyError::UnsealPreconditionFailed {
-                reason: format!(
-                    "keychain not reachable in '{profile}' profile"
-                ),
+                reason: format!("keychain not reachable in '{profile}' profile"),
             });
         }
 

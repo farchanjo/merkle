@@ -47,14 +47,12 @@ pub(crate) async fn get_namespace_policy(
 ) -> Result<Option<NamespacePolicy>, StorageError> {
     let ns_blob = uuid_to_blob(namespace_id.inner());
 
-    let row = sqlx::query(
-        "SELECT policy_json FROM namespace_policies WHERE namespace_id = ?1",
-    )
-    .bind(ns_blob)
-    .fetch_optional(pool)
-    .await
-    .map_err(AdapterError::Sqlx)
-    .map_err(StorageError::from)?;
+    let row = sqlx::query("SELECT policy_json FROM namespace_policies WHERE namespace_id = ?1")
+        .bind(ns_blob)
+        .fetch_optional(pool)
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
 
     row.map(|r| row_to_namespace_policy(&r).map_err(StorageError::from))
         .transpose()

@@ -6,7 +6,6 @@
 //! - [`OobFixture`] — inject pre-recorded OOB resolutions via a temp file.
 #![allow(dead_code)]
 
-
 pub mod agent_handle;
 pub mod cli;
 pub mod oob_fixture;

@@ -23,9 +23,7 @@ pub enum DomainError {
 
     /// An Argon2id parameter is below the minimum hardness floor mandated by
     /// ADR-0005.
-    #[error(
-        "argon2id parameter `{field}` is below the minimum floor: got {got}, minimum is {min}"
-    )]
+    #[error("argon2id parameter `{field}` is below the minimum floor: got {got}, minimum is {min}")]
     Argon2idBelowFloor {
         /// The parameter name (`m_cost`, `t_cost`, or `p_cost`).
         field: &'static str,

@@ -1,7 +1,6 @@
 //! [`CliRunner`] — run `merkle` CLI subcommands and capture output.
 #![allow(dead_code)]
 
-
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -43,8 +42,7 @@ impl CliOutput {
         assert!(
             found,
             "expected output to contain {fragment:?}\nstdout: {}\nstderr: {}",
-            self.stdout,
-            self.stderr,
+            self.stdout, self.stderr,
         );
         self
     }

@@ -7,7 +7,7 @@
 use crate::cli::{RestoreAction, RestoreArgs};
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle restore`.
 pub async fn run(
@@ -22,8 +22,7 @@ pub async fn run(
                 "mode": plan_args.mode,
             });
 
-            let resp: serde_json::Value =
-                client.post("/v1/backup/restore-plan", &body).await?;
+            let resp: serde_json::Value = client.post("/v1/backup/restore-plan", &body).await?;
 
             if format == OutputFormat::Human {
                 let plan_id = resp
@@ -48,8 +47,7 @@ pub async fn run(
                 },
             });
 
-            let resp: serde_json::Value =
-                client.post("/v1/backup/restore", &body).await?;
+            let resp: serde_json::Value = client.post("/v1/backup/restore", &body).await?;
 
             if format == OutputFormat::Human {
                 let secrets = resp

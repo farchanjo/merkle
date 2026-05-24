@@ -1,7 +1,7 @@
 //! X25519 key-pair generation helper.
 
-use x25519_dalek::{PublicKey, StaticSecret};
 use merkle_ports::{X25519PrivateKey, X25519PublicKey};
+use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::rng::random_32;
 

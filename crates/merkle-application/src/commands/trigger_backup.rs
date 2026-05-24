@@ -1,10 +1,7 @@
 //! `TriggerBackupCommand` — encrypt and persist a vault backup.
 
 use merkle_domain_backup_recovery::{
-    artifact::BackupArtifact,
-    backup::Backup,
-    recipient::BackupRecipient,
-    trigger::BackupTrigger,
+    artifact::BackupArtifact, backup::Backup, recipient::BackupRecipient, trigger::BackupTrigger,
 };
 use merkle_ports::AgeRecipient;
 use merkle_types::{AuditOp, AuditOutcome, HmacSignature, NamespaceId, Rfc3339Timestamp, UuidV7};
@@ -95,7 +92,10 @@ impl TriggerBackupCommand {
             self.namespace_id,
             snapshot_id,
             self.trigger,
-            [BackupRecipient::MasterPubkey, BackupRecipient::RecoveryPublicKey],
+            [
+                BackupRecipient::MasterPubkey,
+                BackupRecipient::RecoveryPublicKey,
+            ],
             artifact,
             hmac,
             size_bytes,

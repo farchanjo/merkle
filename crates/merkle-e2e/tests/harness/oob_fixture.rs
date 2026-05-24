@@ -6,7 +6,6 @@
 //! instead of waiting for a real companion device.
 #![allow(dead_code)]
 
-
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;

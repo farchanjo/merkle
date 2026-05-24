@@ -19,8 +19,7 @@ use merkle_application::{
     queries::list_backups::ListBackupsQuery,
 };
 use merkle_domain_backup_recovery::{
-    restore_mode::RestoreMode as DomainRestoreMode,
-    restore_plan::ConflictResolution,
+    restore_mode::RestoreMode as DomainRestoreMode, restore_plan::ConflictResolution,
     trigger::BackupTrigger as DomainBackupTrigger,
 };
 use merkle_ports::AgeIdentity;
@@ -64,17 +63,12 @@ pub async fn trigger_backup(
 ) -> impl IntoResponse {
     // Resolve namespace to back up.
     let Some(namespace_id) = default_namespace_id(&ctx).await else {
-        return not_implemented(
-            "trigger_backup: no namespace found; create a session first.",
-        )
-        .into_response();
+        return not_implemented("trigger_backup: no namespace found; create a session first.")
+            .into_response();
     };
 
     // Write backup artifact to a temp file in the system temp dir.
-    let artifact_path = PathBuf::from(format!(
-        "/tmp/merkle-backup-{}.age",
-        uuid::Uuid::now_v7()
-    ));
+    let artifact_path = PathBuf::from(format!("/tmp/merkle-backup-{}.age", uuid::Uuid::now_v7()));
 
     let _note = body.as_ref().and_then(|b| b.note.clone());
 
@@ -84,8 +78,10 @@ pub async fn trigger_backup(
     let cmd = TriggerBackupCommand {
         namespace_id,
         trigger: DomainBackupTrigger::Manual,
-        master_pubkey_recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfes8l7".into(),
-        recovery_pubkey_recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfes8l7".into(),
+        master_pubkey_recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfes8l7"
+            .into(),
+        recovery_pubkey_recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfes8l7"
+            .into(),
         output_path: artifact_path.clone(),
     };
 
@@ -138,11 +134,10 @@ pub async fn list_snapshots(
                 .iter()
                 .take(limit)
                 .map(|b| BackupSnapshotDto {
-                    filename: b
-                        .artifact
-                        .path
-                        .file_name()
-                        .map_or_else(|| b.snapshot_id.to_string(), |n| n.to_string_lossy().into_owned()),
+                    filename: b.artifact.path.file_name().map_or_else(
+                        || b.snapshot_id.to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    ),
                     created_at: b.created_at.inner(),
                     size_bytes: b.size_bytes,
                     namespace_count: Some(1),
@@ -220,7 +215,10 @@ pub async fn create_restore_plan(
             kind: ProblemType::HandleNotFound,
             title: "Snapshot not found".into(),
             status: 404,
-            detail: format!("No backup with filename '{}' found.", body.snapshot_filename),
+            detail: format!(
+                "No backup with filename '{}' found.",
+                body.snapshot_filename
+            ),
             instance: None,
             hint: None,
             fields: vec![],
@@ -284,8 +282,9 @@ pub async fn execute_restore(
             kind: ProblemType::OperatorConfirmationRequired,
             title: "Operator confirmation required".into(),
             status: 403,
-            detail: "Both operator_confirmation.slash_command and oob_ack must be true for restore."
-                .into(),
+            detail:
+                "Both operator_confirmation.slash_command and oob_ack must be true for restore."
+                    .into(),
             instance: None,
             hint: None,
             fields: vec![],

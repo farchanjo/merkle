@@ -53,7 +53,7 @@ pub use handle::Handle;
 pub use hash::{Blake3Hash, HmacSignature};
 pub use ids::{AuditEntryId, ChallengeId, NamespaceId, SecretId, UuidV7};
 pub use namespace::{CategoryName, NamespaceLabel, SecretName};
-pub use oob::{OobChannel, OobChallengeOutcome};
+pub use oob::{OobChallengeOutcome, OobChannel};
 pub use security_profile::SecurityProfile;
 pub use sensitivity::Sensitivity;
 pub use tag::{Tag, TagKey, TagValue};

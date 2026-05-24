@@ -18,8 +18,7 @@ use merkle_domain_audit_compliance::{
     PinnedHead,
 };
 use merkle_types::{
-    AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, NamespaceId, Rfc3339Timestamp,
-    hash::GENESIS,
+    AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, NamespaceId, Rfc3339Timestamp, hash::GENESIS,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,14 +62,16 @@ fn append_produces_correct_chain_link() {
 
     let (entry1, _) = AuditWriter::append(
         &mut log,
-        AppendParams::new(AuditOp::Put, AuditOutcome::Allow, ns)
-            .caller_program("merkle-agent"),
+        AppendParams::new(AuditOp::Put, AuditOutcome::Allow, ns).caller_program("merkle-agent"),
         &HMAC_KEY,
     )
     .expect("first append");
 
     // Genesis: prev_hash field is None, hashing uses GENESIS sentinel.
-    assert!(entry1.prev_hash.is_none(), "genesis entry must have no prev_hash");
+    assert!(
+        entry1.prev_hash.is_none(),
+        "genesis entry must have no prev_hash"
+    );
     assert_eq!(entry1.seq, 0);
 
     // Recompute current_hash manually.
@@ -113,7 +114,11 @@ fn verify_full_intact_chain() {
     let mut log = AuditLog::new();
     let pinned = fill_log(&mut log, 10);
     let result = ChainVerifier::verify_full(&log, &pinned, &HMAC_KEY);
-    assert_eq!(result.outcome, ChainOutcome::Intact, "intact chain must verify as Intact");
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::Intact,
+        "intact chain must verify as Intact"
+    );
     assert_eq!(result.entries_checked, 10);
     assert_eq!(result.anomalies_detected, 0);
 }
@@ -139,7 +144,10 @@ fn verify_full_tampered_entry_broken_at_entry() {
     let original_hash = entry1.current_hash;
 
     // Construct a fake entry with the same fields but a different op.
-    let tampered = AuditEntry { op: AuditOp::Delete, ..entry1.clone() };
+    let tampered = AuditEntry {
+        op: AuditOp::Delete,
+        ..entry1.clone()
+    };
     let tampered_canonical = tampered
         .canonical_bytes_for_hashing(&GENESIS)
         .expect("canonical");
@@ -171,7 +179,10 @@ fn verify_full_truncated_chain() {
     let result = ChainVerifier::verify_full(&truncated_log, &full_pinned, &HMAC_KEY);
     assert_eq!(
         result.outcome,
-        ChainOutcome::TruncationDetected { last_pinned_seq: 4, last_actual_seq: 2 },
+        ChainOutcome::TruncationDetected {
+            last_pinned_seq: 4,
+            last_actual_seq: 2
+        },
         "truncation must be detected when log is shorter than pinned head"
     );
 
@@ -217,8 +228,7 @@ fn query_model_filters_by_outcome() {
 
     AuditWriter::append(
         &mut log,
-        AppendParams::new(AuditOp::Get, AuditOutcome::Deny, ns)
-            .denial_reason("rejected_policy"),
+        AppendParams::new(AuditOp::Get, AuditOutcome::Deny, ns).denial_reason("rejected_policy"),
         &HMAC_KEY,
     )
     .expect("deny entry");
@@ -258,7 +268,10 @@ fn genesis_entry_has_no_prev_hash_and_seq_zero() {
     .expect("genesis");
     assert!(entry.prev_hash.is_none());
     assert_eq!(entry.seq, 0);
-    assert!(entry.hmac.is_some(), "HMAC must always be set synchronously");
+    assert!(
+        entry.hmac.is_some(),
+        "HMAC must always be set synchronously"
+    );
 }
 
 // ---------------------------------------------------------------------------

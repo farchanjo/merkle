@@ -13,7 +13,7 @@ use std::time::Duration;
 use crate::cli::RevealArgs;
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// A session_id placeholder used by CLI-initiated reveals (no MCP session).
 const CLI_SESSION_PLACEHOLDER: &str = "00000000-0000-7000-8000-000000000001";
@@ -56,7 +56,10 @@ pub async fn run(
         eprintln!("oob: Expires at {expires_at}");
         eprintln!("oob: Please acknowledge in the OOB channel, then re-run this command.");
 
-        if let Some(nonce) = value.get("request_nonce").and_then(serde_json::Value::as_str) {
+        if let Some(nonce) = value
+            .get("request_nonce")
+            .and_then(serde_json::Value::as_str)
+        {
             eprintln!("oob: Request nonce: {nonce}");
         }
 

@@ -5,8 +5,8 @@
 //! bytes to the file system. Adapters implement this trait over the platform
 //! keychain (macOS Keychain, Linux Secret Service, Windows Credential Store).
 
-use async_trait::async_trait;
 use crate::error::KeychainError;
+use async_trait::async_trait;
 
 /// Driven port for operating-system keychain operations.
 ///
@@ -17,7 +17,8 @@ pub trait Keychain: Send + Sync {
     /// Store `secret` bytes under the `(service, account)` key tuple.
     ///
     /// Overwrites any pre-existing entry with the same key tuple.
-    async fn store(&self, service: &str, account: &str, secret: &[u8]) -> Result<(), KeychainError>;
+    async fn store(&self, service: &str, account: &str, secret: &[u8])
+    -> Result<(), KeychainError>;
 
     /// Retrieve the secret bytes stored under `(service, account)`.
     ///

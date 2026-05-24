@@ -110,7 +110,6 @@ pub struct MerkleWorld {
     // -----------------------------------------------------------------------
     // JWT attestation state (ADR-0011 Amendment 6)
     // -----------------------------------------------------------------------
-
     /// Ed25519 signing key seed used for the enrolled attestation key.
     ///
     /// Set by `given_enrolled_jwt_attestation_key`. The verifier reads the
@@ -129,7 +128,6 @@ pub struct MerkleWorld {
     // -----------------------------------------------------------------------
     // port_forward MCP result state (F12 / ADR-0023)
     // -----------------------------------------------------------------------
-
     /// Session id returned by the last successful port_forward call.
     pub port_forward_session_id: Option<String>,
 
@@ -249,17 +247,12 @@ impl MerkleWorld {
     /// Used in BDD steps for commands that are scaffolded (not yet fully
     /// implemented) but whose audit contract must be verified by `then` steps.
     /// Uses a zeroed HMAC key — acceptable for tests.
-    pub async fn write_synthetic_audit(
-        &self,
-        op: AuditOp,
-        outcome: AuditOutcome,
-    ) {
+    pub async fn write_synthetic_audit(&self, op: AuditOp, outcome: AuditOutcome) {
         use merkle_domain_audit_compliance::{AppendParams, AuditWriter};
 
         let hmac_key = [0u8; 32];
         let ns_id = self.session_namespace_id.unwrap_or_default();
-        let params = AppendParams::new(op, outcome, ns_id)
-            .caller_program("merkle-bdd-synthetic");
+        let params = AppendParams::new(op, outcome, ns_id).caller_program("merkle-bdd-synthetic");
         let mut log = self.app_ctx.audit_log.write().await;
         let Ok((entry, pinned)) = AuditWriter::append(&mut log, params, &hmac_key) else {
             return;

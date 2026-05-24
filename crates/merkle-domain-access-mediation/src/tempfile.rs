@@ -93,7 +93,10 @@ mod tests {
     fn serde_skips_real_path() {
         let tf = make_tempfile();
         let json = serde_json::to_string(&tf).expect("serialize");
-        assert!(!json.contains("merkle/secret.tmp"), "path must not serialize");
+        assert!(
+            !json.contains("merkle/secret.tmp"),
+            "path must not serialize"
+        );
         // Deserialize; real_path_redacted should be default (empty PathBuf).
         let back: Tempfile = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(tf.opaque_token, back.opaque_token);

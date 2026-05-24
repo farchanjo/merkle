@@ -32,7 +32,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use tracing::instrument;
 
-use merkle_ports::{ExternalError, ExternalServices, HttpAuth, HttpRequestSpec, HttpResponse, SshExecOutput};
+use merkle_ports::{
+    ExternalError, ExternalServices, HttpAuth, HttpRequestSpec, HttpResponse, SshExecOutput,
+};
 
 /// Timeout applied to each SSH exec operation when none is configured.
 const SSH_DEFAULT_TIMEOUT: Duration = ssh::DEFAULT_TIMEOUT;

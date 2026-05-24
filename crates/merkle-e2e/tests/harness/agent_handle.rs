@@ -1,7 +1,6 @@
 //! [`AgentProcessHandle`] — spawn, wait, and gracefully kill `merkle-agent`.
 #![allow(dead_code)]
 
-
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -119,9 +118,9 @@ impl AgentProcessHandle {
             cmd.env("MERKLE_OOB_FIXTURE_PATH", fixture_path);
         }
 
-        let child = cmd.spawn().with_context(|| {
-            format!("failed to spawn merkle-agent: {}", agent_bin.display())
-        })?;
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("failed to spawn merkle-agent: {}", agent_bin.display()))?;
 
         let handle = Self {
             child,

@@ -86,13 +86,23 @@ fn check_link(
     if let Some(prev_seq) = state.last_seq {
         if entry.seq != prev_seq + 1 {
             return Err(Box::new(broken_at(
-                entry, state.last_hash, state, from_id, to_id, verified_at,
+                entry,
+                state.last_hash,
+                state,
+                from_id,
+                to_id,
+                verified_at,
             )));
         }
     }
     if entry.prev_hash != Some(state.last_hash) {
         return Err(Box::new(broken_at(
-            entry, state.last_hash, state, from_id, to_id, verified_at,
+            entry,
+            state.last_hash,
+            state,
+            from_id,
+            to_id,
+            verified_at,
         )));
     }
     Ok(())
@@ -116,7 +126,12 @@ fn check_hash(
     let recomputed = Blake3Hash::hash(&canonical);
     if recomputed != entry.current_hash {
         return Err(Box::new(broken_at(
-            entry, *prev_for_hashing, state, from_id, to_id, verified_at,
+            entry,
+            *prev_for_hashing,
+            state,
+            from_id,
+            to_id,
+            verified_at,
         )));
     }
     Ok(())
@@ -261,15 +276,18 @@ impl ChainVerifier {
                 }
             }
 
-            if let Err(r) =
-                check_hash(entry, &prev_for_hashing, &state, from_id, to_id, verified_at)
-            {
+            if let Err(r) = check_hash(
+                entry,
+                &prev_for_hashing,
+                &state,
+                from_id,
+                to_id,
+                verified_at,
+            ) {
                 return *r;
             }
 
-            if let Err(r) =
-                check_hmac(entry, hmac_key_array, &state, from_id, to_id, verified_at)
-            {
+            if let Err(r) = check_hmac(entry, hmac_key_array, &state, from_id, to_id, verified_at) {
                 return *r;
             }
 

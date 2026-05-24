@@ -73,11 +73,7 @@ impl RecoveryPublicKey {
     /// Construct a new `RecoveryPublicKey` from the age bech32 recipient and
     /// its fingerprint.
     #[must_use]
-    pub fn new(
-        identity_pubkey: String,
-        fingerprint: String,
-        created_at: Rfc3339Timestamp,
-    ) -> Self {
+    pub fn new(identity_pubkey: String, fingerprint: String, created_at: Rfc3339Timestamp) -> Self {
         Self {
             identity_pubkey,
             fingerprint,
@@ -196,8 +192,14 @@ mod tests {
     fn recovery_key_debug_redacts_bytes() {
         let key = RecoveryKey::new([0xAAu8; 32]);
         let debug = format!("{key:?}");
-        assert!(debug.contains("[REDACTED]"), "secret bytes must be redacted in Debug");
-        assert!(!debug.contains("170"), "numeric byte values must not appear");
+        assert!(
+            debug.contains("[REDACTED]"),
+            "secret bytes must be redacted in Debug"
+        );
+        assert!(
+            !debug.contains("170"),
+            "numeric byte values must not appear"
+        );
     }
 
     #[test]

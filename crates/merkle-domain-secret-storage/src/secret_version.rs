@@ -171,7 +171,9 @@ impl fmt::Debug for SecretVersion {
 mod tests {
     use super::*;
     use crate::private_blob::PrivateBlob;
-    use merkle_types::{CategoryName, Handle, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName};
+    use merkle_types::{
+        CategoryName, Handle, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
+    };
 
     fn make_blob() -> PrivateBlob {
         let handle = Handle::new(

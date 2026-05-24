@@ -12,7 +12,7 @@ use std::io::{self, BufRead, IsTerminal};
 
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Detect IO errors that mean the TTY device is unavailable.
 ///

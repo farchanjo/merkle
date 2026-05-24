@@ -133,7 +133,9 @@ impl PolicyEvaluator {
                 } else {
                     Some(PolicyDecision::deny(
                         DenialCode::VaultSealed,
-                        PolicyError::VaultNotUnsealed { op: input.op.to_string() },
+                        PolicyError::VaultNotUnsealed {
+                            op: input.op.to_string(),
+                        },
                     ))
                 }
             }
@@ -144,14 +146,18 @@ impl PolicyEvaluator {
                 } else {
                     Some(PolicyDecision::deny(
                         DenialCode::VaultSealed,
-                        PolicyError::VaultNotUnsealed { op: input.op.to_string() },
+                        PolicyError::VaultNotUnsealed {
+                            op: input.op.to_string(),
+                        },
                     ))
                 }
             }
 
             SealedState::ShuttingDown => Some(PolicyDecision::deny(
                 DenialCode::VaultSealed,
-                PolicyError::VaultNotUnsealed { op: input.op.to_string() },
+                PolicyError::VaultNotUnsealed {
+                    op: input.op.to_string(),
+                },
             )),
         }
     }
@@ -176,7 +182,9 @@ impl PolicyEvaluator {
             Err(PolicyError::CrossNamespaceNotAllowed { ref target }) => {
                 Some(PolicyDecision::deny(
                     DenialCode::CrossNamespaceDenied,
-                    PolicyError::CrossNamespaceNotAllowed { target: target.clone() },
+                    PolicyError::CrossNamespaceNotAllowed {
+                        target: target.clone(),
+                    },
                 ))
             }
             Err(PolicyError::EmptyNamespaceLabel) => Some(PolicyDecision::deny(
@@ -203,8 +211,8 @@ impl PolicyEvaluator {
             Ok(()) => None,
             Err(
                 e @ (PolicyError::RateLimitExceeded { .. }
-                    | PolicyError::RateLimitNotConfigured { .. }
-                    | PolicyError::RateLimitWindowMismatch { .. }),
+                | PolicyError::RateLimitNotConfigured { .. }
+                | PolicyError::RateLimitWindowMismatch { .. }),
             ) => Some(PolicyDecision::deny(DenialCode::RateLimitExceeded, e)),
             Err(other) => Some(PolicyDecision::deny(DenialCode::Unknown, other)),
         }
@@ -301,7 +309,10 @@ impl PolicyEvaluator {
         }
 
         // Step 7: companion device class (ADR-0020).
-        if !policy.device_policy.is_satisfied_by(input.bound_device_class) {
+        if !policy
+            .device_policy
+            .is_satisfied_by(input.bound_device_class)
+        {
             return Some(PolicyDecision::deny(
                 DenialCode::DeviceClassInsufficient,
                 PolicyError::DeviceClassInsufficient {
@@ -330,7 +341,9 @@ impl PolicyEvaluator {
             }
             SealedState::ShuttingDown => Some(PolicyDecision::deny(
                 DenialCode::VaultSealed,
-                PolicyError::VaultNotUnsealed { op: "unseal".to_owned() },
+                PolicyError::VaultNotUnsealed {
+                    op: "unseal".to_owned(),
+                },
             )),
         }
     }

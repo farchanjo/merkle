@@ -35,7 +35,10 @@ async fn os_store_retrieve_delete_roundtrip() {
         .expect("store should succeed");
 
     // Retrieve.
-    let got = kc.retrieve(&svc, account).await.expect("retrieve should succeed");
+    let got = kc
+        .retrieve(&svc, account)
+        .await
+        .expect("retrieve should succeed");
     assert_eq!(got, secret, "round-trip bytes must match");
 
     // List.
@@ -46,11 +49,16 @@ async fn os_store_retrieve_delete_roundtrip() {
     );
 
     // Delete.
-    kc.delete(&svc, account).await.expect("delete should succeed");
+    kc.delete(&svc, account)
+        .await
+        .expect("delete should succeed");
 
     // Retrieve after delete.
     let err = kc.retrieve(&svc, account).await.unwrap_err();
-    assert!(matches!(err, KeychainError::NotFound), "should be NotFound after delete");
+    assert!(
+        matches!(err, KeychainError::NotFound),
+        "should be NotFound after delete"
+    );
 }
 
 #[tokio::test]
@@ -67,6 +75,9 @@ async fn os_delete_nonexistent_returns_not_found() {
 async fn os_list_empty_for_unknown_service() {
     let kc = OsKeychainAdapter::new();
     let svc = smoke_service();
-    let accounts = kc.list(&svc).await.expect("list should not error for empty service");
+    let accounts = kc
+        .list(&svc)
+        .await
+        .expect("list should not error for empty service");
     assert!(accounts.is_empty());
 }

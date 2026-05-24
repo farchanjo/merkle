@@ -47,7 +47,9 @@ fn aead_encrypt_decrypt_round_trip() {
     let plaintext = b"hello merkle vault";
     let aad = b"vault://test/secrets/foo";
 
-    let ct = a.aead_encrypt(&key, &nonce, plaintext, aad).expect("encrypt ok");
+    let ct = a
+        .aead_encrypt(&key, &nonce, plaintext, aad)
+        .expect("encrypt ok");
     let pt = a.aead_decrypt(&key, &nonce, &ct, aad).expect("decrypt ok");
     assert_eq!(pt, plaintext);
 }
@@ -60,7 +62,9 @@ fn aead_tampered_ciphertext_rejected() {
     let plaintext = b"sensitive data";
     let aad = b"test-aad";
 
-    let mut ct = a.aead_encrypt(&key, &nonce, plaintext, aad).expect("encrypt ok");
+    let mut ct = a
+        .aead_encrypt(&key, &nonce, plaintext, aad)
+        .expect("encrypt ok");
     ct[0] ^= 0xFF;
 
     let err = a.aead_decrypt(&key, &nonce, &ct, aad);
@@ -75,7 +79,9 @@ fn aead_wrong_aad_rejected() {
     let plaintext = b"data";
     let aad = b"correct-aad";
 
-    let ct = a.aead_encrypt(&key, &nonce, plaintext, aad).expect("encrypt ok");
+    let ct = a
+        .aead_encrypt(&key, &nonce, plaintext, aad)
+        .expect("encrypt ok");
     let err = a.aead_decrypt(&key, &nonce, &ct, b"wrong-aad");
     assert!(err.is_err(), "wrong AAD must be rejected");
 }
@@ -89,7 +95,9 @@ fn aead_wrong_key_rejected() {
     let plaintext = b"secret";
     let aad = b"";
 
-    let ct = a.aead_encrypt(&key1, &nonce, plaintext, aad).expect("encrypt ok");
+    let ct = a
+        .aead_encrypt(&key1, &nonce, plaintext, aad)
+        .expect("encrypt ok");
     let err = a.aead_decrypt(&key2, &nonce, &ct, aad);
     assert!(err.is_err(), "wrong key must be rejected");
 }
@@ -154,8 +162,12 @@ fn argon2id_derive_deterministic() {
     let params = Argon2idParams::try_new(65_536, 3, 1, [0xABu8; 16]).expect("valid params");
     let pass = b"correct horse battery staple";
 
-    let k1 = a.argon2id_derive(pass, params.salt(), &params).expect("derive ok");
-    let k2 = a.argon2id_derive(pass, params.salt(), &params).expect("derive ok");
+    let k1 = a
+        .argon2id_derive(pass, params.salt(), &params)
+        .expect("derive ok");
+    let k2 = a
+        .argon2id_derive(pass, params.salt(), &params)
+        .expect("derive ok");
     assert_eq!(k1, k2, "same inputs must yield same key");
 }
 
@@ -229,8 +241,12 @@ fn ecies_encrypt_decrypt_round_trip() {
     let plaintext = b"oob-challenge inner payload";
     let aad = b"challenge-id-abc123";
 
-    let envelope = a.x25519_ecies_encrypt(&pk, plaintext, aad).expect("encrypt ok");
-    let recovered = a.x25519_ecies_decrypt(&sk, &envelope, aad).expect("decrypt ok");
+    let envelope = a
+        .x25519_ecies_encrypt(&pk, plaintext, aad)
+        .expect("encrypt ok");
+    let recovered = a
+        .x25519_ecies_decrypt(&sk, &envelope, aad)
+        .expect("decrypt ok");
     assert_eq!(recovered, plaintext);
 }
 

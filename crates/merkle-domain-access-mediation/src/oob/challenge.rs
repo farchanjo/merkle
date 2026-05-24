@@ -64,7 +64,9 @@ pub struct OobChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use merkle_types::{ChallengeId, Handle, NamespaceId, OobChannel, Rfc3339Timestamp, Sensitivity};
+    use merkle_types::{
+        ChallengeId, Handle, NamespaceId, OobChannel, Rfc3339Timestamp, Sensitivity,
+    };
 
     fn make_challenge() -> OobChallenge {
         OobChallenge {

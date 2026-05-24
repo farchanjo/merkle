@@ -109,7 +109,11 @@ impl InitVaultCommand {
         // ── Step 3: Persist Master Key in OS Keychain ──────────────────────
         info!("init_vault: storing master key in keychain (step 3)");
         ctx.keychain
-            .store(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY, &master_key_bytes)
+            .store(
+                KEYCHAIN_SERVICE,
+                KEYCHAIN_ACCOUNT_MASTER_KEY,
+                &master_key_bytes,
+            )
             .await
             .map_err(|e| {
                 info!("init_vault: keychain write failed, aborting ceremony");
@@ -133,7 +137,12 @@ impl InitVaultCommand {
         let nonce_master: [u8; 24] = ctx.crypto.random_bytes_24();
         let wrapped_by_master = ctx
             .crypto
-            .aead_encrypt(&master_key_bytes, &nonce_master, &vrk_bytes, b"vault-root-key")
+            .aead_encrypt(
+                &master_key_bytes,
+                &nonce_master,
+                &vrk_bytes,
+                b"vault-root-key",
+            )
             .inspect_err(|_e| {
                 // Clean up keychain on failure (best-effort): drop key material.
                 let _ = std::hint::black_box((&master_key_bytes, &recovery_privkey.0));
@@ -141,9 +150,11 @@ impl InitVaultCommand {
 
         // 6b. ECIES(VRK, recovery_pubkey) — X25519 + XChaCha20-Poly1305.
         let recovery_pk_typed = merkle_ports::X25519PublicKey(recovery_pubkey_raw.0);
-        let wrapped_by_recovery = ctx
-            .crypto
-            .x25519_ecies_encrypt(&recovery_pk_typed, &vrk_bytes, b"vault-root-key-recovery")?;
+        let wrapped_by_recovery = ctx.crypto.x25519_ecies_encrypt(
+            &recovery_pk_typed,
+            &vrk_bytes,
+            b"vault-root-key-recovery",
+        )?;
 
         // ── Step 7: Persist both wrapped copies ────────────────────────────
         // We use the Keychain port (the only writable persistent port available
@@ -222,13 +233,12 @@ impl InitVaultCommand {
                 namespace_id,
             )
             .caller_program("merkle-agent");
-            let (entry, pinned) =
-                merkle_domain_audit_compliance::AuditWriter::append(
-                    &mut log,
-                    params,
-                    hmac_key.as_bytes(),
-                )
-                .map_err(|e| AppError::Domain(e.to_string()))?;
+            let (entry, pinned) = merkle_domain_audit_compliance::AuditWriter::append(
+                &mut log,
+                params,
+                hmac_key.as_bytes(),
+            )
+            .map_err(|e| AppError::Domain(e.to_string()))?;
             drop(log);
             ctx.storage.append_audit_entry(&entry).await?;
             ctx.storage.update_pinned_head(&pinned).await?;
@@ -317,7 +327,13 @@ fn bech32_checksum(hrp: &[u8], data: &[u8]) -> [u8; 6] {
 
 /// bech32 polymod function (GF(2^5) polynomial).
 fn bech32_polymod(values: &[u32]) -> u32 {
-    const GEN: [u32; 5] = [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+    const GEN: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
     let mut chk: u32 = 1;
     for &v in values {
         let b = chk >> 25;
@@ -364,9 +380,6 @@ mod tests {
     fn different_keys_produce_different_encodings() {
         let key_a = [0x00_u8; 32];
         let key_b = [0xFF_u8; 32];
-        assert_ne!(
-            encode_age_public_key(&key_a),
-            encode_age_public_key(&key_b)
-        );
+        assert_ne!(encode_age_public_key(&key_a), encode_age_public_key(&key_b));
     }
 }

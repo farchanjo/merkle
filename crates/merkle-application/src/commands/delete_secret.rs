@@ -51,9 +51,7 @@ impl DeleteSecretCommand {
         // Policy gate: High sensitivity requires slash_command confirmation.
         // NOTE: `Sensitivity::Critical` was removed from the enum (only Low/Medium/High exist).
         // Using `Sensitivity::High` as the threshold per the doc-comment intent.
-        if secret.sensitivity >= Sensitivity::High
-            && !self.operator_confirmation.slash_command
-        {
+        if secret.sensitivity >= Sensitivity::High && !self.operator_confirmation.slash_command {
             let hmac_key = ctx.require_hmac_key().await?;
             let mut log = ctx.audit_log.write().await;
             let params = merkle_domain_audit_compliance::AppendParams::new(

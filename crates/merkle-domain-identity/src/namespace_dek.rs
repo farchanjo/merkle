@@ -8,8 +8,8 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
 use merkle_types::{NamespaceId, Rfc3339Timestamp, UuidV7};
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // WrappedDek — the persistent form
@@ -227,12 +227,7 @@ mod tests {
     use super::*;
 
     fn make_dek() -> NamespaceDek {
-        NamespaceDek::new(
-            NamespaceId::new(),
-            1,
-            [0x11u8; 32],
-            Rfc3339Timestamp::now(),
-        )
+        NamespaceDek::new(NamespaceId::new(), 1, [0x11u8; 32], Rfc3339Timestamp::now())
     }
 
     #[test]
@@ -245,7 +240,10 @@ mod tests {
     fn clone_does_not_copy_plaintext() {
         let dek = make_dek();
         let cloned = dek.clone();
-        assert!(cloned.expose_plaintext().is_none(), "cloned DEK must not expose plaintext");
+        assert!(
+            cloned.expose_plaintext().is_none(),
+            "cloned DEK must not expose plaintext"
+        );
     }
 
     #[test]
@@ -261,7 +259,10 @@ mod tests {
         let debug = format!("{dek:?}");
         assert!(debug.contains("[REDACTED]"));
         // The raw byte value 0x11 = 17; must not appear.
-        assert!(!debug.contains("17,"), "raw byte values must not appear in debug");
+        assert!(
+            !debug.contains("17,"),
+            "raw byte values must not appear in debug"
+        );
     }
 
     #[test]
@@ -273,7 +274,10 @@ mod tests {
     #[test]
     fn set_wrapped_stores_blob() {
         let mut dek = make_dek();
-        let blob = WrappedDek { blob: vec![0u8; 72], version: 1 };
+        let blob = WrappedDek {
+            blob: vec![0u8; 72],
+            version: 1,
+        };
         dek.set_wrapped(blob);
         assert!(dek.wrapped().is_some());
     }
@@ -281,17 +285,14 @@ mod tests {
     #[test]
     fn load_plaintext_allows_exposure() {
         let ns_id = NamespaceId::new();
-        let wrapped = WrappedDek { blob: vec![0u8; 72], version: 1 };
-        let mut dek = NamespaceDek::from_wrapped(
-            UuidV7::new(),
-            ns_id,
-            1,
-            Rfc3339Timestamp::now(),
-            wrapped,
-        );
+        let wrapped = WrappedDek {
+            blob: vec![0u8; 72],
+            version: 1,
+        };
+        let mut dek =
+            NamespaceDek::from_wrapped(UuidV7::new(), ns_id, 1, Rfc3339Timestamp::now(), wrapped);
         assert!(dek.expose_plaintext().is_none());
         dek.load_plaintext([0xBBu8; 32]);
         assert_eq!(dek.expose_plaintext(), Some(&[0xBBu8; 32]));
     }
 }
-

@@ -194,9 +194,18 @@ mod tests {
         use merkle_types::AuditOp;
         for state in [SealedState::Sealed, SealedState::Unsealing] {
             let ops = state.allowed_ops();
-            assert!(ops.contains(&AuditOp::Unseal), "{state:?} must allow Unseal");
-            assert!(ops.contains(&AuditOp::Doctor), "{state:?} must allow Doctor");
-            assert!(!ops.contains(&AuditOp::Reveal), "{state:?} must deny Reveal");
+            assert!(
+                ops.contains(&AuditOp::Unseal),
+                "{state:?} must allow Unseal"
+            );
+            assert!(
+                ops.contains(&AuditOp::Doctor),
+                "{state:?} must allow Doctor"
+            );
+            assert!(
+                !ops.contains(&AuditOp::Reveal),
+                "{state:?} must deny Reveal"
+            );
         }
     }
 

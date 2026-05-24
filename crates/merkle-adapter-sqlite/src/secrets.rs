@@ -56,10 +56,7 @@ async fn upsert_version_with_parent(
 // ---------------------------------------------------------------------------
 
 /// Upsert a [`Secret`] and all its [`SecretVersion`]s atomically.
-pub(crate) async fn put_secret(
-    pool: &SqlitePool,
-    secret: &Secret,
-) -> Result<(), StorageError> {
+pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(), StorageError> {
     let id_blob = id_to_blob!(secret.id);
     let ns_blob = id_to_blob!(secret.namespace_id);
     let handle_str = secret.handle.to_string();

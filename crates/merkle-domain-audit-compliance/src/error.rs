@@ -10,9 +10,7 @@ pub enum DomainError {
     ///
     /// Either `seq` is not `prev.seq + 1`, or `prev_hash` does not match
     /// the predecessor's `current_hash`.
-    #[error(
-        "broken chain link at entry {entry_id}: expected seq {expected_seq}, got {actual_seq}"
-    )]
+    #[error("broken chain link at entry {entry_id}: expected seq {expected_seq}, got {actual_seq}")]
     BrokenChainLink {
         /// The offending entry id.
         entry_id: AuditEntryId,

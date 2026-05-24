@@ -9,10 +9,7 @@ use crate::error::AdapterError;
 use crate::mappers::{blob_to_namespace_id, blob_to_uuid, uuid_to_blob};
 
 /// Persist a [`Backup`] record.
-pub(crate) async fn put_backup(
-    pool: &SqlitePool,
-    backup: &Backup,
-) -> Result<(), StorageError> {
+pub(crate) async fn put_backup(pool: &SqlitePool, backup: &Backup) -> Result<(), StorageError> {
     let id_blob = uuid_to_blob(backup.id);
     let ns_blob = uuid_to_blob(backup.namespace_id.inner());
     let snapshot_id_blob = uuid_to_blob(backup.snapshot_id);

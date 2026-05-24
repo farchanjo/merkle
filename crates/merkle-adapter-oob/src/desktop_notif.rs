@@ -38,8 +38,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use merkle_domain_access_mediation as am;
 use merkle_domain_access_mediation::oob::resolution::OobResolution;
-use merkle_ports::error::OobError;
 use merkle_ports::OobNotifier;
+use merkle_ports::error::OobError;
 use merkle_types::ChallengeId;
 use tracing::debug;
 #[cfg(not(feature = "desktop-notif-real"))]
@@ -399,7 +399,9 @@ mod tests {
 
     // ---- helpers ----
 
-    fn make_challenge(id: ChallengeId) -> merkle_domain_access_mediation::oob::challenge::OobChallenge {
+    fn make_challenge(
+        id: ChallengeId,
+    ) -> merkle_domain_access_mediation::oob::challenge::OobChallenge {
         use merkle_types::{Handle, NamespaceId, OobChannel, Sensitivity};
 
         merkle_domain_access_mediation::oob::challenge::OobChallenge {
@@ -407,7 +409,9 @@ mod tests {
             namespace_id: "018f4c1a-0000-7000-8000-000000000010"
                 .parse::<NamespaceId>()
                 .expect("ns id"),
-            secret_handle: "vault://prod/ssh-key/bastion".parse::<Handle>().expect("handle"),
+            secret_handle: "vault://prod/ssh-key/bastion"
+                .parse::<Handle>()
+                .expect("handle"),
             sensitivity: Sensitivity::High,
             oob_channel: OobChannel::DesktopNotif,
             expires_at: merkle_types::Rfc3339Timestamp::now(),

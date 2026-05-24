@@ -10,12 +10,7 @@
 //! `DescribeSecretCommand`, then calls `RevealSecretCommand` which handles the
 //! full OOB challenge + AEAD-decrypt pipeline.
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use merkle_application::commands::{
     describe_secret::DescribeSecretCommand, reveal_secret::RevealSecretCommand,
 };
@@ -60,7 +55,10 @@ fn oob_pending_response(oob_channel: OobChannel) -> OobPendingResponse {
 }
 
 /// Derive the namespace DEK bytes from the HMAC key and the namespace UUID.
-async fn derive_dek(ctx: &AppContext, namespace_id: NamespaceId) -> Result<[u8; 32], axum::response::Response> {
+async fn derive_dek(
+    ctx: &AppContext,
+    namespace_id: NamespaceId,
+) -> Result<[u8; 32], axum::response::Response> {
     let hmac_key = ctx
         .require_hmac_key()
         .await
@@ -155,7 +153,16 @@ pub async fn reveal(
         .unwrap_or(OobChannel::DesktopNotif);
 
     // 6. Execute RevealSecretCommand.
-    execute_reveal(&ctx, body.handle, namespace_id, sensitivity, oob_channel, dek_bytes, body.operator_confirmation.oob_ack).await
+    execute_reveal(
+        &ctx,
+        body.handle,
+        namespace_id,
+        sensitivity,
+        oob_channel,
+        dek_bytes,
+        body.operator_confirmation.oob_ack,
+    )
+    .await
 }
 
 /// Inner async block for RevealSecretCommand dispatch + response mapping.
@@ -207,7 +214,11 @@ async fn execute_reveal(
             if reason.contains("oob") || reason.contains("OOB") || reason.contains("companion") =>
         {
             // OOB required but no device enrolled — return 202 pending.
-            (StatusCode::ACCEPTED, Json(oob_pending_response(oob_channel))).into_response()
+            (
+                StatusCode::ACCEPTED,
+                Json(oob_pending_response(oob_channel)),
+            )
+                .into_response()
         }
         Err(err) => app_error_to_problem(err).into_response(),
     }

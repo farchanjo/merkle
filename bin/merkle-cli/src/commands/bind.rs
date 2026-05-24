@@ -4,7 +4,7 @@
 
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle bind <namespace_label>`.
 pub async fn run(
@@ -28,7 +28,9 @@ pub async fn run(
             .get("namespace_label")
             .and_then(serde_json::Value::as_str)
             .unwrap_or(namespace_label);
-        print_ok(&format!("namespace '{ns_label}' bound (session {session_id})"));
+        print_ok(&format!(
+            "namespace '{ns_label}' bound (session {session_id})"
+        ));
     } else {
         print_value(&value, format)?;
     }

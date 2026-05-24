@@ -2,11 +2,13 @@
 
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle seal`.
 pub async fn run(client: &CompanionSocketClient, format: OutputFormat) -> Result<(), CliError> {
-    let value: serde_json::Value = client.post("/v1/agent/seal", &serde_json::json!({})).await?;
+    let value: serde_json::Value = client
+        .post("/v1/agent/seal", &serde_json::json!({}))
+        .await?;
     if format == OutputFormat::Human {
         print_ok("vault sealed");
     } else {

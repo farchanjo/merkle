@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use merkle_adapter_oob::mock::{denied_resolution, expired_resolution, MockOobNotifier};
+use merkle_adapter_oob::mock::{MockOobNotifier, denied_resolution, expired_resolution};
 use merkle_adapter_oob::pending::PendingChallengeRegistry;
 use merkle_domain_access_mediation::oob::resolution::OobResolution;
 use merkle_ports::OobNotifier as _;
@@ -36,7 +36,9 @@ fn approved_resolution(id: ChallengeId) -> OobResolution {
 async fn mock_dispatch_always_returns_ok() {
     use merkle_domain_access_mediation::companion_device::CompanionDevice;
     use merkle_domain_access_mediation::oob::challenge::OobChallenge;
-    use merkle_types::{CompanionDeviceClass, Handle, NamespaceId, OobChannel, Sensitivity, UuidV7};
+    use merkle_types::{
+        CompanionDeviceClass, Handle, NamespaceId, OobChannel, Sensitivity, UuidV7,
+    };
 
     let notifier = MockOobNotifier::new();
 
@@ -143,9 +145,7 @@ async fn mock_preload_is_consumed_on_first_await() {
     notifier.preload(id, approved_resolution(id));
 
     // First call succeeds.
-    let first = notifier
-        .await_resolution(id, Duration::from_secs(1))
-        .await;
+    let first = notifier.await_resolution(id, Duration::from_secs(1)).await;
     assert!(first.is_ok());
 
     // Second call times out — the preloaded entry was consumed.

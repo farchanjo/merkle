@@ -50,8 +50,7 @@ pub(crate) fn decode_index(raw: &[u8]) -> Result<Vec<String>, KeychainError> {
 
 /// Encode a list of account names into bytes for storage in the sentinel entry.
 pub(crate) fn encode_index(accounts: &[String]) -> Result<Vec<u8>, KeychainError> {
-    serde_json::to_vec(accounts)
-        .map_err(|e| KeychainError::Backend(format!("index encode: {e}")))
+    serde_json::to_vec(accounts).map_err(|e| KeychainError::Backend(format!("index encode: {e}")))
 }
 
 /// Add `account` to `current` if not already present.
@@ -102,7 +101,10 @@ mod tests {
     #[test]
     fn index_add_idempotent() {
         let mut list = vec!["a".to_owned()];
-        assert!(!index_add(&mut list, "a"), "re-adding existing should be no-op");
+        assert!(
+            !index_add(&mut list, "a"),
+            "re-adding existing should be no-op"
+        );
         assert_eq!(list.len(), 1);
         assert!(index_add(&mut list, "b"), "adding new should return true");
         assert_eq!(list, ["a", "b"]);
@@ -113,6 +115,9 @@ mod tests {
         let mut list = vec!["a".to_owned(), "b".to_owned()];
         assert!(index_remove(&mut list, "a"));
         assert_eq!(list, ["b"]);
-        assert!(!index_remove(&mut list, "z"), "removing absent should be no-op");
+        assert!(
+            !index_remove(&mut list, "z"),
+            "removing absent should be no-op"
+        );
     }
 }

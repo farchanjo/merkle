@@ -86,12 +86,24 @@ pub trait Crypto: Send + Sync {
     /// Encrypt `plaintext` with XChaCha20-Poly1305 using `key` and `nonce`.
     ///
     /// `aad` is additional authenticated data bound to the ciphertext tag.
-    fn aead_encrypt(&self, key: &[u8; 32], nonce: &[u8; 24], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError>;
+    fn aead_encrypt(
+        &self,
+        key: &[u8; 32],
+        nonce: &[u8; 24],
+        plaintext: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>, CryptoError>;
 
     /// Decrypt and authenticate `ciphertext` with XChaCha20-Poly1305.
     ///
     /// Returns [`CryptoError::AeadVerifyFailed`] when the tag is invalid.
-    fn aead_decrypt(&self, key: &[u8; 32], nonce: &[u8; 24], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>, CryptoError>;
+    fn aead_decrypt(
+        &self,
+        key: &[u8; 32],
+        nonce: &[u8; 24],
+        ciphertext: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>, CryptoError>;
 
     /// Compute the unkeyed BLAKE3 hash of `data`.
     fn blake3_hash(&self, data: &[u8]) -> Blake3Hash;
@@ -100,7 +112,12 @@ pub trait Crypto: Send + Sync {
     fn blake3_keyed(&self, key: &[u8; 32], data: &[u8]) -> HmacSignature;
 
     /// Derive a 32-byte key from `passphrase` using Argon2id with the given `params`.
-    fn argon2id_derive(&self, passphrase: &[u8], salt: &[u8; 16], params: &Argon2idParams) -> Result<[u8; 32], CryptoError>;
+    fn argon2id_derive(
+        &self,
+        passphrase: &[u8],
+        salt: &[u8; 16],
+        params: &Argon2idParams,
+    ) -> Result<[u8; 32], CryptoError>;
 
     /// Generate a fresh Ed25519 keypair.
     fn ed25519_keypair(&self) -> (Ed25519PrivateKey, Ed25519PublicKey);
@@ -109,22 +126,45 @@ pub trait Crypto: Send + Sync {
     fn ed25519_sign(&self, sk: &Ed25519PrivateKey, msg: &[u8]) -> [u8; 64];
 
     /// Verify an Ed25519 `sig` over `msg` using `pk`.
-    fn ed25519_verify(&self, pk: &Ed25519PublicKey, msg: &[u8], sig: &[u8; 64]) -> Result<(), CryptoError>;
+    fn ed25519_verify(
+        &self,
+        pk: &Ed25519PublicKey,
+        msg: &[u8],
+        sig: &[u8; 64],
+    ) -> Result<(), CryptoError>;
 
     /// Generate a fresh X25519 keypair.
     fn x25519_keypair(&self) -> (X25519PrivateKey, X25519PublicKey);
 
     /// ECIES-encrypt `plaintext` for `recipient_pk`.
-    fn x25519_ecies_encrypt(&self, recipient_pk: &X25519PublicKey, plaintext: &[u8], aad: &[u8]) -> Result<EciesEnvelopeBytes, CryptoError>;
+    fn x25519_ecies_encrypt(
+        &self,
+        recipient_pk: &X25519PublicKey,
+        plaintext: &[u8],
+        aad: &[u8],
+    ) -> Result<EciesEnvelopeBytes, CryptoError>;
 
     /// ECIES-decrypt `envelope` using `recipient_sk`.
-    fn x25519_ecies_decrypt(&self, recipient_sk: &X25519PrivateKey, envelope: &EciesEnvelopeBytes, aad: &[u8]) -> Result<Vec<u8>, CryptoError>;
+    fn x25519_ecies_decrypt(
+        &self,
+        recipient_sk: &X25519PrivateKey,
+        envelope: &EciesEnvelopeBytes,
+        aad: &[u8],
+    ) -> Result<Vec<u8>, CryptoError>;
 
     /// Encrypt `plaintext` for the given `age` recipients.
-    fn age_encrypt(&self, recipients: &[AgeRecipient], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+    fn age_encrypt(
+        &self,
+        recipients: &[AgeRecipient],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError>;
 
     /// Decrypt `ciphertext` using the given `age` identity.
-    fn age_decrypt(&self, identity: &AgeIdentity, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+    fn age_decrypt(
+        &self,
+        identity: &AgeIdentity,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError>;
 
     /// Generate 32 cryptographically secure random bytes.
     fn random_bytes_32(&self) -> [u8; 32];

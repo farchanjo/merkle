@@ -4,7 +4,7 @@ use anyhow::Context as _;
 
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_value, OutputFormat};
+use crate::output::{OutputFormat, print_value};
 
 /// Run `merkle status`.
 pub async fn run(client: &CompanionSocketClient, format: OutputFormat) -> Result<(), CliError> {

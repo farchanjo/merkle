@@ -2,7 +2,9 @@
 //! responses are returned in FIFO order for both SSH exec and HTTP request.
 
 use merkle_adapter_external_services::MockExternalServices;
-use merkle_ports::{ExternalError, ExternalServices, HttpAuth, HttpRequestSpec, HttpResponse, SshExecOutput};
+use merkle_ports::{
+    ExternalError, ExternalServices, HttpAuth, HttpRequestSpec, HttpResponse, SshExecOutput,
+};
 
 #[tokio::test]
 async fn mock_ssh_exec_returns_preloaded_output() {
@@ -76,8 +78,7 @@ async fn mock_http_request_returns_preloaded_response() {
 
 #[tokio::test]
 async fn mock_http_request_returns_preloaded_error() {
-    let mock = MockExternalServices::new()
-        .with_http_error(ExternalError::AuthFailed);
+    let mock = MockExternalServices::new().with_http_error(ExternalError::AuthFailed);
 
     let spec = HttpRequestSpec {
         method: "GET".to_owned(),

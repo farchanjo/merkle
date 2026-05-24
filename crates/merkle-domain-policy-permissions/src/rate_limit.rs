@@ -69,15 +69,24 @@ impl RateLimit {
         let mut map = HashMap::new();
         map.insert(
             OpClass::PlaintextReads,
-            RateLimitEntry { max_count: 60, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 60,
+                window_seconds: 60,
+            },
         );
         map.insert(
             OpClass::UseTokenResolves,
-            RateLimitEntry { max_count: 120, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 120,
+                window_seconds: 60,
+            },
         );
         map.insert(
             OpClass::Reveals,
-            RateLimitEntry { max_count: 10, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 10,
+                window_seconds: 60,
+            },
         );
         Self { per_class: map }
     }
@@ -88,15 +97,24 @@ impl RateLimit {
         let mut map = HashMap::new();
         map.insert(
             OpClass::PlaintextReads,
-            RateLimitEntry { max_count: 10, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 10,
+                window_seconds: 60,
+            },
         );
         map.insert(
             OpClass::UseTokenResolves,
-            RateLimitEntry { max_count: 60, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 60,
+                window_seconds: 60,
+            },
         );
         map.insert(
             OpClass::Reveals,
-            RateLimitEntry { max_count: 5, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 5,
+                window_seconds: 60,
+            },
         );
         Self { per_class: map }
     }
@@ -107,15 +125,24 @@ impl RateLimit {
         let mut map = HashMap::new();
         map.insert(
             OpClass::PlaintextReads,
-            RateLimitEntry { max_count: 5, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 5,
+                window_seconds: 60,
+            },
         );
         map.insert(
             OpClass::UseTokenResolves,
-            RateLimitEntry { max_count: 30, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 30,
+                window_seconds: 60,
+            },
         );
         map.insert(
             OpClass::Reveals,
-            RateLimitEntry { max_count: 2, window_seconds: 60 },
+            RateLimitEntry {
+                max_count: 2,
+                window_seconds: 60,
+            },
         );
         Self { per_class: map }
     }
@@ -143,9 +170,12 @@ impl RateLimit {
         current_count: u32,
         window_seconds: u32,
     ) -> Result<(), PolicyError> {
-        let entry = self.per_class.get(&class).ok_or_else(|| {
-            PolicyError::RateLimitNotConfigured { class: class.to_string() }
-        })?;
+        let entry =
+            self.per_class
+                .get(&class)
+                .ok_or_else(|| PolicyError::RateLimitNotConfigured {
+                    class: class.to_string(),
+                })?;
 
         if window_seconds != entry.window_seconds {
             return Err(PolicyError::RateLimitWindowMismatch {
@@ -156,7 +186,9 @@ impl RateLimit {
         }
 
         if current_count >= entry.max_count {
-            return Err(PolicyError::RateLimitExceeded { class: class.to_string() });
+            return Err(PolicyError::RateLimitExceeded {
+                class: class.to_string(),
+            });
         }
 
         Ok(())

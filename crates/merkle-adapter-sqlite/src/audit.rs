@@ -191,9 +191,7 @@ pub(crate) async fn read_audit(
 }
 
 /// Fetch the current pinned chain head, returning `None` on an empty vault.
-pub(crate) async fn pinned_head(
-    pool: &SqlitePool,
-) -> Result<Option<PinnedHead>, StorageError> {
+pub(crate) async fn pinned_head(pool: &SqlitePool) -> Result<Option<PinnedHead>, StorageError> {
     let row = sqlx::query(
         "SELECT head_hash, head_seq, head_id, updated_at FROM pinned_head WHERE singleton = 1",
     )

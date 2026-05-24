@@ -28,7 +28,7 @@ use merkle_ports::{Keychain, KeychainError};
 use tracing::{debug, warn};
 
 use crate::index::{
-    decode_index, encode_index, index_add, index_remove, sentinel_account, INDEX_SUFFIX,
+    INDEX_SUFFIX, decode_index, encode_index, index_add, index_remove, sentinel_account,
 };
 
 /// Production keychain adapter backed by the OS keychain.
@@ -50,9 +50,7 @@ impl OsKeychainAdapter {
 fn map_err(err: keyring::Error) -> KeychainError {
     match err {
         keyring::Error::NoEntry => KeychainError::NotFound,
-        keyring::Error::NoStorageAccess(_) => {
-            KeychainError::Backend("no storage access".into())
-        }
+        keyring::Error::NoStorageAccess(_) => KeychainError::Backend("no storage access".into()),
         other => KeychainError::Backend(other.to_string()),
     }
 }
@@ -86,8 +84,7 @@ impl Keychain for OsKeychainAdapter {
         // Step 1: write via spawn_blocking (keyring is sync).
         tokio::task::spawn_blocking(move || -> Result<(), KeychainError> {
             // Write the actual secret.
-            let entry =
-                keyring::Entry::new(&service_owned, &account_owned).map_err(map_err)?;
+            let entry = keyring::Entry::new(&service_owned, &account_owned).map_err(map_err)?;
             entry.set_secret(&secret_owned).map_err(map_err)?;
 
             // Update the account index (skip indexing the sentinel itself).
@@ -96,7 +93,7 @@ impl Keychain for OsKeychainAdapter {
             }
             Ok(())
         })
-.await
+        .await
         .map_err(|e| KeychainError::Backend(format!("spawn_blocking join: {e}")))??;
 
         // Step 2: verify persistence (per ADR-0015 Amendment 4).

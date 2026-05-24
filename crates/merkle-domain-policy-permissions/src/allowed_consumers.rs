@@ -47,7 +47,9 @@ impl AllowedConsumers {
     /// Default for the `relaxed` profile: any process is allowed.
     #[must_use]
     pub fn default_relaxed() -> Self {
-        Self { globs: vec!["*".to_owned()] }
+        Self {
+            globs: vec!["*".to_owned()],
+        }
     }
 
     /// Default for the `balanced` profile: no consumers by default.

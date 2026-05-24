@@ -70,7 +70,11 @@ impl KeychainEntry {
     /// Construct a new `KeychainEntry`.
     #[must_use]
     pub fn new(service: String, account: String, last_seen: Rfc3339Timestamp) -> Self {
-        Self { service, account, last_seen }
+        Self {
+            service,
+            account,
+            last_seen,
+        }
     }
 
     /// Convenience constructor for the canonical Merkle service identifier.
@@ -150,8 +154,7 @@ mod tests {
     #[test]
     fn operator_attestation_account_matches_spec() {
         assert_eq!(
-            KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION,
-            "merkle-operator-attestation",
+            KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION, "merkle-operator-attestation",
             "ADR-0011 Amendment 6 spec literal must match"
         );
         // Both constants share the same service.

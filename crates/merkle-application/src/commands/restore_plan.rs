@@ -67,7 +67,8 @@ impl RestorePlanCommand {
         // an empty backup-side slice — conflicts are detected from the live side.
         // Per-handle backup diffs are a Phase 6 concern (requires iterating the
         // age-encrypted artifact).
-        let backup_secrets: Vec<(merkle_types::Handle, merkle_types::Rfc3339Timestamp)> = Vec::new();
+        let backup_secrets: Vec<(merkle_types::Handle, merkle_types::Rfc3339Timestamp)> =
+            Vec::new();
 
         let current_secrets: Vec<(merkle_types::Handle, merkle_types::Rfc3339Timestamp)> =
             live_secrets

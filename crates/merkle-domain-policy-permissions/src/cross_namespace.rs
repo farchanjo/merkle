@@ -40,13 +40,19 @@ impl CrossNamespacePolicy {
     /// Default policy: cross-namespace access disabled.
     #[must_use]
     pub fn default_deny() -> Self {
-        Self { master_switch: false, allowed_imports: vec![] }
+        Self {
+            master_switch: false,
+            allowed_imports: vec![],
+        }
     }
 
     /// Policy with master switch on and the given allowlist.
     #[must_use]
     pub fn with_imports(imports: Vec<NamespaceLabel>) -> Self {
-        Self { master_switch: true, allowed_imports: imports }
+        Self {
+            master_switch: true,
+            allowed_imports: imports,
+        }
     }
 
     /// Evaluate whether a cross-namespace access from `session_label` to

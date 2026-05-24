@@ -137,7 +137,10 @@ impl VaultRootKey {
     /// can access the plaintext bytes via `self.expose()`.  The stub discards
     /// the key material intentionally.
     #[must_use]
-    #[expect(clippy::unused_self, reason = "stub: real adapter uses self.expose() here")]
+    #[expect(
+        clippy::unused_self,
+        reason = "stub: real adapter uses self.expose() here"
+    )]
     pub fn wrap_with_stub(&self, master_key: &MasterKey, version: u32) -> WrappedVaultRootKey {
         // The real crypto adapter will call AEAD-encrypt here.  This stub
         // exists purely so callers compile.

@@ -6,7 +6,7 @@
 use crate::cli::{BackupAction, BackupArgs};
 use crate::client::CompanionSocketClient;
 use crate::error::CliError;
-use crate::output::{print_ok, print_value, OutputFormat};
+use crate::output::{OutputFormat, print_ok, print_value};
 
 /// Run `merkle backup`.
 pub async fn run(

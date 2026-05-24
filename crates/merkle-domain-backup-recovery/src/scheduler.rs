@@ -62,9 +62,7 @@ impl BackupScheduler {
         // Rule 3 — anacron interval.
         let interval_elapsed = match state.last_backup_at {
             None => true,
-            Some(last) => {
-                elapsed_hours(last, *now) >= u64::from(state.max_interval_hours)
-            }
+            Some(last) => elapsed_hours(last, *now) >= u64::from(state.max_interval_hours),
         };
         if interval_elapsed && state.change_count_since_last > 0 {
             return Some(BackupTrigger::AnacronTriggered);

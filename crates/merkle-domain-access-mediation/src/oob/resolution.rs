@@ -75,9 +75,9 @@ mod sig_bytes_opt {
             None => Ok(None),
             Some(s) => {
                 let v = hex::decode(&s).map_err(serde::de::Error::custom)?;
-                let arr: [u8; 64] = v
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom("expected 64 bytes for device_signature"))?;
+                let arr: [u8; 64] = v.try_into().map_err(|_| {
+                    serde::de::Error::custom("expected 64 bytes for device_signature")
+                })?;
                 Ok(Some(arr))
             }
         }
@@ -128,7 +128,12 @@ mod tests {
 
     #[test]
     fn approved_with_signature_is_valid() {
-        let r = OobResolution::new(cid(), OobChallengeOutcome::Approved, Some(Rfc3339Timestamp::now()), Some([0u8; 64]));
+        let r = OobResolution::new(
+            cid(),
+            OobChallengeOutcome::Approved,
+            Some(Rfc3339Timestamp::now()),
+            Some([0u8; 64]),
+        );
         assert!(r.is_ok());
         assert!(r.expect("ok").is_approved());
     }
@@ -149,13 +154,21 @@ mod tests {
     #[test]
     fn expired_with_signature_is_invariant_violation() {
         let r = OobResolution::new(cid(), OobChallengeOutcome::Expired, None, Some([0u8; 64]));
-        assert!(matches!(r, Err(DomainError::OobResolutionInvariantViolated)));
+        assert!(matches!(
+            r,
+            Err(DomainError::OobResolutionInvariantViolated)
+        ));
     }
 
     #[test]
     fn serde_json_round_trip() {
-        let r = OobResolution::new(cid(), OobChallengeOutcome::Approved, Some(Rfc3339Timestamp::now()), Some([0xAA; 64]))
-            .expect("valid");
+        let r = OobResolution::new(
+            cid(),
+            OobChallengeOutcome::Approved,
+            Some(Rfc3339Timestamp::now()),
+            Some([0xAA; 64]),
+        )
+        .expect("valid");
         let json = serde_json::to_string(&r).expect("serialize");
         let back: OobResolution = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(r.challenge_id, back.challenge_id);

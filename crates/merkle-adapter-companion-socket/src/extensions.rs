@@ -1,9 +1,6 @@
 //! axum `FromRequestParts` extractors for peer-credential and session binding.
 
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-};
+use axum::{extract::FromRequestParts, http::request::Parts};
 
 use crate::peer_cred::PeerCredentials;
 use crate::problem::{Problem, ProblemType};

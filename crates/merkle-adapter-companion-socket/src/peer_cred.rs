@@ -159,8 +159,11 @@ fn macos_local_peercred(fd: std::os::unix::io::RawFd) -> io::Result<u32> {
     // `len` bytes into `buf` and updates `len` to the actual size written.
     // No aliasing or data-race risk because `buf` is locally owned.
     // `&raw mut len` is used to avoid the `borrow_as_ptr` lint.
-    #[expect(unsafe_code, reason = "getsockopt(LOCAL_PEERCRED) has no safe Rust wrapper; \
-        blocked on adding nix/rustix to the workspace dependency set.")]
+    #[expect(
+        unsafe_code,
+        reason = "getsockopt(LOCAL_PEERCRED) has no safe Rust wrapper; \
+        blocked on adding nix/rustix to the workspace dependency set."
+    )]
     let rc = unsafe {
         libc::getsockopt(
             fd,
@@ -197,8 +200,11 @@ fn current_uid() -> u32 {
     // SAFETY: `getuid()` is an infallible POSIX syscall that returns the
     // caller's real user ID. It has no preconditions, never fails, and does
     // not interact with Rust's memory model.
-    #[expect(unsafe_code, reason = "libc::getuid() is infallible; no safe Rust wrapper exists \
-        without nix/rustix in the workspace.")]
+    #[expect(
+        unsafe_code,
+        reason = "libc::getuid() is infallible; no safe Rust wrapper exists \
+        without nix/rustix in the workspace."
+    )]
     unsafe {
         libc::getuid()
     }
@@ -248,6 +254,9 @@ mod tests {
             pid: None,
             program_path: None,
         };
-        assert!(verify(&foreign).is_err(), "foreign UID should fail verification");
+        assert!(
+            verify(&foreign).is_err(),
+            "foreign UID should fail verification"
+        );
     }
 }
