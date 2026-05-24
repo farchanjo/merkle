@@ -1,0 +1,42 @@
+[package]
+name        = "merkle-bdd"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description = "BDD acceptance test harness — cucumber-rust step definitions against merkle-application"
+publish     = false
+
+[lints]
+workspace = true
+
+# cucumber provides its own harness via the `main` fn in tests/bdd.rs
+[[test]]
+name    = "bdd"
+path    = "tests/bdd.rs"
+harness = false
+
+[dev-dependencies]
+merkle-types                     = { workspace = true }
+merkle-ports                     = { workspace = true }
+merkle-application               = { workspace = true }
+merkle-domain-identity           = { workspace = true }
+merkle-domain-secret-storage     = { workspace = true }
+merkle-domain-access-mediation   = { workspace = true }
+merkle-domain-audit-compliance   = { workspace = true }
+merkle-domain-policy-permissions = { workspace = true }
+merkle-adapter-sqlite            = { workspace = true }
+merkle-adapter-crypto            = { workspace = true }
+merkle-adapter-keychain          = { workspace = true }
+merkle-adapter-oob               = { workspace = true }
+merkle-adapter-external-services = { workspace = true }
+cucumber      = { workspace = true }
+tokio         = { workspace = true, features = ["full"] }
+async-trait   = { workspace = true }
+serde_json    = { workspace = true }
+anyhow        = { workspace = true }
+tracing       = { workspace = true }
+tempfile      = { workspace = true }
+ed25519-dalek = { workspace = true }
+base64        = { workspace = true }
+chrono        = { workspace = true }

@@ -1,0 +1,38 @@
+[package]
+name         = "merkle-application"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Application layer: use cases and command handlers that orchestrate domain bounded contexts through hexagonal port traits. No infrastructure imports — depends only on domain crates and port abstractions."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types                     = { workspace = true }
+merkle-ports                     = { workspace = true }
+merkle-domain-identity           = { workspace = true }
+merkle-domain-secret-storage     = { workspace = true }
+ed25519-dalek                    = { workspace = true }
+merkle-domain-access-mediation   = { workspace = true }
+merkle-domain-audit-compliance   = { workspace = true }
+merkle-domain-backup-recovery    = { workspace = true }
+merkle-domain-policy-permissions = { workspace = true }
+async-trait                      = { workspace = true }
+base64                           = { workspace = true }
+chrono                           = { workspace = true }
+hex                              = { workspace = true }
+tokio                            = { workspace = true, features = ["sync", "process", "fs", "io-util"] }
+tracing                          = { workspace = true }
+thiserror                        = { workspace = true }
+serde                            = { workspace = true, features = ["derive"] }
+serde_json                       = { workspace = true }
+
+[dev-dependencies]
+tokio                             = { workspace = true, features = ["macros", "rt-multi-thread"] }
+merkle-adapter-sqlite             = { path = "../merkle-adapter-sqlite" }
+merkle-adapter-crypto             = { path = "../merkle-adapter-crypto" }
+merkle-adapter-keychain           = { path = "../merkle-adapter-keychain" }
+merkle-adapter-oob                = { path = "../merkle-adapter-oob" }
+merkle-adapter-external-services  = { path = "../merkle-adapter-external-services" }

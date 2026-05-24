@@ -1,0 +1,31 @@
+[package]
+name         = "merkle-e2e"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Black-box end-to-end integration tests for the Merkle Vault stack (agent daemon + CLI + companion socket + audit chain)."
+publish      = false
+
+[lints]
+workspace = true
+
+# ---------------------------------------------------------------------------
+# Production dependencies (types only — no domain logic in the test crate)
+# ---------------------------------------------------------------------------
+[dependencies]
+merkle-types = { workspace = true }
+
+# ---------------------------------------------------------------------------
+# Dev (test) dependencies
+# ---------------------------------------------------------------------------
+[dev-dependencies]
+tokio            = { workspace = true, features = ["full"] }
+tempfile         = { workspace = true }
+anyhow           = { workspace = true }
+serde            = { workspace = true, features = ["derive"] }
+serde_json       = { workspace = true }
+tracing-subscriber = { workspace = true }
+merkle-domain-access-mediation = { workspace = true }
+chrono           = { workspace = true }
+libc             = "0.2"
