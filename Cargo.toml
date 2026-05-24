@@ -125,7 +125,7 @@ clap             = { version = "4.5", features = ["derive", "env"] }
 
 # Configuration
 config           = { version = "0.14", features = ["toml"] }
-toml             = "0.8"
+toml             = "1.1"
 
 # Storage
 sqlx             = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono", "uuid"] }
