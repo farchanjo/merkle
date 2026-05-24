@@ -170,17 +170,17 @@ impl MerkleMcpServer {
         &self,
         Parameters(input): Parameters<VaultBindInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Enforce single-bind invariant via session state.
+        // Phase 1 — guard check only; do NOT mutate state yet (ADR-0026).
         {
-            let mut session = self.session.write().await;
-            session
-                .bind(input.label.clone())
-                .map_err(|_| crate::errors::already_bound())?;
+            let session = self.session.read().await;
+            if session.is_bound() {
+                return Err(crate::errors::already_bound());
+            }
         }
 
-        // Derive the cwd_hash from the current process working directory.
+        // Phase 2 — call the Companion Socket. On failure the session remains
+        // fully unbound so the operator can retry without restarting the process.
         let hash = cwd_hash();
-
         let resp = self
             .client
             .create_session(CreateSessionRequest {
@@ -191,10 +191,11 @@ impl MerkleMcpServer {
             .await
             .map_err(client_error_to_mcp)?;
 
-        // Persist both namespace_id and session_id for downstream tools.
+        // Phase 3 — commit ALL session fields atomically under a single write
+        // lock. No field is visible in a partial state after this point.
         {
             let mut session = self.session.write().await;
-            session.set_binding(resp.namespace_id, resp.session_id);
+            session.commit_binding(input.label, resp.namespace_id, resp.session_id);
         }
 
         Ok(CallToolResult::success(vec![Content::text(
