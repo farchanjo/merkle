@@ -363,6 +363,7 @@ async fn vault_search_returns_agent_unreachable() {
         .vault_search(Parameters(VaultSearchInput {
             query: "test".to_owned(),
             limit: Some(10),
+            offset: None,
         }))
         .await
         .expect_err("vault.search to dead socket must return error");

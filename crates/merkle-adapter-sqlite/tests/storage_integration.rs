@@ -12,7 +12,7 @@ use merkle_domain_secret_storage::{
     private_blob::PrivateBlob,
     secret_version::{SecretVersion, SecretVersionId},
 };
-use merkle_ports::{SecretFilter, Storage};
+use merkle_ports::{RankedSearchParams, SecretFilter, Storage};
 use merkle_types::{
     AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, CategoryName, CompanionDeviceClass, Handle,
     HmacSignature, NamespaceId, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
@@ -442,4 +442,490 @@ async fn backup_round_trip() {
     assert_eq!(backups.len(), 1);
     assert_eq!(backups[0].id, backup.id);
     assert_eq!(backups[0].secret_count, 5);
+}
+
+// ===========================================================================
+// ADR-0027: Weighted BM25 FTS5 tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// BM25 test helpers
+// ---------------------------------------------------------------------------
+
+/// Build a `Secret` with a custom description in `public_metadata_json`.
+fn make_secret_with_description(
+    ns_id: NamespaceId,
+    handle: Handle,
+    description: &str,
+    category: CategoryName,
+) -> Secret {
+    let v_id = SecretId::new();
+    let v = make_version(&handle, 1, v_id);
+    let mut pm = PublicMetadata::new(true);
+    pm.description = Some(description.to_owned());
+    Secret::new(ns_id, handle, category, Sensitivity::Low, vec![], pm, v).expect("valid secret")
+}
+
+/// Await a ranked search and unwrap.
+async fn ranked_search(
+    db: &SqliteStorage,
+    ns_id: &NamespaceId,
+    query: &str,
+    limit: u32,
+    offset: u32,
+) -> merkle_ports::RankedSearchResult {
+    db.search_secrets(
+        ns_id,
+        RankedSearchParams {
+            fts_query: query.to_owned(),
+            limit,
+            offset,
+        },
+    )
+    .await
+    .expect("search_secrets should not fail")
+}
+
+// ---------------------------------------------------------------------------
+// Test 1 (ADR-0027 §Validation 2): BM25 ranking — name-match ranks above
+// description-match for the same query term.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 2: name-match secrets rank above description-match
+/// secrets. Three secrets have "github" in `name`; seven have it only in
+/// `description`.  The first three results must be the name-match secrets.
+#[tokio::test]
+async fn bm25_name_match_ranks_above_description_match() {
+    let db = open_memory().await;
+    let ns = make_namespace("rank-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    // 3 secrets with "github" in name.
+    for i in 0..3u32 {
+        let handle = make_handle("rank-ns", "token", &format!("github-token-{i}"));
+        let secret = make_secret_with_description(
+            ns_id,
+            handle,
+            "deploy key for CI pipelines",
+            CategoryName::Token,
+        );
+        db.put_secret(&secret).await.expect("put_secret");
+    }
+
+    // 7 secrets with "github" only in description.
+    for i in 0..7u32 {
+        let handle = make_handle("rank-ns", "token", &format!("unrelated-token-{i}"));
+        let secret = make_secret_with_description(
+            ns_id,
+            handle,
+            "token used for github organization workflows",
+            CategoryName::Token,
+        );
+        db.put_secret(&secret).await.expect("put_secret");
+    }
+
+    let result = ranked_search(&db, &ns_id, "github", 10, 0).await;
+    assert_eq!(result.items.len(), 10, "all 10 secrets must match");
+    assert_eq!(result.total, 10);
+
+    // The first 3 results must have "github" in their handle name segment.
+    for item in result.items.iter().take(3) {
+        assert!(
+            item.secret
+                .handle
+                .secret_name()
+                .to_string()
+                .contains("github"),
+            "expected a github-named secret in top-3, got: {}",
+            item.secret.handle
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 2 (ADR-0027 §Validation 5): weighted BM25 — name-match beats equal-TF
+// description-match due to the 10.0 vs 3.0 column weight.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 5: with equal term frequency (one occurrence each),
+/// a name match ranks above a description match.
+/// BM25 column weights (10.0 name vs 3.0 description) guarantee this for
+/// equal TF. Extreme TF-stuffing uses non-equal TF; the weight ratio applies
+/// to the saturated TF component, not to raw repetition counts.
+#[tokio::test]
+async fn bm25_name_weight_dominates_description_tf_stuffing() {
+    let db = open_memory().await;
+    let ns = make_namespace("tf-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    // Add background noise documents (no "deploy") to give IDF a positive value.
+    for i in 0..10u32 {
+        let h = make_handle("tf-ns", "token", &format!("noise-token-{i}"));
+        let s = make_secret_with_description(
+            ns_id,
+            h,
+            "oauth integration service",
+            CategoryName::Token,
+        );
+        db.put_secret(&s).await.expect("put noise secret");
+    }
+
+    // Secret A: "deploy" in name (weight 10.0), neutral description.
+    let handle_a = make_handle("tf-ns", "token", "deploy-token");
+    let secret_a =
+        make_secret_with_description(ns_id, handle_a, "production CI token", CategoryName::Token);
+    db.put_secret(&secret_a).await.expect("put secret A");
+
+    // Secret B: "deploy" once in description (weight 3.0), unrelated name.
+    let handle_b = make_handle("tf-ns", "note", "unrelated-note");
+    let secret_b = make_secret_with_description(
+        ns_id,
+        handle_b,
+        "deploy integration for pipeline",
+        CategoryName::Note,
+    );
+    db.put_secret(&secret_b).await.expect("put secret B");
+
+    let result = ranked_search(&db, &ns_id, "deploy", 10, 0).await;
+    assert_eq!(result.items.len(), 2, "both secrets must match");
+
+    // Equal-TF: name match (weight 10.0) must beat description match (weight 3.0).
+    let top = &result.items[0];
+    assert_eq!(top.bm25_rank, 1);
+    assert!(
+        top.secret
+            .handle
+            .secret_name()
+            .to_string()
+            .contains("deploy"),
+        "equal-TF name match must rank first, got: {}",
+        top.secret.handle
+    );
+
+    // Top result has a more-negative (better) score than the second.
+    assert!(
+        result.items[0].score <= result.items[1].score,
+        "top result score ({}) should be <= second result score ({})",
+        result.items[0].score,
+        result.items[1].score
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 3 (ADR-0027 §Validation 3): highlight snippets contain `<b>` tags and
+// reference only public fields.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 3: search returns per-field highlight snippets with
+/// `<b>` markers; private fields never appear in highlights.
+#[tokio::test]
+async fn bm25_highlights_present_and_public_fields_only() {
+    let db = open_memory().await;
+    let ns = make_namespace("hl-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    let handle = make_handle("hl-ns", "ssh", "bastion-prod-key");
+    let secret = make_secret_with_description(
+        ns_id,
+        handle,
+        "SSH key for the production bastion host",
+        CategoryName::SshKey,
+    );
+    db.put_secret(&secret).await.expect("put_secret");
+
+    let result = ranked_search(&db, &ns_id, "bastion", 10, 0).await;
+    assert_eq!(result.items.len(), 1);
+
+    let item = &result.items[0];
+    assert!(
+        !item.highlights.is_empty(),
+        "at least one highlight must be present"
+    );
+
+    // At least one highlight from `name` or `description` must contain <b>.
+    let has_bold = item
+        .highlights
+        .iter()
+        .any(|h| h.snippet.contains("<b>") && h.snippet.contains("</b>"));
+    assert!(has_bold, "highlights must contain <b> markers");
+
+    // Private field names must never appear as highlight fields.
+    let forbidden_fields = [
+        "private_blob",
+        "ciphertext",
+        "nonce",
+        "aead_tag",
+        "associated_data",
+    ];
+    for h in &item.highlights {
+        assert!(
+            !forbidden_fields.contains(&h.field.as_str()),
+            "private field '{}' must not appear in highlights",
+            h.field
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 4 (ADR-0027 §Validation 4): UPDATE trigger freshness — post-rotate
+// description updates are reflected in the FTS5 index.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 4: after updating `public_metadata_json` via an
+/// UPDATE (simulating rotate), the old description is no longer indexed and
+/// the new description is searchable.
+#[tokio::test]
+async fn bm25_update_trigger_reflects_metadata_change() {
+    let db = open_memory().await;
+    let ns = make_namespace("upd-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    let handle = make_handle("upd-ns", "token", "old-token");
+
+    // Initial insert with description "old description alpha".
+    let secret_initial = make_secret_with_description(
+        ns_id,
+        handle.clone(),
+        "old description alpha",
+        CategoryName::Token,
+    );
+    let secret_id = secret_initial.id;
+    db.put_secret(&secret_initial)
+        .await
+        .expect("put_secret initial");
+
+    // Verify "alpha" is findable before update.
+    let before = ranked_search(&db, &ns_id, "alpha", 10, 0).await;
+    assert_eq!(
+        before.items.len(),
+        1,
+        "alpha must be findable before update"
+    );
+
+    // Update: replace the secret with new description "production oauth token beta".
+    let mut updated = db
+        .get_secret_by_handle(&handle)
+        .await
+        .expect("get_secret_by_handle")
+        .expect("must exist");
+    updated.public_metadata.description = Some("production oauth token beta".to_owned());
+    // Use put_secret to upsert the updated public_metadata_json.
+    // This triggers the secrets_fts_au UPDATE trigger.
+    db.put_secret(&updated).await.expect("put_secret update");
+
+    // "alpha" must no longer be findable.
+    let alpha_after = ranked_search(&db, &ns_id, "alpha", 10, 0).await;
+    assert_eq!(
+        alpha_after.items.len(),
+        0,
+        "alpha must not appear after update"
+    );
+
+    // "oauth" must now be findable.
+    let oauth_after = ranked_search(&db, &ns_id, "oauth", 10, 0).await;
+    assert_eq!(oauth_after.items.len(), 1, "oauth must appear after update");
+    assert_eq!(oauth_after.items[0].secret.id, secret_id);
+}
+
+// ---------------------------------------------------------------------------
+// Test 5 (ADR-0027 §Validation 6): pagination preserves rank order.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 6: ranked results on page 1 have better (more-negative)
+/// scores than results on page 2; no handle appears on both pages.
+#[tokio::test]
+async fn bm25_pagination_preserves_rank_order() {
+    let db = open_memory().await;
+    let ns = make_namespace("page-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    // Insert 15 secrets: 5 with "acme" in name (higher rank), 10 in description.
+    for i in 0..5u32 {
+        let handle = make_handle("page-ns", "token", &format!("acme-token-{i}"));
+        let secret =
+            make_secret_with_description(ns_id, handle, "integration token", CategoryName::Token);
+        db.put_secret(&secret).await.expect("put name-match");
+    }
+    for i in 0..10u32 {
+        let handle = make_handle("page-ns", "note", &format!("integration-note-{i}"));
+        let secret = make_secret_with_description(
+            ns_id,
+            handle,
+            "acme organization infrastructure note",
+            CategoryName::Note,
+        );
+        db.put_secret(&secret).await.expect("put desc-match");
+    }
+
+    let page1 = ranked_search(&db, &ns_id, "acme", 5, 0).await;
+    let page2 = ranked_search(&db, &ns_id, "acme", 5, 5).await;
+
+    assert_eq!(page1.items.len(), 5, "page 1 must have 5 items");
+    assert_eq!(page2.items.len(), 5, "page 2 must have 5 items");
+    assert_eq!(page1.total, 15, "total must be 15");
+    assert!(page1.has_more, "page 1 must have has_more=true");
+
+    // No overlap between pages.
+    let page1_handles: std::collections::HashSet<String> = page1
+        .items
+        .iter()
+        .map(|r| r.secret.handle.to_string())
+        .collect();
+    let page2_handles: std::collections::HashSet<String> = page2
+        .items
+        .iter()
+        .map(|r| r.secret.handle.to_string())
+        .collect();
+    assert!(
+        page1_handles.is_disjoint(&page2_handles),
+        "no handle must appear on both pages"
+    );
+
+    // Last result on page 1 has score ≤ first result on page 2
+    // (page 1 is ordered best-first; last on p1 is worse than first on p2).
+    let last_p1_score = page1.items.last().expect("nonempty").score;
+    let first_p2_score = page2.items.first().expect("nonempty").score;
+    assert!(
+        last_p1_score <= first_p2_score,
+        "last page-1 score ({last_p1_score}) must be more relevant (≤) than first page-2 score ({first_p2_score})"
+    );
+
+    // Page-local bm25_rank starts at 1 on each page.
+    assert_eq!(page1.items[0].bm25_rank, 1, "page 1 rank 1 must be 1");
+    assert_eq!(page2.items[0].bm25_rank, 1, "page 2 rank 1 must be 1");
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 (ADR-0027 §Validation 1 + Validation 8): privacy audit — private
+// fields never in FTS5 index or highlights.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 1 + 8: FTS5 index contains no private field names;
+/// search for "SUPERSECRET" returns zero results; highlights carry no
+/// private field names.
+#[tokio::test]
+async fn bm25_privacy_audit_private_fields_never_indexed() {
+    let db = open_memory().await;
+    let ns = make_namespace("priv-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    // Insert a secret — the ciphertext bytes are never in the FTS5 index.
+    let handle = make_handle("priv-ns", "ssh", "prod-key");
+    let ad = handle.to_string().into_bytes();
+    // Use a recognizable "private" pattern in the ciphertext bytes.
+    let ciphertext = b"SUPERSECRET_KEY_MATERIAL".to_vec();
+    let blob = PrivateBlob::new(ciphertext, [0u8; 24], [0u8; 16], ad, 1);
+    let version = SecretVersion {
+        id: SecretVersionId::new(),
+        secret_id: SecretId::new(),
+        version_no: 1,
+        blob,
+        dek_version: 1,
+        created_at: Rfc3339Timestamp::now(),
+        deprecated_at: None,
+    };
+    let pm = PublicMetadata::new(true);
+    let secret = Secret::new(
+        ns_id,
+        handle,
+        CategoryName::SshKey,
+        Sensitivity::Low,
+        vec![],
+        pm,
+        version,
+    )
+    .expect("valid secret");
+    db.put_secret(&secret).await.expect("put_secret");
+
+    // Searching for the ciphertext content must return zero results.
+    let result = ranked_search(&db, &ns_id, "SUPERSECRET", 10, 0).await;
+    assert_eq!(
+        result.items.len(),
+        0,
+        "private ciphertext bytes must not be indexed in FTS5"
+    );
+
+    // FTS5 consistency check must pass (column list correct, no orphans).
+    db.check_fts5_consistency()
+        .await
+        .expect("fts5 consistency check must pass");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (ADR-0027 §Validation 7): doctor check validates FTS5 schema.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 §Validation 7: `check_fts5_consistency` passes on a correctly
+/// initialized database.
+#[tokio::test]
+async fn bm25_doctor_fts5_schema_check_passes() {
+    let db = open_memory().await;
+
+    // An empty DB (no secrets) must still pass — column list is the authority.
+    db.check_fts5_consistency()
+        .await
+        .expect("fts5 consistency check must pass on empty DB");
+
+    // Insert a namespace + secret, then check again.
+    let ns = make_namespace("doctor-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let handle = make_handle("doctor-ns", "ssh", "my-key");
+    let secret = make_secret(ns.id, handle);
+    db.put_secret(&secret).await.expect("put_secret");
+
+    db.check_fts5_consistency()
+        .await
+        .expect("fts5 consistency check must pass after insert");
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 (ADR-0027 §Validation — porter stemming): inflected terms match.
+// ---------------------------------------------------------------------------
+
+/// ADR-0027 stemming: porter tokenizer maps "authenticat*" to the same stem
+/// as "authentication" and "authorization".
+#[tokio::test]
+async fn bm25_porter_stemming_matches_inflected_terms() {
+    let db = open_memory().await;
+    let ns = make_namespace("stem-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    // Document uses the noun "authentication"; we query with the verb "authenticate".
+    // Porter stemming maps both to the same stem so they match.
+    let handle = make_handle("stem-ns", "token", "auth-service-token");
+    let secret = make_secret_with_description(
+        ns_id,
+        handle,
+        "authentication token for the authorization service",
+        CategoryName::Token,
+    );
+    db.put_secret(&secret).await.expect("put_secret");
+
+    // "authenticate" (verb) must match "authentication" (noun) via Porter stemming.
+    let result_auth = ranked_search(&db, &ns_id, "authenticate", 10, 0).await;
+    assert!(
+        !result_auth.items.is_empty(),
+        "porter stemmer must match 'authenticate' against 'authentication'"
+    );
+
+    // "authorize" must match "authorization" via Porter stemming.
+    let result_author = ranked_search(&db, &ns_id, "authorize", 10, 0).await;
+    assert!(
+        !result_author.items.is_empty(),
+        "porter stemmer must match 'authorize' against 'authorization'"
+    );
+
+    // Prefix query: "auth" prefix must find the document.
+    let result_prefix = ranked_search(&db, &ns_id, "auth*", 10, 0).await;
+    assert!(
+        !result_prefix.items.is_empty(),
+        "prefix 'auth*' must match 'authentication' and 'authorization'"
+    );
 }

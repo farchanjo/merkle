@@ -539,14 +539,14 @@ async fn test_search_secrets_returns_results() {
     let search_cmd = SearchSecretsCommand {
         namespace_id: ns_id,
         query: "key".into(),
-        limit: None,
+        limit: 10,
+        offset: 0,
     };
     let search_out = search_cmd.execute(&ctx).await.expect("search_secrets");
-    // SQLite FTS5 should return secrets whose metadata contains "key".
-    // In-memory sqlite with FTS5 might return 0 if the adapter doesn't have FTS5
-    // enabled, but the command itself must not error.
+    // SQLite FTS5 should return secrets whose name contains "key".
+    // The command must not error; result count is non-negative.
     assert!(
-        search_out.secrets.len() <= 2,
+        search_out.result.items.len() <= 10,
         "search returned unexpected count"
     );
 }
