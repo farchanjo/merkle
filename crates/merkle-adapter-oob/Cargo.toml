@@ -1,0 +1,46 @@
+[package]
+name         = "merkle-adapter-oob"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driven-port adapter: OOB Confirmation delivery through desktop notifications, terminal TTY prompt, and localhost-only browser confirmation. Verifies Companion Device Ed25519 OobResolution signatures."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+## Enable real OS desktop notification delivery via `notify-rust`.
+## Without this feature the `DesktopNotifChannel` is a minimal stub.
+desktop-notif-real = ["dep:notify-rust"]
+## Enable the real axum-based localhost HTTP confirmation server and
+## browser-open support via the `open` crate.
+## Without this feature the `LocalhostConfirmChannel` is a minimal stub.
+localhost-confirm-real = ["dep:axum", "dep:hyper", "dep:open"]
+## Convenience alias: enables all real channel implementations.
+all-channels = ["desktop-notif-real", "localhost-confirm-real"]
+
+[dependencies]
+merkle-types                   = { workspace = true }
+merkle-ports                   = { workspace = true }
+merkle-domain-access-mediation = { workspace = true }
+async-trait  = { workspace = true }
+tokio        = { workspace = true, features = ["rt", "sync", "time", "macros", "io-std"] }
+parking_lot  = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+
+# --- Optional: desktop-notif-real ---
+notify-rust  = { version = "4", optional = true }
+
+# --- Optional: localhost-confirm-real ---
+axum         = { workspace = true, optional = true }
+hyper        = { workspace = true, optional = true }
+open         = { version = "5", optional = true }
+
+[dev-dependencies]
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+reqwest      = { workspace = true }

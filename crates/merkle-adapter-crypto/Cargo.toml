@@ -1,0 +1,32 @@
+[package]
+name         = "merkle-adapter-crypto"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driven-port adapter: XChaCha20-Poly1305 AEAD, BLAKE3 hash chain, Argon2id KDF, age backup encryption, Ed25519 / X25519 key operations. Nonce generation via OsRng."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types           = { workspace = true }
+merkle-ports           = { workspace = true }
+merkle-domain-identity = { workspace = true }
+chacha20poly1305       = { workspace = true }
+blake3                 = { workspace = true }
+argon2                 = { workspace = true }
+age                    = { workspace = true }
+ed25519-dalek          = { workspace = true }
+x25519-dalek           = { workspace = true }
+secrecy                = { workspace = true }
+zeroize                = { workspace = true }
+rand                   = { workspace = true }
+rand_core              = { version = "0.6", features = ["getrandom"] }
+hex                    = { workspace = true }
+thiserror              = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+age                    = { workspace = true }
+merkle-domain-identity = { workspace = true }

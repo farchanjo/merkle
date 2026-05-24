@@ -1,0 +1,26 @@
+[package]
+name         = "merkle-adapter-external-services"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driven-port adapter: SSH exec (subprocess via tempfile identity) and HTTP requests (reqwest + rustls). Implements ExternalServices port without exposing plaintext key material."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+merkle-ports = { workspace = true }
+async-trait  = { workspace = true }
+tokio        = { workspace = true, features = ["rt", "process", "io-util", "time"] }
+reqwest      = { workspace = true }
+tempfile     = { workspace = true }
+thiserror    = { workspace = true }
+base64       = { workspace = true }
+parking_lot  = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }

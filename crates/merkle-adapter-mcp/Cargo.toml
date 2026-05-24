@@ -1,0 +1,35 @@
+[package]
+name         = "merkle-adapter-mcp"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driving-port adapter: rmcp SDK MCP server. Translates MCP stdio tool calls into JSON-RPC messages forwarded to the Vault Agent Companion Socket. Exposes vault.list, vault.describe, vault.use, vault.reveal, vault.put, vault.rotate, vault.delete, vault.bind, and all Proxy Tool entrypoints."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types                    = { workspace = true }
+merkle-application              = { workspace = true }
+merkle-ports                    = { workspace = true }
+merkle-domain-access-mediation  = { workspace = true }
+merkle-domain-audit-compliance  = { workspace = true }
+merkle-domain-backup-recovery   = { workspace = true }
+merkle-domain-identity          = { workspace = true }
+rmcp                           = { workspace = true }
+tokio                          = { workspace = true }
+anyhow                         = { workspace = true }
+base64                         = { workspace = true }
+serde                          = { workspace = true }
+serde_json                     = { workspace = true }
+tracing                        = { workspace = true }
+thiserror                      = { workspace = true }
+
+[dev-dependencies]
+tokio                        = { workspace = true, features = ["macros", "rt-multi-thread"] }
+merkle-adapter-sqlite        = { workspace = true }
+merkle-adapter-crypto        = { workspace = true }
+merkle-adapter-keychain      = { workspace = true }
+merkle-adapter-oob           = { workspace = true }
+merkle-adapter-external-services = { workspace = true }

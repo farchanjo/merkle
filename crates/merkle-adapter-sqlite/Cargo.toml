@@ -1,0 +1,33 @@
+[package]
+name         = "merkle-adapter-sqlite"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driven-port adapter: SQLite storage via sqlx. WAL mode, per-blob XChaCha20-Poly1305 AEAD on private_blob, FTS5 index over public metadata, append-only audit triggers."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types                    = { workspace = true }
+merkle-ports                    = { workspace = true }
+merkle-domain-secret-storage    = { workspace = true }
+merkle-domain-access-mediation  = { workspace = true }
+merkle-domain-audit-compliance  = { workspace = true }
+merkle-domain-backup-recovery   = { workspace = true }
+merkle-domain-policy-permissions = { workspace = true }
+sqlx         = { workspace = true, features = ["sqlite", "runtime-tokio-rustls", "macros", "migrate"] }
+tokio        = { workspace = true, features = ["full"] }
+async-trait  = { workspace = true }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+blake3       = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+tokio        = { workspace = true, features = ["macros", "test-util", "rt-multi-thread"] }
+tempfile     = { workspace = true }

@@ -1,0 +1,125 @@
+//! Handlers for session lease endpoints:
+//!
+//! - `POST   /v1/sessions`
+//! - `DELETE /v1/sessions/{session_id}`
+//!
+//! Sessions are backed by `BindNamespaceCommand` — each `POST /v1/sessions`
+//! call either binds a new namespace (or retrieves an existing one) and returns
+//! a session descriptor. `DELETE /v1/sessions/{id}` is a no-op at this phase
+//! because namespace bindings are persistent; a future unbind command will be
+//! wired in Phase 6.B.
+
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
+use merkle_application::commands::bind_namespace::BindNamespaceCommand;
+use merkle_types::SecurityProfile;
+use std::sync::Arc;
+use tracing::instrument;
+use uuid::Uuid;
+
+use crate::{
+    AppContext,
+    dto::{CloseSessionResponse, CreateSessionRequest, CreateSessionResponse},
+    problem::app_error_to_problem,
+};
+
+/// `POST /v1/sessions`
+///
+/// Called by the MCP Adapter after the `notifications/initialized` handshake.
+/// Creates or re-binds a namespace for the given `cwd_hash`.
+#[instrument(skip(ctx, body))]
+pub async fn create_session(
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<CreateSessionRequest>,
+) -> impl IntoResponse {
+    // Derive a namespace label from the optional namespace_label field or the
+    // cwd_hash prefix so that each distinct project directory gets its own
+    // namespace.
+    let raw_label = body
+        .namespace_label
+        .as_deref()
+        .unwrap_or_else(|| {
+            // Fall back to first 24 chars of cwd_hash as a slug.
+            let end = body.cwd_hash.len().min(24);
+            &body.cwd_hash[..end]
+        })
+        .to_owned();
+
+    // NamespaceLabel requires DNS-safe format; sanitize to [a-z0-9-].
+    let sanitized = raw_label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+
+    let label: merkle_types::NamespaceLabel = match sanitized.parse() {
+        Ok(l) => l,
+        Err(_) => {
+            // Absolute fallback: use a fixed label when sanitization produces garbage.
+            match "default-session".parse() {
+                Ok(l) => l,
+                Err(e) => {
+                    return crate::problem::Problem {
+                        kind: crate::problem::ProblemType::SchemaValidationFailed,
+                        title: "Invalid namespace label".into(),
+                        status: 400,
+                        detail: e.to_string(),
+                        instance: None,
+                        hint: None,
+                        fields: vec![],
+                    }
+                    .into_response();
+                }
+            }
+        }
+    };
+
+    let cmd = BindNamespaceCommand {
+        label: label.clone(),
+        cwd_hash: Some(body.cwd_hash.clone()),
+        dek_version: 1,
+    };
+
+    match cmd.execute(&ctx).await {
+        Ok(output) => {
+            let resp = CreateSessionResponse {
+                // Use the namespace_id as the session_id — there's a 1:1
+                // mapping in Phase 6; a separate session table is Phase 6.B.
+                session_id: output.namespace_id.inner().inner(),
+                namespace_id: output.namespace_id.inner().inner(),
+                namespace_label: output.label.to_string(),
+                policy_profile: SecurityProfile::Balanced,
+            };
+            (StatusCode::CREATED, Json(resp)).into_response()
+        }
+        Err(err) => app_error_to_problem(err).into_response(),
+    }
+}
+
+/// `DELETE /v1/sessions/{session_id}`
+///
+/// Called by the MCP Adapter when the MCP client closes.
+///
+/// NOTE: Namespace bindings are persistent across sessions. This endpoint
+/// acknowledges the close and clears any in-flight state (none in Phase 6).
+/// A dedicated `UnbindNamespaceCommand` will be wired in Phase 6.B.
+#[instrument(skip(_ctx))]
+#[expect(clippy::used_underscore_binding, reason = "axum extractors accepted but intentionally unused in Phase 6.B stub")]
+pub async fn close_session(
+    State(_ctx): State<Arc<AppContext>>,
+    Path(_session_id): Path<Uuid>,
+) -> impl IntoResponse {
+    // FIXME(F6.B): Wire to UnbindNamespaceCommand once implemented.
+    // For now, respond with a 200 no-op acknowledging the close.
+    let resp = CloseSessionResponse {
+        closed: true,
+        use_tokens_revoked: Some(0),
+        tempfiles_scheduled_for_cleanup: Some(0),
+    };
+    (StatusCode::OK, Json(resp))
+}

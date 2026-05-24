@@ -1,0 +1,30 @@
+[package]
+name         = "merkle-adapter-keychain"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driven-port adapter: cross-OS keychain via the keyring crate. Stores and retrieves Master Key under service identifier dev.fapp.merkle. Falls back to Argon2id KDF when no OS keychain is available."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+merkle-ports = { workspace = true }
+keyring      = { workspace = true }
+secrecy      = { workspace = true }
+zeroize      = { workspace = true, features = ["derive"] }
+async-trait  = { workspace = true }
+tokio        = { workspace = true, features = ["rt", "sync"] }
+serde        = { workspace = true, features = ["derive"] }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+parking_lot  = { workspace = true }
+tracing      = { workspace = true }
+age          = { workspace = true }
+base64       = { workspace = true }
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }

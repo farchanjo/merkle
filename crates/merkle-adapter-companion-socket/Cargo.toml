@@ -1,0 +1,70 @@
+[package]
+name         = "merkle-adapter-companion-socket"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Driving-port adapter: Unix domain socket (or Windows named pipe) HTTP server via axum. The single inbound driving port for the Vault Agent domain. Authenticates callers by PID and process name against Allowed Consumers."
+
+# This crate inherits the workspace lint baseline but relaxes `unsafe_code`
+# from `forbid` to `deny` because peer-credential extraction on macOS requires
+# a direct `getsockopt(LOCAL_PEERCRED)` call via `libc`, which has no safe
+# wrapper in the current dependency set. Every `unsafe` block in `peer_cred.rs`
+# carries a SAFETY comment. Tracked for replacement with `nix`/`rustix` wrappers
+# once those are added to the workspace.
+[lints.rust]
+# DTOs are transport-layer data containers whose field names mirror the OpenAPI
+# schema verbatim; per-field doc coverage adds noise without semantic value.
+missing_docs    = "allow"
+unsafe_code     = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+all      = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+module_name_repetitions     = "allow"
+must_use_candidate          = "allow"
+missing_errors_doc          = "allow"
+missing_panics_doc          = "allow"
+wildcard_imports            = "allow"
+doc_markdown                = "allow"
+
+[dependencies]
+merkle-types                   = { workspace = true }
+merkle-application             = { workspace = true }
+merkle-ports                   = { workspace = true }
+merkle-domain-identity         = { workspace = true }
+merkle-domain-access-mediation = { workspace = true }
+merkle-domain-audit-compliance = { workspace = true }
+merkle-domain-backup-recovery   = { workspace = true }
+merkle-domain-secret-storage    = { workspace = true }
+axum               = { workspace = true }
+hyper              = { workspace = true }
+tower              = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+chrono             = { workspace = true }
+uuid               = { workspace = true }
+base64             = { workspace = true }
+tower-http         = { version = "0.6", features = ["trace", "limit"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio                        = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile                     = { workspace = true }
+hyper-util                   = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util               = "0.1"
+tower                        = { workspace = true, features = ["full"] }
+merkle-adapter-sqlite        = { workspace = true }
+merkle-adapter-crypto        = { workspace = true }
+merkle-adapter-keychain      = { workspace = true }
+merkle-adapter-oob           = { workspace = true }
+merkle-adapter-external-services = { workspace = true }
+merkle-domain-identity       = { workspace = true }
+merkle-types                 = { workspace = true }
