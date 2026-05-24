@@ -266,25 +266,44 @@ async fn build_keychain(cfg: &AgentConfig) -> anyhow::Result<Arc<dyn Keychain>> 
             // Service + account constants for the OS keychain probe.
             // Defined before the let binding to satisfy `items_after_statements`.
             const PROBE_SVC: &str = "dev.fapp.merkle";
-            const PROBE_ACCT: &str = "__merkle_probe_headless_check";
+            const PROBE_ACCT: &str = "__merkle_probe_persist_check";
+            const PROBE_SECRET: &[u8] = b"merkle-probe-v1";
 
             info!("keystore backend: auto (os-first, file fallback)");
-            // Probe the OS keychain with a sentinel read; a Backend error means
-            // the OS keychain is unavailable. PersistenceFailed would only surface
-            // during a write, so we treat any OS init error as trigger to fall back.
             let os_adapter = OsKeychainAdapter::new();
 
-            // Attempt a no-op retrieve on a known-absent key to verify OS keychain
-            // is accessible.  `NotFound` means accessible (entry just absent);
-            // any other error triggers fallback.
-            match os_adapter.retrieve(PROBE_SVC, PROBE_ACCT).await {
-                Ok(_) | Err(KeychainError::NotFound) => {
-                    info!("keystore auto: OS keychain accessible, using os backend");
+            // Read-only probes are not enough on macOS: an unsigned /
+            // headless binary can pass a retrieve() call yet silently fail
+            // every store() (Keychain returns success but the entry is
+            // never persisted — ADR-0015 Amendment 4). Detect that by
+            // exercising the full write+verify+delete cycle on a sentinel
+            // entry. Anything other than a fully-round-tripped sentinel
+            // triggers fallback to the file backend.
+            let _ = os_adapter.delete(PROBE_SVC, PROBE_ACCT).await; // stale-probe cleanup
+            let probe_result = match os_adapter.store(PROBE_SVC, PROBE_ACCT, PROBE_SECRET).await {
+                Ok(()) => match os_adapter.retrieve(PROBE_SVC, PROBE_ACCT).await {
+                    Ok(read) if read == PROBE_SECRET => Ok(()),
+                    Ok(_) => Err(KeychainError::Backend(
+                        "OS keychain probe round-tripped mismatched bytes".to_owned(),
+                    )),
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            };
+            let _ = os_adapter.delete(PROBE_SVC, PROBE_ACCT).await; // best-effort cleanup
+
+            match probe_result {
+                Ok(()) => {
+                    info!("keystore auto: OS keychain write+verify OK, using os backend");
                     Ok(Arc::new(os_adapter))
                 }
-                Err(KeychainError::PersistenceFailed { .. } | KeychainError::Backend(_)) => {
+                Err(
+                    KeychainError::PersistenceFailed { .. }
+                    | KeychainError::NotFound
+                    | KeychainError::Backend(_),
+                ) => {
                     tracing::warn!(
-                        "keystore auto: OS keychain probe failed, falling back to file backend"
+                        "keystore auto: OS keychain probe failed (write succeeded but verify did not), falling back to file backend"
                     );
                     let path = cfg.keystore.resolved_file_path();
                     let passphrase = read_keystore_passphrase()?;
