@@ -55,12 +55,37 @@ impl SessionState {
         self.session_id
     }
 
+    /// Return `true` when a namespace has already been committed in this session.
+    ///
+    /// Used as the Phase-1 guard check (ADR-0026 two-phase commit) so that
+    /// `namespace_bound` is only set after the Companion Socket call succeeds.
+    #[must_use]
+    pub fn is_bound(&self) -> bool {
+        self.namespace_bound
+    }
+
+    /// Atomically commit a successful namespace binding.
+    ///
+    /// Sets all four fields (`namespace_bound`, `namespace_label`, `namespace_id`,
+    /// `session_id`) in one critical section, guaranteeing they are always
+    /// mutually consistent (ADR-0026 §Adapter fix).
+    ///
+    /// Must only be called after the Companion Socket call has returned success.
+    pub fn commit_binding(&mut self, label: String, namespace_id: Uuid, session_id: Uuid) {
+        self.namespace_bound = true;
+        self.namespace_label = Some(label);
+        self.namespace_id = Some(namespace_id);
+        self.session_id = Some(session_id);
+    }
+
     /// Record a namespace binding. Returns `Err` if already bound.
+    ///
+    /// Retained for use in tests that directly assemble a pre-bound session.
     ///
     /// # Errors
     ///
-    /// Returns `"AlreadyBound"` message string when `vault.bind` has already
-    /// been called in this session.
+    /// Returns `"AlreadyBound"` when `vault.bind` has already been called in
+    /// this session.
     pub fn bind(&mut self, label: String) -> Result<(), &'static str> {
         if self.namespace_bound {
             return Err("AlreadyBound: session already bound to a Namespace");
@@ -72,9 +97,7 @@ impl SessionState {
 
     /// Persist the `namespace_id` and `session_id` returned by `POST /v1/sessions`.
     ///
-    /// Called immediately after a successful `vault.bind` to ensure all
-    /// subsequent tool calls use the same namespace record and session correlation
-    /// from storage.
+    /// Retained for use in tests that directly assemble a pre-bound session.
     pub fn set_binding(&mut self, namespace_id: Uuid, session_id: Uuid) {
         self.namespace_id = Some(namespace_id);
         self.session_id = Some(session_id);
