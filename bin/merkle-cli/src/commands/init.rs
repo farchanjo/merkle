@@ -57,7 +57,13 @@ pub async fn run(
 
     let resp: InitVaultResponse = client.post("/v1/agent/init", &req).await.map_err(|e| {
         // Surface a tailored message for the already-initialized 409.
-        if let CliError::AgentError { status: 409, ref title, .. } = e {
+        let cli_err: CliError = e.into();
+        if let CliError::AgentError {
+            status: 409,
+            ref title,
+            ..
+        } = cli_err
+        {
             return CliError::AgentError {
                 status: 409,
                 title: title.clone(),
@@ -66,7 +72,7 @@ pub async fn run(
                     .to_owned(),
             };
         }
-        e
+        cli_err
     })?;
 
     // ── Recovery Key display (REQUIRED — always before any other output) ──

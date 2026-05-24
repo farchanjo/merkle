@@ -2419,17 +2419,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "merkle-adapter-crypto",
- "merkle-adapter-external-services",
- "merkle-adapter-keychain",
- "merkle-adapter-oob",
- "merkle-adapter-sqlite",
- "merkle-application",
- "merkle-domain-access-mediation",
- "merkle-domain-audit-compliance",
- "merkle-domain-backup-recovery",
- "merkle-domain-identity",
- "merkle-ports",
+ "blake3",
+ "merkle-companion-client",
  "merkle-types",
  "rmcp",
  "serde",
@@ -2437,6 +2428,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2498,15 +2490,14 @@ dependencies = [
  "merkle-adapter-crypto",
  "merkle-adapter-external-services",
  "merkle-adapter-keychain",
- "merkle-adapter-mcp",
  "merkle-adapter-oob",
  "merkle-adapter-sqlite",
  "merkle-application",
+ "merkle-companion-client",
  "merkle-domain-identity",
  "merkle-ports",
  "merkle-types",
  "prometheus",
- "rmcp",
  "rpassword",
  "secrecy 0.10.3",
  "serde",
@@ -2589,6 +2580,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "merkle-companion-client",
  "merkle-types",
  "rpassword",
  "serde",
@@ -2599,6 +2591,24 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "merkle-companion-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "merkle-adapter-companion-socket",
+ "merkle-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "uuid",
 ]
 
 [[package]]
@@ -2696,6 +2706,21 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "merkle-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "merkle-adapter-mcp",
+ "merkle-companion-client",
+ "rmcp",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "tracing-subscriber",
 ]
 

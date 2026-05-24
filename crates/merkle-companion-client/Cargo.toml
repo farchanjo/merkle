@@ -1,0 +1,24 @@
+[package]
+name         = "merkle-companion-client"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+description  = "Reusable HTTP/1.1 client for the Merkle Vault Agent Companion Socket (Unix domain socket transport). Used by merkle-cli and future merkle-mcp adapter binaries."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types                   = { workspace = true }
+merkle-adapter-companion-socket = { workspace = true }
+uuid       = { workspace = true }
+tokio      = { workspace = true, features = ["net"] }
+hyper      = { workspace = true, features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio", "client", "http1"] }
+http-body-util = "0.1"
+tower      = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+anyhow     = { workspace = true }
+thiserror  = { workspace = true }

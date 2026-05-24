@@ -1,7 +1,6 @@
 //! CLI error types and process exit code mapping.
 
-use std::fmt;
-
+use merkle_companion_client::ClientError;
 use thiserror::Error;
 
 /// Top-level CLI error. Each variant maps to a distinct process exit code.
@@ -74,26 +73,18 @@ impl CliError {
     }
 }
 
-/// A problem+json error envelope as returned by the Companion Socket API.
-#[derive(Debug, serde::Deserialize)]
-pub struct ProblemDetail {
-    /// RFC 7807 type URI.
-    #[serde(rename = "type", default)]
-    pub problem_type: String,
-    /// Short title string.
-    #[serde(default)]
-    pub title: String,
-    /// Detailed description.
-    #[serde(default)]
-    pub detail: String,
-    /// HTTP status.
-    #[serde(default)]
-    #[expect(dead_code, reason = "used for completeness; title+detail are primary")]
-    pub status: u16,
-}
-
-impl fmt::Display for ProblemDetail {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.title, self.detail)
+impl From<ClientError> for CliError {
+    fn from(err: ClientError) -> Self {
+        match err {
+            ClientError::Unreachable(msg) => Self::AgentUnreachable(msg),
+            ClientError::Http { status, problem } => Self::AgentError {
+                status,
+                title: problem.title,
+                detail: problem.detail,
+            },
+            ClientError::Json(e) => Self::Json(e),
+            ClientError::Sealed => Self::Sealed,
+            ClientError::Build(e) => Self::Other(e),
+        }
     }
 }

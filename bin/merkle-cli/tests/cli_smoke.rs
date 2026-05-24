@@ -23,8 +23,8 @@ use std::task::{Context, Poll};
 
 use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
-use hyper_util::client::legacy::connect::{Connected, Connection};
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::{Connected, Connection};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::UnixStream;
 use tower::Service;
@@ -113,7 +113,9 @@ fn resolve_socket() -> PathBuf {
 
 async fn get_json(path: &str) -> anyhow::Result<serde_json::Value> {
     let socket = resolve_socket();
-    let connector = SmokeConnector { socket_path: socket };
+    let connector = SmokeConnector {
+        socket_path: socket,
+    };
     let client: Client<SmokeConnector, Full<Bytes>> =
         Client::builder(TokioExecutor::new()).build(connector);
 
