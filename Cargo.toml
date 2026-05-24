@@ -1,0 +1,197 @@
+[workspace]
+resolver = "3"
+members = [
+    # Foundation
+    "crates/merkle-types",
+
+    # Domain crates (one per bounded context)
+    "crates/merkle-domain-identity",
+    "crates/merkle-domain-secret-storage",
+    "crates/merkle-domain-access-mediation",
+    "crates/merkle-domain-audit-compliance",
+    "crates/merkle-domain-backup-recovery",
+    "crates/merkle-domain-policy-permissions",
+
+    # Hexagonal port traits
+    "crates/merkle-ports",
+
+    # Driven-port adapters
+    "crates/merkle-adapter-sqlite",
+    "crates/merkle-adapter-keychain",
+    "crates/merkle-adapter-crypto",
+    "crates/merkle-adapter-oob",
+    "crates/merkle-adapter-external-services",
+
+    # Driving-port adapters
+    "crates/merkle-adapter-mcp",
+    "crates/merkle-adapter-companion-socket",
+
+    # Application layer (use cases / command handlers)
+    "crates/merkle-application",
+
+    # BDD acceptance tests
+    "crates/merkle-bdd",
+
+    # E2E integration tests
+    "crates/merkle-e2e",
+
+    # Binaries
+    "bin/merkle-agent",
+    "bin/merkle-cli",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.85"
+license      = "Apache-2.0"
+authors      = ["Merkle Contributors"]
+repository   = "https://github.com/farchanjo/mcp-vault"
+readme       = "README.md"
+
+# ---------------------------------------------------------------------------
+# Shared dependencies — all crates reference these via `{ workspace = true }`
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+
+# Async runtime
+tokio            = { version = "1.44", features = ["full"] }
+tokio-util       = { version = "0.7", features = ["rt"] }
+futures          = "0.3"
+
+# Error handling
+anyhow           = "1.0"
+thiserror        = "2.0"
+
+# Observability
+tracing          = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Serialization
+serde            = { version = "1.0", features = ["derive"] }
+serde_json       = "1.0"
+
+# Async trait support (still needed for dyn-dispatch paths; AFIT covers static dispatch)
+async-trait      = "0.1"
+
+# Identifiers and time
+uuid             = { version = "1.16", features = ["v7", "serde"] }
+rand             = "0.9"
+chrono           = { version = "0.4", features = ["serde"] }
+
+# Bytes and encoding
+bytes            = "1.10"
+hex              = "0.4"
+base64           = "0.22"
+
+# Concurrency
+parking_lot      = "0.12"
+dashmap          = "6.1"
+
+# Cryptography
+# XChaCha20Poly1305 type is built-in since 0.10; no feature flag required.
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+blake3           = "1.8"
+argon2           = "0.5"
+age              = { version = "0.10", features = ["async"] }
+ed25519-dalek    = { version = "2.1", features = ["serde", "rand_core"] }
+x25519-dalek     = { version = "2.0", features = ["serde", "static_secrets"] }
+
+# Secrets in memory
+secrecy          = { version = "0.10", features = ["serde"] }
+zeroize          = { version = "1.8", features = ["derive"] }
+
+# OS keychain
+keyring          = { version = "3.6", features = ["sync-secret-service"] }
+
+# Password prompt (TTY, no echo)
+rpassword        = "7.4"
+
+# MCP adapter
+rmcp             = { version = "0.3", features = ["server", "macros"] }
+
+# HTTP / IPC
+axum             = { version = "0.8", features = ["macros"] }
+hyper            = { version = "1.6", features = ["full"] }
+tower            = { version = "0.5", features = ["full"] }
+reqwest          = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# CLI
+clap             = { version = "4.5", features = ["derive", "env"] }
+
+# Configuration
+config           = { version = "0.14", features = ["toml"] }
+toml             = "0.8"
+
+# Storage
+sqlx             = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono", "uuid"] }
+
+# Internal crates
+merkle-types                    = { path = "crates/merkle-types" }
+merkle-domain-identity          = { path = "crates/merkle-domain-identity" }
+merkle-domain-secret-storage    = { path = "crates/merkle-domain-secret-storage" }
+merkle-domain-access-mediation  = { path = "crates/merkle-domain-access-mediation" }
+merkle-domain-audit-compliance  = { path = "crates/merkle-domain-audit-compliance" }
+merkle-domain-backup-recovery   = { path = "crates/merkle-domain-backup-recovery" }
+merkle-domain-policy-permissions = { path = "crates/merkle-domain-policy-permissions" }
+merkle-ports                    = { path = "crates/merkle-ports" }
+merkle-adapter-sqlite           = { path = "crates/merkle-adapter-sqlite" }
+merkle-adapter-keychain         = { path = "crates/merkle-adapter-keychain" }
+merkle-adapter-crypto           = { path = "crates/merkle-adapter-crypto" }
+merkle-adapter-oob              = { path = "crates/merkle-adapter-oob" }
+merkle-adapter-mcp                   = { path = "crates/merkle-adapter-mcp" }
+merkle-adapter-companion-socket      = { path = "crates/merkle-adapter-companion-socket" }
+merkle-adapter-external-services     = { path = "crates/merkle-adapter-external-services" }
+merkle-application              = { path = "crates/merkle-application" }
+
+# Metrics
+prometheus       = { version = "0.13", features = ["process"] }
+
+# String utilities
+once_cell        = "1.21"
+regex            = "1.11"
+
+# BDD test runner
+cucumber         = "0.22"
+
+# Dev / test dependencies
+proptest         = "1.6"
+mockall          = "0.13"
+tempfile         = "3.19"
+pretty_assertions = "1.4"
+wiremock         = "0.6"
+
+# ---------------------------------------------------------------------------
+# Workspace-wide lint baseline — Layers A / B / C
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+missing_docs        = "warn"
+unsafe_code         = "forbid"
+unused_must_use     = "deny"
+
+[workspace.lints.clippy]
+# Layer A — hard errors
+all       = { level = "deny", priority = -1 }
+pedantic  = { level = "deny", priority = -1 }
+
+# Layer B — selected allows for practical ergonomics
+module_name_repetitions     = "allow"
+must_use_candidate          = "allow"
+missing_errors_doc          = "allow"
+missing_panics_doc          = "allow"
+wildcard_imports            = "allow"
+# doc_markdown: stub crates carry plain-prose doc comments;
+# backtick audit is deferred to Phase 2 when real code lands.
+doc_markdown                = "allow"
+
+# ---------------------------------------------------------------------------
+# Build profiles
+# ---------------------------------------------------------------------------
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level       = 3
+lto             = true
+codegen-units   = 1
+strip           = true

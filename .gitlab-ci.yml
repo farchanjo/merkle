@@ -1,0 +1,254 @@
+---
+# Merkle CI — GitLab
+# ADR-0018: spec validate --lane full is a blocking merge gate.
+
+include:
+  - project: "spec-framework/spec-framework"
+    ref: "v1.0.0"
+    file: "/ci/gitlab/spec.gitlab-ci.yml"
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+default:
+  image: rust:1.85
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq
+        libsqlite3-dev
+        pkg-config
+        libssl-dev
+        libdbus-1-dev
+    - rustup component add clippy rustfmt llvm-tools-preview
+    - cargo install cargo-deny --locked 2>/dev/null || true
+    - cargo install cargo-audit --locked 2>/dev/null || true
+    - cargo install cargo-llvm-cov --locked 2>/dev/null || true
+  interruptible: true
+
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+.cargo-cache: &cargo-cache
+  cache:
+    key:
+      files:
+        - Cargo.lock
+      prefix: "${CI_JOB_NAME}-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/git/db/
+      - target/
+    policy: pull-push
+
+# ---------------------------------------------------------------------------
+# Stages
+# ---------------------------------------------------------------------------
+stages:
+  - check
+  - lint
+  - test
+  - spec
+  - security
+  - coverage
+  - release
+
+# ---------------------------------------------------------------------------
+# Stage: check
+# ---------------------------------------------------------------------------
+fmt:check:
+  stage: check
+  <<: *cargo-cache
+  script:
+    - cargo fmt --check --all
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+cargo:check:
+  stage: check
+  <<: *cargo-cache
+  script:
+    - cargo check --workspace --all-targets
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: lint
+# ---------------------------------------------------------------------------
+clippy:
+  stage: lint
+  <<: *cargo-cache
+  needs: [cargo:check]
+  script:
+    - cargo clippy --workspace --all-targets -- -D warnings
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: test  (parallel matrix: linux / macos / windows)
+# ---------------------------------------------------------------------------
+.test-base: &test-base
+  stage: test
+  needs: [clippy]
+  script:
+    - cargo test --workspace --lib --bins
+    - cargo test --workspace --doc
+
+test:linux:
+  <<: [*test-base, *cargo-cache]
+  image: rust:1.85
+  tags:
+    - linux-x86_64
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+test:macos:
+  <<: *test-base
+  image: null  # use GitLab macOS shared runner
+  tags:
+    - macos-aarch64
+  before_script:
+    - rustup update stable
+    - rustup component add clippy rustfmt llvm-tools-preview
+    - cargo install cargo-deny --locked 2>/dev/null || true
+    - cargo install cargo-audit --locked 2>/dev/null || true
+  cache:
+    key:
+      files:
+        - Cargo.lock
+      prefix: "test-macos-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/git/db/
+      - target/
+    policy: pull-push
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      allow_failure: true  # macOS runner availability varies
+
+test:windows:
+  <<: *test-base
+  image: null  # use GitLab Windows shared runner
+  tags:
+    - windows-x86_64
+  before_script:
+    - rustup update stable
+    - rustup component add clippy rustfmt
+  cache:
+    key:
+      files:
+        - Cargo.lock
+      prefix: "test-windows-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/git/db/
+    policy: pull-push
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      allow_failure: true  # Windows runner availability varies
+
+# ---------------------------------------------------------------------------
+# Stage: spec  (ADR-0018 blocking gate — all 14 validators must pass)
+# ---------------------------------------------------------------------------
+spec:validate:full:
+  stage: spec
+  needs: [test:linux]
+  image: rust:1.85
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq curl git
+    # mise provides tlc, vale, conftest, cue, spectral binaries
+    - curl https://mise.run | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+    - mise install
+  script:
+    - ~/bin/spec validate --lane full
+  artifacts:
+    when: always
+    paths:
+      - .spec-reports/
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: security
+# ---------------------------------------------------------------------------
+cargo:deny:
+  stage: security
+  needs: [test:linux]
+  <<: *cargo-cache
+  script:
+    - cargo deny check
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+cargo:audit:
+  stage: security
+  needs: [test:linux]
+  <<: *cargo-cache
+  script:
+    - cargo audit
+  allow_failure: true  # advisory DB may lag; treat as warn; cargo deny advisories is the hard gate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: coverage
+# ---------------------------------------------------------------------------
+coverage:lcov:
+  stage: coverage
+  needs: [cargo:deny, spec:validate:full]
+  <<: *cargo-cache
+  script:
+    - cargo llvm-cov --workspace --lcov --output-path coverage.lcov
+    - cargo llvm-cov report --summary-only
+  coverage: '/TOTAL\s+\d+\s+\d+\s+([\d.]+)%/'
+  artifacts:
+    when: always
+    paths:
+      - coverage.lcov
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.lcov
+    expire_in: 14 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: release  (manual gate; tag-triggered)
+# ---------------------------------------------------------------------------
+release:build:
+  stage: release
+  needs: [coverage:lcov]
+  <<: *cargo-cache
+  script:
+    - cargo build --release --workspace
+    - cargo deny check
+    - cargo audit
+    - |
+      echo "=== Artifacts ==="
+      ls -lh target/release/merkle* 2>/dev/null || \
+        find target/release -maxdepth 1 -type f -perm /111 | head -20
+  artifacts:
+    paths:
+      - target/release/merkle
+    expire_in: 30 days
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+/'
+      when: manual

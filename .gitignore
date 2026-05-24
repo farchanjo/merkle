@@ -1,0 +1,56 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+# NOTE: Cargo.lock IS committed (this workspace ships binaries — reproducible builds).
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.fleet/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V7
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Linux
+*~
+.nfs*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Spec-framework artifacts
+.spec-reports/
+
+# TLA+ model checker state directories
+states/
+
+# Editor swap / backup files
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# Vault runtime artifacts (never commit secrets)
+*.merkle.age
+agent.sock
+audit_head.json

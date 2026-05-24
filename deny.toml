@@ -1,0 +1,119 @@
+# cargo-deny configuration for Merkle
+# Security-sensitive project: crypto, AEAD, secrets, OOB pairing.
+# Deny policy is intentionally strict.
+
+# ---------------------------------------------------------------------------
+# [graph] — dependency graph settings
+# ---------------------------------------------------------------------------
+[graph]
+# Resolve features for all targets in the workspace. This catches platform-
+# specific deps that would otherwise be invisible on the dev machine.
+all-features = false
+no-default-features = false
+
+# ---------------------------------------------------------------------------
+# [licenses]
+# ---------------------------------------------------------------------------
+[licenses]
+# Only permissive, OSI-approved licenses are allowed. GPL/AGPL are denied
+# because Merkle is distributed as a standalone binary and copyleft
+# contamination would constrain future dual-licensing options.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+
+deny = [
+    "GPL-2.0",
+    "GPL-3.0",
+    "LGPL-2.0",
+    "LGPL-2.1",
+    "LGPL-3.0",
+    "AGPL-3.0",
+    "EUPL-1.1",
+    "EUPL-1.2",
+    "SSPL-1.0",
+]
+
+# Minimum confidence for license inference (SPDX expression parser).
+# 0.93 is above the default 0.8 to reduce false-positive license approvals
+# for crates with non-standard license text placement.
+confidence-threshold = 0.93
+
+# Exceptions for specific crates where the license expression is ambiguous
+# or the crate ships dual-licensed headers that confuse the scanner.
+# Add entries here only after manual review of the crate's LICENSE file.
+exceptions = []
+
+# ---------------------------------------------------------------------------
+# [bans]
+# ---------------------------------------------------------------------------
+[bans]
+# Deny multiple versions of high-churn crates (tokio, serde, hyper) to keep
+# the dependency graph slim and deterministic. windows-sys is exempted because
+# the ecosystem (winapi, windows-rs) ships multiple coexisting minor versions
+# that cannot currently be unified.
+multiple-versions = "deny"
+
+# Specific crates that must not appear in the graph.
+deny = [
+    # openssl-sys: Merkle uses rustls for TLS. Any transitive pull of
+    # openssl-sys indicates a misconfigured dependency that would require
+    # dynamic linking against the system OpenSSL and break the hermetic binary.
+    { name = "openssl-sys", reason = "Use rustls; openssl-sys breaks hermetic static builds" },
+    # openssl: same reasoning as openssl-sys.
+    { name = "openssl",     reason = "Use rustls; dynamic OpenSSL breaks hermetic static builds" },
+    # git2: libgit2 requires libssl; use gitoxide (gix) if git ops are needed.
+    { name = "git2",        reason = "libgit2 pulls openssl-sys; use gitoxide (gix) instead" },
+]
+
+# Skip multiple-version checks for specific crates where ecosystem fragmentation
+# is unavoidable and upgrading is blocked by upstream constraints.
+skip = [
+    # windows-sys ships multiple minor versions that coexist peacefully and
+    # cannot be unified until all Windows crates converge on the same major.
+    { name = "windows-sys",  reason = "Ecosystem fragmentation; safe to allow multiple minor versions" },
+    { name = "windows_aarch64_gnullvm", reason = "Platform target crate; multiple versions safe" },
+    { name = "windows_aarch64_msvc",    reason = "Platform target crate; multiple versions safe" },
+    { name = "windows_i686_gnullvm",    reason = "Platform target crate; multiple versions safe" },
+    { name = "windows_i686_msvc",       reason = "Platform target crate; multiple versions safe" },
+    { name = "windows_x86_64_gnullvm",  reason = "Platform target crate; multiple versions safe" },
+    { name = "windows_x86_64_msvc",     reason = "Platform target crate; multiple versions safe" },
+]
+
+# ---------------------------------------------------------------------------
+# [advisories]
+# ---------------------------------------------------------------------------
+[advisories]
+# Deny crates with known vulnerabilities. Unmaintained crates are a warning
+# (they may be safe if usage is narrow). Yanked crates are hard-denied.
+vulnerability = "deny"
+unmaintained  = "warn"
+yanked        = "deny"
+notice        = "warn"
+
+# Ignored advisories: add only with a justification comment and a review date.
+# Format: { id = "RUSTSEC-YYYY-NNNN", reason = "...", until = "YYYY-MM-DD" }
+ignore = []
+
+# ---------------------------------------------------------------------------
+# [sources]
+# ---------------------------------------------------------------------------
+[sources]
+# Allow only crates.io. Unknown registries and git sources are denied to
+# prevent supply-chain attacks through private forks or unreviewed mirrors.
+unknown-registry = "deny"
+unknown-git      = "deny"
+
+# Allowed git sources (empty by default; add entries only after security review).
+# Format: { url = "https://github.com/owner/repo" }
+allow-git = []

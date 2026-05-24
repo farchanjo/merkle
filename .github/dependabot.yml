@@ -1,0 +1,58 @@
+# Dependabot configuration for Merkle
+# Primary CI is GitLab; this file targets the GitHub mirror (Homebrew tap
+# and Scoop bucket reference github.com/fapp — see docs/arch/operations/deployment.md).
+# Dependabot raises PRs against the GitHub mirror; security fixes are
+# cherry-picked back to the canonical GitLab repo as needed.
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # Rust / Cargo
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    # Group all patch and minor bumps into a single PR to reduce noise.
+    groups:
+      patch-and-minor:
+        update-types:
+          - patch
+          - minor
+    # Security updates are never grouped — each gets its own PR for
+    # individual review and audit trail.
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - rust
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    ignore:
+      # Pin openssl-related crates to "never update" — they must stay absent
+      # (see deny.toml [bans]). Dependabot should not re-introduce them.
+      - dependency-name: "openssl"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "openssl-sys"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions (mirror workflows, if any)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope

@@ -1,0 +1,38 @@
+# Clippy workspace-level configuration for Merkle
+# MSRV aligns with rust-toolchain.toml; update both in lock-step.
+msrv = "1.85"
+
+# Do not warn when public API breaks Clippy-inferred return types.
+# Each crate controls its own API surface; the lint is too noisy during
+# the early development phase.
+avoid-breaking-exported-api = false
+
+# Disallowed methods: enforce safe alternatives for security-sensitive code.
+# Format: { path = "crate::module::fn", reason = "..." }
+disallowed-methods = [
+    # Prefer zeroizing allocations; plain Vec::new() for secret material
+    # should route through ZeroizingAlloc or SecretVec.
+    # Uncomment and tighten once the crypto crate stabilises:
+    # { path = "std::vec::Vec::new", reason = "Use zeroize::Zeroizing<Vec<u8>> for secret buffers" },
+]
+
+# Disallowed types: prevent accidental use of non-zeroizing secret containers.
+disallowed-types = []
+
+# Allow cognitive complexity up to 25 before warning (default is 25).
+cognitive-complexity-threshold = 25
+
+# Minimum number of enum variants to trigger large_enum_variant lint.
+enum-variant-size-threshold = 200
+
+# Maximum number of single-char binding names allowed before warn.
+single-char-binding-names-threshold = 5
+
+# Vec allocation threshold (items) before large_vec_boxes fires.
+vec-box-size-threshold = 4096
+
+# Warn on items with too many function arguments (default 7).
+too-many-arguments-threshold = 7
+
+# Warn when a function has more than this many lines (default 100).
+too-many-lines-threshold = 100
