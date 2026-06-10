@@ -1,7 +1,7 @@
 //! `SealVaultCommand` — drive the `Unsealed → ShuttingDown → Sealed` transition.
 
 use merkle_types::{AuditOp, AuditOutcome, NamespaceId};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{AppContext, AppError};
 
@@ -33,7 +33,7 @@ impl SealVaultCommand {
             let ns_id = NamespaceId::new();
             let mut log = ctx.audit_log.write().await;
             let params = merkle_domain_audit_compliance::AppendParams::new(
-                AuditOp::Unseal,
+                AuditOp::Seal,
                 AuditOutcome::Allow,
                 ns_id,
             )
@@ -42,8 +42,15 @@ impl SealVaultCommand {
                 merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &key)
             {
                 drop(log);
-                let _ = ctx.storage.append_audit_entry(&entry).await;
-                let _ = ctx.storage.update_pinned_head(&pinned).await;
+                // Sealing must still proceed if persistence fails (the key is
+                // about to be dropped regardless), but a lost seal event is an
+                // audit-trail gap and MUST be surfaced, not silently discarded.
+                if let Err(e) = ctx.storage.append_audit_entry(&entry).await {
+                    warn!(error = %e, "seal_vault: failed to persist seal audit entry");
+                }
+                if let Err(e) = ctx.storage.update_pinned_head(&pinned).await {
+                    warn!(error = %e, "seal_vault: failed to persist pinned head after seal");
+                }
             } else {
                 drop(log);
             }
