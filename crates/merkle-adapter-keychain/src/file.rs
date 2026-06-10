@@ -176,9 +176,37 @@ impl FileKeystoreAdapter {
                     ))
                 })?;
             }
-            std::fs::write(&tmp_path, &ciphertext).map_err(|e| {
-                KeychainError::Backend(format!("write tmp {}: {e}", tmp_path.display()))
-            })?;
+            // Create the tmp file with 0600 from the start: even though the
+            // payload is age-encrypted, the keystore must never be world- or
+            // group-readable, not even for the brief window before the rename.
+            {
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create(true).truncate(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt as _;
+                    opts.mode(0o600);
+                }
+                let mut f = opts.open(&tmp_path).map_err(|e| {
+                    KeychainError::Backend(format!("create tmp {}: {e}", tmp_path.display()))
+                })?;
+                f.write_all(&ciphertext).map_err(|e| {
+                    KeychainError::Backend(format!("write tmp {}: {e}", tmp_path.display()))
+                })?;
+            }
+            // Defensively re-assert 0600 in case the tmp file pre-existed from a
+            // crashed run with looser permissions (mode() only applies at create).
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| {
+                        KeychainError::Backend(format!(
+                            "set tmp perms {}: {e}",
+                            tmp_path.display()
+                        ))
+                    })?;
+            }
             std::fs::rename(&tmp_path, &path).map_err(|e| {
                 KeychainError::Backend(format!("rename tmp → keystore {}: {e}", path.display()))
             })?;
@@ -420,6 +448,30 @@ mod tests {
         assert!(
             matches!(err, KeychainError::NotFound),
             "expected NotFound, got {err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn keystore_file_is_owner_only_0600() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("keystore.age");
+        let adapter = FileKeystoreAdapter::open(path.clone(), passphrase("passphrase"))
+            .await
+            .expect("open should succeed");
+        adapter
+            .store("svc", "acct", &[7u8; 32])
+            .await
+            .expect("store ok");
+
+        let mode = std::fs::metadata(&path).expect("stat keystore").permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "keystore must be owner-read/write only, got {:o}",
+            mode & 0o777
         );
     }
 
