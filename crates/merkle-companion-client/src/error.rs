@@ -55,6 +55,14 @@ pub enum ClientError {
     #[error("vault is sealed — run `merkle unseal` first")]
     Sealed,
 
+    /// The request did not complete within the client deadline.
+    #[error("agent request timed out after {0}s")]
+    Timeout(u64),
+
+    /// The response body exceeded the client's size ceiling.
+    #[error("agent response body exceeded {0} bytes")]
+    BodyTooLarge(usize),
+
     /// Request construction failed (e.g. invalid URI or body serialisation).
     #[error("request build error: {0}")]
     Build(#[from] anyhow::Error),

@@ -2603,6 +2603,7 @@ dependencies = [
  "hyper-util",
  "merkle-adapter-companion-socket",
  "merkle-types",
+ "percent-encoding",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2752,6 +2753,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "subtle",
  "thiserror 2.0.18",
  "uuid",
 ]

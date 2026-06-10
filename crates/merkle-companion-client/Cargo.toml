@@ -13,10 +13,11 @@ workspace = true
 merkle-types                   = { workspace = true }
 merkle-adapter-companion-socket = { workspace = true }
 uuid       = { workspace = true }
-tokio      = { workspace = true, features = ["net"] }
+tokio      = { workspace = true, features = ["net", "time"] }
 hyper      = { workspace = true, features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "tokio", "client", "http1"] }
 http-body-util = "0.1"
+percent-encoding = "2.3"
 tower      = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }

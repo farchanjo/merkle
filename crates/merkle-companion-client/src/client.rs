@@ -21,16 +21,34 @@
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context as _;
-use http_body_util::{BodyExt as _, Full};
+use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::Uri;
-use hyper::body::Bytes;
+use hyper::body::{Bytes, Incoming};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
+
+/// Per-request deadline. A hung or wedged daemon must never hang the caller
+/// (CLI or MCP process) indefinitely.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Hard ceiling on a response body. The Companion Socket only ever returns
+/// small JSON envelopes; a runaway or malicious body must not be able to OOM
+/// the client process.
+const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// Percent-encode a query-string value so it cannot inject extra parameters
+/// (`&`, `=`) or break the request line. `NON_ALPHANUMERIC` is intentionally
+/// aggressive — every reserved and unsafe byte is escaped.
+fn enc(value: &str) -> impl std::fmt::Display + '_ {
+    utf8_percent_encode(value, NON_ALPHANUMERIC)
+}
 
 use merkle_adapter_companion_socket::dto::{
     AgentStatusResponse, AuditQuery, AuditResponse, BackupSnapshotDto, CloseSessionResponse,
@@ -99,6 +117,37 @@ impl CompanionSocketClient {
     // Generic transport helpers
     // -----------------------------------------------------------------------
 
+    /// Send a request with a deadline so a wedged daemon can never hang the
+    /// caller indefinitely.
+    async fn send(
+        &self,
+        request: hyper::Request<Full<Bytes>>,
+    ) -> Result<hyper::Response<Incoming>, ClientError> {
+        match tokio::time::timeout(REQUEST_TIMEOUT, self.inner.request(request)).await {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(e)) => Err(ClientError::Unreachable(e.to_string())),
+            Err(_) => Err(ClientError::Timeout(REQUEST_TIMEOUT.as_secs())),
+        }
+    }
+
+    /// Read a response body with a hard size ceiling so a runaway or malicious
+    /// body cannot OOM the client process.
+    async fn read_body(response: hyper::Response<Incoming>) -> Result<(hyper::StatusCode, Bytes), ClientError> {
+        let status = response.status();
+        let bytes = Limited::new(response.into_body(), MAX_BODY_BYTES)
+            .collect()
+            .await
+            .map_err(|e| {
+                if e.downcast_ref::<http_body_util::LengthLimitError>().is_some() {
+                    ClientError::BodyTooLarge(MAX_BODY_BYTES)
+                } else {
+                    ClientError::Unreachable(e.to_string())
+                }
+            })?
+            .to_bytes();
+        Ok((status, bytes))
+    }
+
     /// Issue a `GET` request and deserialise the JSON response body.
     ///
     /// # Errors
@@ -110,12 +159,13 @@ impl CompanionSocketClient {
             .parse()
             .with_context(|| format!("invalid URI path: {path}"))?;
 
-        let response = self
-            .inner
-            .get(uri)
-            .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
+        let request = hyper::Request::builder()
+            .method(hyper::Method::GET)
+            .uri(uri)
+            .body(Full::new(Bytes::new()))
+            .with_context(|| "building GET request")?;
 
+        let response = self.send(request).await?;
         self.decode_response(response).await
     }
 
@@ -143,12 +193,7 @@ impl CompanionSocketClient {
             .body(Full::new(Bytes::from(json_bytes)))
             .with_context(|| "building POST request")?;
 
-        let response = self
-            .inner
-            .request(request)
-            .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
-
+        let response = self.send(request).await?;
         self.decode_response(response).await
     }
 
@@ -187,12 +232,7 @@ impl CompanionSocketClient {
             .body(Full::new(body_bytes))
             .with_context(|| "building DELETE request")?;
 
-        let response = self
-            .inner
-            .request(request)
-            .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
-
+        let response = self.send(request).await?;
         self.decode_response(response).await
     }
 
@@ -204,13 +244,7 @@ impl CompanionSocketClient {
         &self,
         response: hyper::Response<hyper::body::Incoming>,
     ) -> Result<T, ClientError> {
-        let status = response.status();
-        let body_bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?
-            .to_bytes();
+        let (status, body_bytes) = Self::read_body(response).await?;
 
         if status == hyper::StatusCode::SERVICE_UNAVAILABLE {
             if let Ok(problem) = serde_json::from_slice::<ProblemDetail>(&body_bytes) {
@@ -322,16 +356,16 @@ impl CompanionSocketClient {
             params.limit
         );
         if let Some(ref cat) = params.category {
-            let _ = write!(path, "&category={cat}");
+            let _ = write!(path, "&category={}", enc(cat));
         }
         if let Some(ref pat) = params.name_pattern {
-            let _ = write!(path, "&name_pattern={pat}");
+            let _ = write!(path, "&name_pattern={}", enc(pat));
         }
         if let Some(ref cur) = params.cursor {
-            let _ = write!(path, "&cursor={cur}");
+            let _ = write!(path, "&cursor={}", enc(cur));
         }
         if let Some(ref fts) = params.fts_query {
-            let _ = write!(path, "&fts_query={fts}");
+            let _ = write!(path, "&fts_query={}", enc(fts));
         }
         if params.offset > 0 {
             let _ = write!(path, "&offset={}", params.offset);
@@ -514,19 +548,8 @@ impl CompanionSocketClient {
             .body(Full::new(Bytes::from(json_bytes)))
             .with_context(|| "building reveal request")?;
 
-        let response = self
-            .inner
-            .request(request)
-            .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
-
-        let status = response.status();
-        let body_bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?
-            .to_bytes();
+        let response = self.send(request).await?;
+        let (status, body_bytes) = Self::read_body(response).await?;
 
         if status == hyper::StatusCode::OK {
             let resp = serde_json::from_slice::<RevealAuthorizationResponse>(&body_bytes)
@@ -568,13 +591,13 @@ impl CompanionSocketClient {
     pub async fn query_audit(&self, query: &AuditQuery) -> Result<AuditResponse, ClientError> {
         let mut path = format!("/v1/audit?limit={}", query.limit);
         if let Some(ref op) = query.op {
-            let _ = write!(path, "&op={op}");
+            let _ = write!(path, "&op={}", enc(op));
         }
         if let Some(ref h) = query.handle {
-            let _ = write!(path, "&handle={h}");
+            let _ = write!(path, "&handle={}", enc(h));
         }
         if let Some(ref outcome) = query.outcome {
-            let _ = write!(path, "&outcome={outcome}");
+            let _ = write!(path, "&outcome={}", enc(outcome));
         }
         if let Some(session_id) = query.session_id {
             let _ = write!(path, "&session_id={session_id}");
@@ -614,7 +637,7 @@ impl CompanionSocketClient {
     ) -> Result<ListSnapshotsResponse, ClientError> {
         let mut path = format!("/v1/backup/snapshots?limit={}", params.limit);
         if let Some(ref cur) = params.cursor {
-            let _ = write!(path, "&cursor={cur}");
+            let _ = write!(path, "&cursor={}", enc(cur));
         }
         self.get(&path).await
     }
