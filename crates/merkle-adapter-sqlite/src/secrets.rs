@@ -233,7 +233,7 @@ pub(crate) async fn list_secrets(
     }
 
     if filter.name_pattern.is_some() {
-        conditions.push(format!("s.handle LIKE ?{bind_idx}"));
+        conditions.push(format!("s.handle LIKE ?{bind_idx} ESCAPE '\\'"));
         bind_idx += 1;
     }
 
@@ -264,7 +264,15 @@ pub(crate) async fn list_secrets(
         q = q.bind(fts.clone());
     }
     if let Some(ref pattern) = filter.name_pattern {
-        let like_pattern = pattern.replace('*', "%");
+        // Escape LIKE metacharacters in the literal text BEFORE translating the
+        // user's `*` glob to SQL `%`, so a literal `%` or `_` in the pattern
+        // cannot act as a wildcard and enumerate unrelated handles. Backslash
+        // is escaped first to avoid double-escaping; the SQL uses ESCAPE '\'.
+        let like_pattern = pattern
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+            .replace('*', "%");
         q = q.bind(like_pattern);
     }
     if let Some(ref exp) = filter.expires_before {

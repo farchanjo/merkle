@@ -69,7 +69,14 @@ impl SqliteStorage {
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
-            .foreign_keys(true);
+            .foreign_keys(true)
+            // Overwrite freed pages with zeros so deleted/rotated secret
+            // ciphertext does not linger in the file's free list.
+            .pragma("secure_delete", "ON")
+            // Block (up to 5s) instead of returning SQLITE_BUSY immediately when
+            // a concurrent writer holds the lock — the pool has 5 connections
+            // and WAL still serialises writers.
+            .busy_timeout(std::time::Duration::from_secs(5));
 
         // For in-memory SQLite (`:memory:`), each connection is an independent
         // database. Use max_connections(1) to ensure all operations share the
