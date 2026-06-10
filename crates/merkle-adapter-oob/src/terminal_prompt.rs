@@ -120,7 +120,19 @@ impl TerminalPromptChannel {
         if self.force_auto_deny {
             return true;
         }
-        std::env::var("MERKLE_OOB_AUTO_DENY").as_deref() == Ok("1")
+        if std::env::var("MERKLE_OOB_AUTO_DENY").as_deref() == Ok("1") {
+            // Honoured only in debug builds (auto-deny is a test affordance).
+            // A release binary ignores it and logs, so there is no hidden
+            // env-driven control surface in production.
+            if cfg!(debug_assertions) {
+                return true;
+            }
+            tracing::error!(
+                "MERKLE_OOB_AUTO_DENY is set but IGNORED in a release build — \
+                 OOB challenges are prompted normally"
+            );
+        }
+        false
     }
 }
 

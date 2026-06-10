@@ -193,21 +193,32 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
 
     let crypto: Arc<dyn Crypto> = Arc::new(RustCryptoAdapter::new());
     let keychain: Arc<dyn Keychain> = build_keychain(cfg).await?;
-    // Test-mode hook: when MERKLE_OOB_FIXTURE_PATH is set, use the file
-    // fixture notifier instead of the default desktop/terminal channels.
-    // This allows e2e tests to inject pre-recorded OOB resolutions.
-    let oob: Arc<dyn OobNotifier> =
-        if let Ok(fixture_path) = std::env::var("MERKLE_OOB_FIXTURE_PATH") {
-            info!(
-                path = %fixture_path,
-                "MERKLE_OOB_FIXTURE_PATH set — using FileFixtureOobNotifier (test mode)"
+    // Test-mode hook: when MERKLE_OOB_FIXTURE_PATH is set, use the file fixture
+    // notifier so e2e tests can inject pre-recorded OOB resolutions. This is a
+    // hard bypass of the out-of-band confirmation gate, so it is honoured ONLY
+    // in debug builds. A release binary IGNORES the variable and logs loudly if
+    // it is set, so the OOB gate can never be bypassed in production.
+    let fixture_path = std::env::var("MERKLE_OOB_FIXTURE_PATH").ok();
+    let oob: Arc<dyn OobNotifier> = if cfg!(debug_assertions) {
+        match fixture_path {
+            Some(path) => {
+                info!(
+                    path = %path,
+                    "MERKLE_OOB_FIXTURE_PATH set — using FileFixtureOobNotifier (debug test mode)"
+                );
+                Arc::new(FileFixtureOobNotifier::new(std::path::PathBuf::from(path)))
+            }
+            None => Arc::new(OobNotifierAdapter::with_defaults()),
+        }
+    } else {
+        if fixture_path.is_some() {
+            tracing::error!(
+                "MERKLE_OOB_FIXTURE_PATH is set but IGNORED in a release build — the \
+                 out-of-band confirmation gate cannot be bypassed in production"
             );
-            Arc::new(FileFixtureOobNotifier::new(std::path::PathBuf::from(
-                fixture_path,
-            )))
-        } else {
-            Arc::new(OobNotifierAdapter::with_defaults())
-        };
+        }
+        Arc::new(OobNotifierAdapter::with_defaults())
+    };
     let external: Arc<dyn ExternalServices> = Arc::new(ExternalServicesAdapter::new());
 
     let identity = build_initial_identity();
