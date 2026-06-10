@@ -102,14 +102,92 @@ impl CompanionSocketServer {
         }
 
         let listener = UnixListener::bind(&self.socket_path)?;
+
+        // Restrict the socket to the owner UID — only the agent's own user may
+        // even connect. Combined with the per-connection peer-credential check
+        // this is defence in depth.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(
+                &self.socket_path,
+                std::fs::Permissions::from_mode(0o600),
+            )?;
+        }
+
         info!(
             socket = %self.socket_path.display(),
             "companion socket listening"
         );
 
         let app = router::build(Arc::clone(&self.app_ctx));
-        axum::serve(listener, app).await?;
+        serve_with_peer_cred(listener, app).await
+    }
+}
 
-        Ok(())
+/// Serve the companion socket, authenticating every connection by OS peer
+/// credentials extracted at accept time.
+///
+/// Unlike `axum::serve`, this injects the verified
+/// [`peer_cred::PeerCredentials`] into each request's extensions BEFORE the
+/// router runs, so the `peer_cred_check` middleware sees real credentials and
+/// can fail closed. A connection whose credentials cannot be extracted from the
+/// kernel is dropped immediately with no HTTP response.
+///
+/// # Errors
+///
+/// Returns `Err` only if the listener itself fails irrecoverably; per-connection
+/// errors are logged and do not abort the accept loop.
+pub async fn serve_with_peer_cred(
+    listener: UnixListener,
+    app: axum::Router,
+) -> anyhow::Result<()> {
+    use hyper::server::conn::http1;
+    use hyper_util::rt::TokioIo;
+    use hyper_util::service::TowerToHyperService;
+    use tower::ServiceExt as _;
+    use tracing::{debug, warn};
+
+    loop {
+        let (stream, _addr) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                warn!(error = %e, "companion socket accept failed");
+                continue;
+            }
+        };
+
+        // Extract OS peer credentials at accept time. FAIL CLOSED: if the
+        // kernel call fails, drop the connection rather than serve it
+        // unauthenticated.
+        let creds = match peer_cred::extract(&stream) {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                warn!(error = %e, "peer credential extraction failed; dropping connection");
+                continue;
+            }
+        };
+
+        let app = app.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            // Per-connection service: inject the verified credentials into every
+            // request BEFORE the router (and its peer_cred_check middleware).
+            let svc = tower::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                let app = app.clone();
+                let creds = Arc::clone(&creds);
+                async move {
+                    let mut req = req.map(axum::body::Body::new);
+                    req.extensions_mut().insert(creds);
+                    app.oneshot(req).await
+                }
+            });
+            if let Err(e) = http1::Builder::new()
+                .serve_connection(io, TowerToHyperService::new(svc))
+                .await
+            {
+                debug!(error = %e, "companion connection closed with error");
+            }
+        });
     }
 }

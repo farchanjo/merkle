@@ -217,7 +217,10 @@ fn current_uid() -> u32 {
 
 /// Return a synthetic set of credentials matching the current process UID.
 ///
-/// Used in test contexts where no real Unix socket is available.
+/// TEST-ONLY: confined to `#[cfg(test)]` so the production serve path can never
+/// fabricate a passing identity. Real connections always carry credentials
+/// extracted from the kernel by [`crate::serve_with_peer_cred`].
+#[cfg(test)]
 #[must_use]
 pub fn synthetic() -> PeerCredentials {
     PeerCredentials {

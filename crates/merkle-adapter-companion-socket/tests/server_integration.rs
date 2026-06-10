@@ -89,8 +89,13 @@ async fn spawn_server(ctx: Arc<AppContext>) -> (TempDir, String) {
     let listener = UnixListener::bind(&sock_path).expect("bind");
     let app = router::build(ctx);
 
+    // Use the real peer-credential serve path: the test client connects from
+    // this same process (same UID), so the kernel-extracted credentials pass
+    // verification exactly as a legitimate local caller would.
     tokio::spawn(async move {
-        axum::serve(listener, app).await.ok();
+        merkle_adapter_companion_socket::serve_with_peer_cred(listener, app)
+            .await
+            .ok();
     });
 
     // Yield so the server task is scheduled before we try to connect.
@@ -224,6 +229,34 @@ async fn put_secret(sock: &str, session_id: &str, name: &str) -> String {
 }
 
 /// 1. Round-trip `GET /v1/agent/status` returns 200 with JSON body.
+/// Security regression: a request that does NOT pass through the
+/// peer-credential connection layer (no `Arc<PeerCredentials>` extension) must
+/// be rejected with 403. This proves the middleware fails CLOSED rather than
+/// fabricating a passing identity.
+#[tokio::test]
+async fn request_without_peer_cred_is_rejected() {
+    use tower::ServiceExt as _;
+
+    let ctx = make_app_ctx().await;
+    let app = router::build(ctx);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agent/status")
+        .body(Body::empty())
+        .expect("request");
+
+    // Driven directly through the router (in-process), bypassing the accept
+    // loop that injects credentials — exactly the condition an attacker who
+    // reached the handler without the socket auth layer would create.
+    let resp = app.oneshot(req).await.expect("router is infallible");
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a request with no injected peer credentials must be denied"
+    );
+}
+
 #[tokio::test]
 async fn test_agent_status_returns_200() {
     let ctx = make_app_ctx().await;

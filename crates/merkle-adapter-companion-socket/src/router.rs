@@ -123,30 +123,44 @@ pub fn build(ctx: Arc<AppContext>) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-/// Middleware: extract and verify peer credentials before routing.
+/// Middleware: verify the peer credentials injected by the accept loop before
+/// routing.
 ///
-/// On platforms where no `PeerCredentials` extension was inserted (e.g., test
-/// contexts using an in-process transport), falls back to synthetic credentials
-/// matching the current process UID so tests can run without a real socket.
-///
-/// Connections that fail the UID check receive a 403 Problem+JSON response.
+/// The connection layer ([`crate::serve_with_peer_cred`]) inserts an
+/// `Arc<PeerCredentials>` extracted from the kernel at accept time. This
+/// middleware FAILS CLOSED: if that extension is absent the request did not
+/// arrive through the authenticated socket path, so it is rejected with 403
+/// rather than fabricating a passing identity. On success the bare
+/// `PeerCredentials` is inserted for the [`crate::extensions::ExtractedPeerCred`]
+/// extractor.
 async fn peer_cred_check(mut req: Request, next: Next) -> Response {
-    let creds = req
-        .extensions()
-        .get::<Arc<peer_cred::PeerCredentials>>()
-        .map_or_else(peer_cred::synthetic, |c| c.as_ref().clone());
-
-    if let Err(reason) = peer_cred::verify(&creds) {
-        return Problem {
+    let deny = |detail: String| {
+        Problem {
             kind: ProblemType::RevealDenied,
             title: "Peer credential check failed".into(),
             status: 403,
-            detail: reason,
+            detail,
             instance: None,
             hint: None,
             fields: vec![],
         }
-        .into_response();
+        .into_response()
+    };
+
+    let Some(creds) = req
+        .extensions()
+        .get::<Arc<peer_cred::PeerCredentials>>()
+        .map(|c| c.as_ref().clone())
+    else {
+        return deny(
+            "No peer credentials were attached to this request; the connection \
+             did not pass through the authenticated socket layer."
+                .into(),
+        );
+    };
+
+    if let Err(reason) = peer_cred::verify(&creds) {
+        return deny(reason);
     }
 
     req.extensions_mut().insert(creds);
