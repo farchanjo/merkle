@@ -39,6 +39,38 @@ pub enum ChainOutcome {
         /// `seq` of the last entry actually present in the log.
         last_actual_seq: u64,
     },
+
+    /// The reconstructed chain head does not match the pinned head commitment.
+    ///
+    /// Detected on a full-range pass when the last entry's `current_hash` (or
+    /// its `seq`) differs from the synchronously-persisted [`crate::PinnedHead`].
+    /// Catches tail-rewrite and truncate-then-re-append attacks that preserve
+    /// the entry count but change the true chain tip. The pinned `head_hash` is
+    /// the cryptographic witness of the genuine tip and must match exactly.
+    HeadHashMismatch {
+        /// `head_hash` recorded in the pinned head (the expected tip).
+        expected_head: Blake3Hash,
+        /// `current_hash` of the last entry actually present in the log.
+        actual_head: Blake3Hash,
+    },
+
+    /// An HMAC key was supplied but is not exactly 32 bytes.
+    ///
+    /// Verification refuses to silently downgrade to a hash-only check: a
+    /// malformed key is treated as a verification failure, never as
+    /// "no key requested". Callers that genuinely want a hash-only pass must
+    /// pass an empty key slice.
+    HmacKeyUnavailable,
+
+    /// An entry could not be canonicalized for hashing during verification.
+    ///
+    /// A serialization failure on the audit path is itself an integrity
+    /// anomaly — the entry can no longer be proven to commit to its hash — so
+    /// it fails verification rather than being silently skipped.
+    EntrySerializationFailed {
+        /// The entry that failed canonical serialization.
+        entry_id: AuditEntryId,
+    },
 }
 
 /// Full result of a [`crate::ChainVerifier`] pass.
@@ -55,6 +87,11 @@ pub struct ChainVerifyResult {
     pub entries_checked: u64,
     /// Count of structural anomalies found (0 when `outcome == Intact`).
     pub anomalies_detected: u32,
+    /// Whether the keyed HMAC tag was actually verified on every entry in the
+    /// range. `false` means the pass was hash-only (no key supplied, an empty
+    /// range, or a non-`Intact` outcome) — callers MUST NOT treat a hash-only
+    /// `Intact` as a full tamper-evidence guarantee.
+    pub hmac_checked: bool,
     /// First entry in the verified range (`None` for a full-log pass).
     pub range_from_id: Option<AuditEntryId>,
     /// Last entry in the verified range (`None` for a full-log pass).

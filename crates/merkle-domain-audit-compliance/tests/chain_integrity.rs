@@ -121,6 +121,76 @@ fn verify_full_intact_chain() {
     );
     assert_eq!(result.entries_checked, 10);
     assert_eq!(result.anomalies_detected, 0);
+    assert!(
+        result.hmac_checked,
+        "a 32-byte key over a non-empty chain must report hmac_checked=true"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 4b: head-hash mismatch (tail-rewrite / pinned-head divergence)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_head_hash_mismatch() {
+    let mut log = AuditLog::new();
+    let pinned = fill_log(&mut log, 5);
+
+    // A pinned head with the correct seq but a wrong head_hash models a
+    // rewritten chain tip whose entry count is preserved. The seq check passes
+    // (no truncation) but the head commitment must still reject it.
+    let forged = PinnedHead::new(
+        GENESIS,
+        pinned.head_seq,
+        pinned.head_id,
+        Rfc3339Timestamp::now(),
+    );
+    let result = ChainVerifier::verify_full(&log, &forged, &HMAC_KEY);
+    assert!(
+        matches!(result.outcome, ChainOutcome::HeadHashMismatch { .. }),
+        "head-hash divergence at the same seq must be rejected, got {:?}",
+        result.outcome
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 4c: malformed HMAC key is a failure, never a silent hash-only downgrade
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_rejects_malformed_hmac_key() {
+    let mut log = AuditLog::new();
+    let pinned = fill_log(&mut log, 3);
+
+    let short_key = [0xABu8; 16]; // not 32 bytes
+    let result = ChainVerifier::verify_full(&log, &pinned, &short_key);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::HmacKeyUnavailable,
+        "a non-32-byte key must fail, not silently skip HMAC"
+    );
+    assert!(!result.hmac_checked);
+}
+
+// ---------------------------------------------------------------------------
+// Test 4d: empty key is an explicit hash-only pass (hmac_checked == false)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_empty_key_is_hash_only() {
+    let mut log = AuditLog::new();
+    let pinned = fill_log(&mut log, 3);
+
+    let result = ChainVerifier::verify_full(&log, &pinned, &[]);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::Intact,
+        "an intact hash chain with no key must still pass the hash-only check"
+    );
+    assert!(
+        !result.hmac_checked,
+        "no key supplied means the HMAC was not verified"
+    );
 }
 
 // ---------------------------------------------------------------------------

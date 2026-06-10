@@ -65,6 +65,7 @@ fn broken_at(
         head_hash: None,
         entries_checked: state.entries_checked,
         anomalies_detected: state.anomalies_detected + 1,
+        hmac_checked: false,
         range_from_id: from_id,
         range_to_id: to_id,
         triggered_by: None,
@@ -120,8 +121,20 @@ fn check_hash(
     verified_at: Rfc3339Timestamp,
 ) -> Result<(), Box<ChainVerifyResult>> {
     let Ok(canonical) = entry.canonical_bytes_for_hashing(prev_for_hashing) else {
-        // Serialization failure — treat as anomaly and continue walking.
-        return Ok(());
+        // Serialization failure on the audit path is itself an integrity
+        // anomaly: the entry can no longer be proven to commit to its stored
+        // hash, so it MUST fail verification rather than be silently skipped.
+        return Err(Box::new(ChainVerifyResult {
+            outcome: ChainOutcome::EntrySerializationFailed { entry_id: entry.id },
+            head_hash: None,
+            entries_checked: state.entries_checked,
+            anomalies_detected: state.anomalies_detected + 1,
+            hmac_checked: false,
+            range_from_id: from_id,
+            range_to_id: to_id,
+            triggered_by: None,
+            verified_at,
+        }));
     };
     let recomputed = Blake3Hash::hash(&canonical);
     if recomputed != entry.current_hash {
@@ -156,12 +169,15 @@ fn check_hmac(
     let id_uuid = entry.id.inner();
     hmac_input.extend_from_slice(id_uuid.as_bytes());
     let expected = HmacSignature::compute(key, &hmac_input);
-    if expected != stored_hmac {
+    // Constant-time tag comparison — a short-circuiting `!=` would leak via
+    // timing how many leading bytes of a forged tag matched.
+    if !expected.ct_eq(&stored_hmac) {
         return Err(Box::new(ChainVerifyResult {
             outcome: ChainOutcome::HmacMismatch { entry_id: entry.id },
             head_hash: None,
             entries_checked: state.entries_checked,
             anomalies_detected: state.anomalies_detected + 1,
+            hmac_checked: false,
             range_from_id: from_id,
             range_to_id: to_id,
             triggered_by: None,
@@ -198,6 +214,62 @@ fn slice_entries<'a>(
         }
     }
     collected
+}
+
+/// Full-range head-commitment check: truncation followed by pinned-head
+/// equality.
+///
+/// Returns `Some(result)` when the reconstructed tip diverges from the pinned
+/// head (truncation or head mismatch); `None` when the head matches and the
+/// caller may continue to an `Intact` result. Only meaningful for a full-range
+/// pass (both bounds `None`).
+fn check_head_commitment(
+    state: &WalkState,
+    pinned_head: &PinnedHead,
+    verified_at: Rfc3339Timestamp,
+) -> Option<ChainVerifyResult> {
+    let final_head_hash = state.last_hash;
+    let final_seq = state.last_seq.unwrap_or(0);
+
+    // Truncation: fewer entries than the pinned head implies.
+    if pinned_head.head_seq > final_seq {
+        return Some(ChainVerifyResult {
+            outcome: ChainOutcome::TruncationDetected {
+                last_pinned_seq: pinned_head.head_seq,
+                last_actual_seq: final_seq,
+            },
+            head_hash: Some(final_head_hash),
+            entries_checked: state.entries_checked,
+            anomalies_detected: state.anomalies_detected + 1,
+            hmac_checked: false,
+            range_from_id: None,
+            range_to_id: None,
+            triggered_by: None,
+            verified_at,
+        });
+    }
+
+    // Head commitment: the reconstructed tip MUST match the pinned head exactly
+    // (hash and seq). Catches tail-rewrite and truncate-then-re-append attacks
+    // that the seq check alone misses.
+    if final_head_hash != pinned_head.head_hash || final_seq != pinned_head.head_seq {
+        return Some(ChainVerifyResult {
+            outcome: ChainOutcome::HeadHashMismatch {
+                expected_head: pinned_head.head_hash,
+                actual_head: final_head_hash,
+            },
+            head_hash: Some(final_head_hash),
+            entries_checked: state.entries_checked,
+            anomalies_detected: state.anomalies_detected + 1,
+            hmac_checked: false,
+            range_from_id: None,
+            range_to_id: None,
+            triggered_by: None,
+            verified_at,
+        });
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +314,31 @@ impl ChainVerifier {
         hmac_key: &[u8],
     ) -> ChainVerifyResult {
         let verified_at = Rfc3339Timestamp::now();
-        let hmac_key_array: Option<&[u8; 32]> = hmac_key.try_into().ok();
+
+        // HMAC key discipline: an empty slice is an explicit hash-only request;
+        // any non-empty slice MUST be exactly 32 bytes. A wrong-length key is a
+        // verification failure, never a silent downgrade to hash-only.
+        let hmac_key_array: Option<&[u8; 32]> = if hmac_key.is_empty() {
+            None
+        } else {
+            match <&[u8; 32]>::try_from(hmac_key) {
+                Ok(k) => Some(k),
+                Err(_) => {
+                    return ChainVerifyResult {
+                        outcome: ChainOutcome::HmacKeyUnavailable,
+                        head_hash: log.head().copied(),
+                        entries_checked: 0,
+                        anomalies_detected: 1,
+                        hmac_checked: false,
+                        range_from_id: from_id,
+                        range_to_id: to_id,
+                        triggered_by: None,
+                        verified_at,
+                    };
+                }
+            }
+        };
+        let hmac_checked = hmac_key_array.is_some();
 
         let entries = slice_entries(log, from_id.as_ref(), to_id.as_ref());
 
@@ -252,6 +348,8 @@ impl ChainVerifier {
                 head_hash: log.head().copied(),
                 entries_checked: 0,
                 anomalies_detected: 0,
+                // No entry was walked, so no HMAC was actually verified.
+                hmac_checked: false,
                 range_from_id: from_id,
                 range_to_id: to_id,
                 triggered_by: None,
@@ -296,31 +394,19 @@ impl ChainVerifier {
             state.first_entry = false;
         }
 
-        let final_head_hash = state.last_hash;
-        let final_seq = state.last_seq.unwrap_or(0);
-
-        // Truncation detection: full-range only (both bounds are None).
-        if from_id.is_none() && to_id.is_none() && pinned_head.head_seq > final_seq {
-            return ChainVerifyResult {
-                outcome: ChainOutcome::TruncationDetected {
-                    last_pinned_seq: pinned_head.head_seq,
-                    last_actual_seq: final_seq,
-                },
-                head_hash: Some(final_head_hash),
-                entries_checked: state.entries_checked,
-                anomalies_detected: state.anomalies_detected + 1,
-                range_from_id: None,
-                range_to_id: None,
-                triggered_by: None,
-                verified_at,
-            };
+        // Head-commitment checks: full-range only (both bounds are None).
+        if from_id.is_none() && to_id.is_none() {
+            if let Some(result) = check_head_commitment(&state, pinned_head, verified_at) {
+                return result;
+            }
         }
 
         ChainVerifyResult {
             outcome: ChainOutcome::Intact,
-            head_hash: Some(final_head_hash),
+            head_hash: Some(state.last_hash),
             entries_checked: state.entries_checked,
             anomalies_detected: state.anomalies_detected,
+            hmac_checked,
             range_from_id: from_id,
             range_to_id: to_id,
             triggered_by: None,
