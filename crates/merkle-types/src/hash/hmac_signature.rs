@@ -4,6 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use subtle::ConstantTimeEq;
 
 use crate::ParseError;
 
@@ -39,6 +40,18 @@ impl HmacSignature {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// Compare two MAC tags in constant time.
+    ///
+    /// MUST be used instead of the derived `==` for any tag-verification path:
+    /// the derived `PartialEq` on `[u8; 32]` short-circuits on the first
+    /// differing byte, leaking via timing how many leading bytes of a forged
+    /// tag matched. This comparison takes the same time regardless of where
+    /// (or whether) the tags differ.
+    #[must_use]
+    pub fn ct_eq(&self, other: &Self) -> bool {
+        self.0.ct_eq(&other.0).into()
     }
 
     /// Return the lowercase hex representation.
@@ -140,5 +153,14 @@ mod tests {
         let a = HmacSignature::compute(&KEY, b"data");
         let b = HmacSignature::compute(&key2, b"data");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn ct_eq_matches_value_equality() {
+        let a = HmacSignature::compute(&KEY, b"payload");
+        let b = HmacSignature::compute(&KEY, b"payload");
+        let c = HmacSignature::compute(&KEY, b"other");
+        assert!(a.ct_eq(&b), "identical tags must compare equal in constant time");
+        assert!(!a.ct_eq(&c), "differing tags must compare unequal in constant time");
     }
 }

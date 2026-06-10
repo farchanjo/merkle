@@ -1,4 +1,4 @@
-//! `AuditOp` — closed enum of all 31 auditable vault operations.
+//! `AuditOp` — closed enum of all 32 auditable vault operations.
 
 use std::fmt;
 use std::str::FromStr;
@@ -11,8 +11,9 @@ use crate::ParseError;
 ///
 /// This enum is **closed** (`#[non_exhaustive]` is intentionally absent) —
 /// new operations require an ADR before adding a variant.
-/// Total variants: 31, matching `#AuditOp` in `audit_entry.cue`.
+/// Total variants: 32, matching `#AuditOp` in `audit_entry.cue`.
 /// Amendment 2026-05-23: added `Init` per ADR-0021.
+/// Amendment 2026-06-09: added `Seal` (seal ceremony was logging `Unseal`).
 ///
 /// ```
 /// use merkle_types::AuditOp;
@@ -96,6 +97,9 @@ pub enum AuditOp {
     /// Search secrets by full-text or tags.
     #[serde(rename = "search")]
     Search,
+    /// Seal the vault (drop the Vault Root Key from memory).
+    #[serde(rename = "seal")]
+    Seal,
     /// Spawn a process with secret environment variables.
     #[serde(rename = "spawn")]
     Spawn,
@@ -146,6 +150,7 @@ impl fmt::Display for AuditOp {
             Self::Reveal => "reveal",
             Self::Rotate => "rotate",
             Self::Search => "search",
+            Self::Seal => "seal",
             Self::Spawn => "spawn",
             Self::SshCopy => "ssh_copy",
             Self::SshExec => "ssh_exec",
@@ -187,6 +192,7 @@ impl FromStr for AuditOp {
             "reveal" => Ok(Self::Reveal),
             "rotate" => Ok(Self::Rotate),
             "search" => Ok(Self::Search),
+            "seal" => Ok(Self::Seal),
             "spawn" => Ok(Self::Spawn),
             "ssh_copy" => Ok(Self::SshCopy),
             "ssh_exec" => Ok(Self::SshExec),
@@ -244,6 +250,7 @@ mod tests {
         ("reveal", AuditOp::Reveal),
         ("rotate", AuditOp::Rotate),
         ("search", AuditOp::Search),
+        ("seal", AuditOp::Seal),
         ("spawn", AuditOp::Spawn),
         ("ssh_copy", AuditOp::SshCopy),
         ("ssh_exec", AuditOp::SshExec),
@@ -254,8 +261,8 @@ mod tests {
     ];
 
     #[test]
-    fn exactly_31_variants() {
-        assert_eq!(ALL_OPS.len(), 31, "AuditOp must have exactly 31 variants");
+    fn exactly_32_variants() {
+        assert_eq!(ALL_OPS.len(), 32, "AuditOp must have exactly 32 variants");
     }
 
     #[test]

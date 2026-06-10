@@ -104,6 +104,7 @@ x25519-dalek     = { version = "2.0", features = ["serde", "static_secrets"] }
 # Secrets in memory
 secrecy          = { version = "0.10", features = ["serde"] }
 zeroize          = { version = "1.8", features = ["derive"] }
+subtle           = "2.6"
 
 # OS keychain
 keyring          = { version = "3.6", features = ["sync-secret-service"] }

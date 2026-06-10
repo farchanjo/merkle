@@ -17,6 +17,7 @@ thiserror  = { workspace = true }
 chrono     = { workspace = true }
 hex        = { workspace = true }
 regex      = { workspace = true }
+subtle     = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
