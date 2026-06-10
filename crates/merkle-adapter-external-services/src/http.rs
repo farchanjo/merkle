@@ -7,16 +7,22 @@
 
 use base64::Engine as _;
 use reqwest::{Client, Method, header};
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use merkle_ports::{ExternalError, HttpAuth, HttpRequestSpec, HttpResponse};
+
+/// Strip the query string from a URL for logging: query parameters routinely
+/// carry secrets (tokens, signatures) that must never reach the log.
+fn redact_url(url: &str) -> &str {
+    url.split_once('?').map_or(url, |(base, _)| base)
+}
 
 /// Execute an HTTP request described by `spec`, applying `auth` as the
 /// `Authorization` header.
 ///
 /// The `client` is expected to be pre-built with `rustls` and connection
 /// pooling; callers should share a single instance (see `ExternalServicesAdapter`).
-#[instrument(skip(client, spec, auth), fields(method = %spec.method, url = %spec.url))]
+#[instrument(skip(client, spec, auth), fields(method = %spec.method, url = %redact_url(&spec.url)))]
 pub(crate) async fn http_request(
     client: &Client,
     spec: HttpRequestSpec,
@@ -28,8 +34,16 @@ pub(crate) async fn http_request(
 
     let mut builder = client.request(method, &spec.url);
 
-    // Apply caller-supplied headers.
+    // Apply caller-supplied headers, but NEVER let a caller inject their own
+    // Authorization header: reqwest appends rather than replaces, so a
+    // caller-supplied `Authorization` would be sent alongside the
+    // vault-managed one and could subvert which credential the server honours.
+    // The vault is the only source of the Authorization header.
     for (name, value) in &spec.headers {
+        if name.eq_ignore_ascii_case("authorization") {
+            warn!("dropping caller-supplied Authorization header; vault manages auth");
+            continue;
+        }
         builder = builder.header(name.as_str(), value.as_str());
     }
 

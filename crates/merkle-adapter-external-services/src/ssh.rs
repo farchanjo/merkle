@@ -40,7 +40,7 @@ pub(crate) async fn ssh_exec(
 
     debug!(
         target = %target,
-        command = %command,
+        command_bytes = command.len(),
         identity_path = %identity_file.path().display(),
         "spawning ssh subprocess"
     );
@@ -125,7 +125,7 @@ async fn run_ssh(
 
     debug!(
         target = %target,
-        command = %command,
+        command_bytes = command.len(),
         exit_code,
         stdout_bytes = output.stdout.len(),
         stderr_bytes = output.stderr.len(),
