@@ -296,6 +296,7 @@ async fn vault_delete_returns_agent_unreachable() {
         .vault_delete(Parameters(VaultDeleteInput {
             handle: "vault://smoke-ns/token/tok".to_owned(),
             purpose: "smoke".to_owned(),
+            operator_confirmation: true,
         }))
         .await
         .expect_err("vault.delete to dead socket must return error");
@@ -305,6 +306,30 @@ async fn vault_delete_returns_agent_unreachable() {
         codes::AGENT_UNREACHABLE,
         "expected AGENT_UNREACHABLE (-32100); got {}",
         err.code.0
+    );
+}
+
+/// `vault.delete` without `operator_confirmation` is rejected up front and
+/// never reaches the agent (no autonomous deletion by the model).
+#[tokio::test]
+async fn vault_delete_without_confirmation_is_rejected() {
+    let server = pre_bound_unreachable_server().await;
+
+    let err = server
+        .vault_delete(Parameters(VaultDeleteInput {
+            handle: "vault://smoke-ns/token/tok".to_owned(),
+            purpose: "smoke".to_owned(),
+            operator_confirmation: false,
+        }))
+        .await
+        .expect_err("vault.delete without confirmation must be rejected");
+
+    // Must be the up-front invalid-params gate, NOT a transport error — proving
+    // the call was refused before any socket I/O.
+    assert_ne!(
+        err.code.0,
+        codes::AGENT_UNREACHABLE,
+        "delete must be refused by the confirmation gate, not the dead socket"
     );
 }
 

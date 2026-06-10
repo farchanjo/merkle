@@ -99,6 +99,11 @@ pub struct VaultDeleteInput {
     pub handle: String,
     /// Human-readable reason; recorded in the audit log.
     pub purpose: String,
+    /// Explicit operator confirmation. MUST be set to `true` by a human
+    /// operator for this irreversible delete to proceed; defaults to `false`
+    /// so the model cannot delete a secret autonomously.
+    #[serde(default)]
+    pub operator_confirmation: bool,
 }
 
 /// Input for vault.search — free-text search over public metadata.
@@ -402,6 +407,18 @@ impl MerkleMcpServer {
         Parameters(input): Parameters<VaultDeleteInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let handle = parse_handle(&input.handle)?;
+
+        // Irreversible deletion must never be initiated autonomously by the
+        // model. Require an explicit human-set confirmation flag; without it
+        // the call is rejected before any state change.
+        if !input.operator_confirmation {
+            return Err(ErrorData::invalid_params(
+                "vault.delete is irreversible and requires operator_confirmation=true \
+                 (a human operator must set it); refusing to delete autonomously",
+                None,
+            ));
+        }
+
         let namespace_id = {
             let session = self.session.read().await;
             resolve_namespace(&session)?
@@ -415,7 +432,7 @@ impl MerkleMcpServer {
                 DeleteSecretRequest {
                     purpose: input.purpose,
                     operator_confirmation: OperatorConfirmationDeleteSecret {
-                        slash_command: true,
+                        slash_command: input.operator_confirmation,
                         oob_ack: false,
                     },
                 },

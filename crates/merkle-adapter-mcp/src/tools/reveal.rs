@@ -125,7 +125,7 @@ impl MerkleMcpServer {
             RevealOutcome::OobPending(resp) => Ok(CallToolResult::success(vec![Content::text(
                 json!({
                     "oob_pending": resp.oob_pending,
-                    "oob_channel": format!("{:?}", resp.oob_channel),
+                    "oob_channel": resp.oob_channel.to_string(),
                     "expires_at": resp.expires_at.to_rfc3339(),
                     "request_nonce": resp.request_nonce,
                     "instructions": "Acknowledge the OOB notification and re-issue vault.reveal.",
