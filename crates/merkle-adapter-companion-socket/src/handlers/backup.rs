@@ -72,16 +72,39 @@ pub async fn trigger_backup(
 
     let _note = body.as_ref().and_then(|b| b.note.clone());
 
-    // NOTE: TriggerBackupCommand requires age recipient public keys, which are
-    // stored in VaultIdentity. For Phase 6 we use placeholder keys;
-    // real key wiring is tracked in FIXME(F6.C).
+    // Encrypt the backup to the vault's real recovery recipient (the age public
+    // key held in VaultIdentity), so only the holder of the offline recovery
+    // private key can ever decrypt it. The master key is symmetric and is not
+    // an age recipient, so the recovery key is the sole recipient.
+    let recovery_recipient = {
+        let identity = ctx.identity.read().await;
+        identity.recovery_pubkey().identity_pubkey().to_owned()
+    };
+
+    // Refuse to back up if the identity still carries the bootstrap placeholder:
+    // a backup encrypted to a guessable / null recipient is worse than no
+    // backup at all.
+    if recovery_recipient.is_empty() || recovery_recipient.contains("placeholder") {
+        return Problem {
+            kind: ProblemType::BackupFailed,
+            title: "Vault recovery key not configured".into(),
+            status: 409,
+            detail: "The vault has no real recovery key; run the init ceremony \
+                     before creating a backup. Refusing to encrypt a backup to a \
+                     placeholder recipient."
+                .into(),
+            instance: None,
+            hint: Some("Initialise the vault with `merkle init`.".into()),
+            fields: vec![],
+        }
+        .into_response();
+    }
+
     let cmd = TriggerBackupCommand {
         namespace_id,
         trigger: DomainBackupTrigger::Manual,
-        master_pubkey_recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfes8l7"
-            .into(),
-        recovery_pubkey_recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfes8l7"
-            .into(),
+        master_pubkey_recipient: recovery_recipient.clone(),
+        recovery_pubkey_recipient: recovery_recipient,
         output_path: artifact_path.clone(),
     };
 
