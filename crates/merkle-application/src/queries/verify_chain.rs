@@ -4,9 +4,7 @@
 //! [`AuditLog`] via [`AuditWriter::append`], and delegates to
 //! [`ChainVerifier::verify_full`].
 
-use merkle_domain_audit_compliance::{
-    AppendParams, AuditLog, AuditWriter, ChainVerifier, ChainVerifyResult,
-};
+use merkle_domain_audit_compliance::{AuditLog, ChainVerifier, ChainVerifyResult};
 use tracing::info;
 
 use crate::{AppContext, AppError};
@@ -43,23 +41,16 @@ impl VerifyChainQuery {
 
         let hmac_key = ctx.require_hmac_key().await?;
 
-        // Load all persisted entries (ascending sequence order).
+        // Load all persisted entries (ascending sequence order) verbatim, so
+        // the verifier recomputes hashes against the genuine stored values
+        // rather than against freshly re-appended entries (which would carry
+        // new ids/timestamps and never match the real chain).
         let stored_entries = ctx
             .storage
             .read_audit(&merkle_domain_audit_compliance::AuditQuery::default())
             .await?;
 
-        // Rebuild the in-memory AuditLog by re-appending each entry using
-        // its original parameters. The HMAC key is the same across the session,
-        // so hashes will match if the chain is intact.
-        let mut log = AuditLog::new();
-        for entry in &stored_entries {
-            let params = AppendParams::new(entry.op, entry.outcome, entry.namespace_id)
-                .caller_program("merkle-agent");
-            // Ignore the returned entry; we only care about rebuilding log state.
-            AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(format!("chain rebuild failed: {e}")))?;
-        }
+        let log = AuditLog::from_persisted(stored_entries);
 
         // Load the pinned head.
         let pinned_head = ctx.storage.pinned_head().await?.ok_or_else(|| {

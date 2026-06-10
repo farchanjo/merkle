@@ -99,4 +99,30 @@ impl AuditLog {
             entries: Vec::new(),
         }
     }
+
+    /// Rebuild an `AuditLog` from entries already persisted to storage,
+    /// preserving each entry's stored hashes, id, timestamp, and optional
+    /// fields exactly.
+    ///
+    /// This is the ONLY correct way to feed the on-disk chain to
+    /// [`crate::ChainVerifier`]. Replaying entries through
+    /// [`crate::AuditWriter::append`] recomputes every `current_hash` from fresh
+    /// parameters (a new id and timestamp per call) and therefore can never
+    /// reproduce the original entries — verification of such a rebuilt log
+    /// proves nothing about the persisted chain. Loading the entries verbatim
+    /// lets the verifier recompute the canonical bytes and compare against the
+    /// genuine stored `current_hash`.
+    ///
+    /// `entries` MUST be in ascending sequence order (as returned by the
+    /// storage adapter's `read_audit`).
+    #[must_use]
+    pub fn from_persisted(entries: Vec<AuditEntry>) -> Self {
+        let head = entries.last().map(|e| e.current_hash);
+        let head_seq = entries.last().map_or(0, |e| e.seq);
+        Self {
+            head,
+            head_seq,
+            entries,
+        }
+    }
 }

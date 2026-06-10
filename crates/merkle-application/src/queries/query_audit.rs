@@ -1,7 +1,7 @@
 //! `QueryAuditQuery` — read audit log entries matching a filter.
 
 use merkle_domain_audit_compliance::{
-    AppendParams, AuditEntry, AuditLog, AuditQuery, AuditWriter, ChainOutcome, ChainVerifier,
+    AuditEntry, AuditLog, AuditQuery, ChainOutcome, ChainVerifier,
 };
 use tracing::info;
 
@@ -57,15 +57,14 @@ impl QueryAuditQuery {
         let chain_valid = if self.verify_chain {
             let hmac_key = ctx.require_hmac_key().await?;
 
-            // Rebuild the in-memory AuditLog by re-appending each entry,
-            // following the same pattern used by VerifyChainQuery (doctor).
-            let mut log = AuditLog::new();
-            for entry in &entries {
-                let params = AppendParams::new(entry.op, entry.outcome, entry.namespace_id)
-                    .caller_program("merkle-agent");
-                AuditWriter::append(&mut log, params, &hmac_key)
-                    .map_err(|e| AppError::Domain(format!("chain rebuild failed: {e}")))?;
-            }
+            // Verify the FULL chain, not the (possibly filtered) view returned
+            // to the caller: load every persisted entry verbatim so the
+            // verifier recomputes hashes against the genuine stored values.
+            let full_entries = ctx
+                .storage
+                .read_audit(&merkle_domain_audit_compliance::AuditQuery::default())
+                .await?;
+            let log = AuditLog::from_persisted(full_entries);
 
             let pinned_head = ctx.storage.pinned_head().await?.ok_or_else(|| {
                 AppError::Domain("no pinned head found — vault may be uninitialized".into())
