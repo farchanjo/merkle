@@ -89,6 +89,9 @@ impl SpawnCommandCommand {
 
         let output = Command::new(program)
             .args(args)
+            // Never let a spawned (possibly attacker-influenced) child inherit
+            // the keystore passphrase that protects every secret at rest.
+            .env_remove("MERKLE_KEYSTORE_PASSPHRASE")
             .env(&self.env_var, &secret_val)
             .output()
             .await

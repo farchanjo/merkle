@@ -8,6 +8,27 @@ use tracing::info;
 
 use crate::{AppContext, AppError};
 
+/// POSIX-shell single-quote a string so it is passed as a single literal
+/// argument to the remote shell.
+///
+/// The remote side runs `scp <source> <destination>` through a shell, so any
+/// metacharacter in an unquoted path (`'`, `;`, `&&`, `$()`, …) would otherwise
+/// be interpreted. Wrapping in single quotes neutralises everything; an
+/// embedded `'` is escaped as `'\''` (close-quote, literal quote, re-open).
+fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// Input for SSH copy.
 #[derive(Debug)]
 pub struct SshCopyCommand {
@@ -45,7 +66,11 @@ impl SshCopyCommand {
 
         info!(target = %self.target, "ssh_copy: executing remote copy");
 
-        let scp_cmd = format!("scp '{}' '{}'", self.source, self.destination);
+        let scp_cmd = format!(
+            "scp {} {}",
+            shell_single_quote(&self.source),
+            shell_single_quote(&self.destination)
+        );
         let result = ctx
             .external
             .ssh_exec(&self.target, &self.key_material, &scp_cmd)
@@ -72,5 +97,26 @@ impl SshCopyCommand {
             exit_code: result.exit_code,
             stderr: result.stderr,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_single_quote;
+
+    #[test]
+    fn plain_path_is_wrapped_in_single_quotes() {
+        assert_eq!(shell_single_quote("/tmp/file"), "'/tmp/file'");
+    }
+
+    #[test]
+    fn injection_attempt_is_neutralised() {
+        // Classic break-out attempt: a single quote followed by a command.
+        let malicious = "a' && id && echo '";
+        let quoted = shell_single_quote(malicious);
+        // Every embedded quote is escaped as '\'' so the whole thing stays a
+        // single literal argument — no `&&`, no command substitution escapes.
+        assert_eq!(quoted, "'a'\\'' && id && echo '\\'''");
+        assert!(quoted.starts_with('\'') && quoted.ends_with('\''));
     }
 }

@@ -17,11 +17,10 @@
 //! - Policy denial: `op = PortForward, outcome = Deny,
 //!   denial_reason = "missing_slash_command"`.
 
-use std::os::unix::fs::PermissionsExt as _;
-
 use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation;
 use merkle_types::{AuditOp, AuditOutcome, NamespaceId, Sensitivity, UuidV7};
 use tokio::fs;
+use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use tracing::info;
 
@@ -108,15 +107,26 @@ impl PortForwardCommand {
         let session_id = UuidV7::new();
         let tmp_path = std::env::temp_dir().join(format!("merkle-pf-{session_id}.key"));
 
-        fs::write(&tmp_path, &self.key_material)
+        // Create the key file with 0600 atomically: `create_new` refuses to
+        // follow a pre-existing path (symlink-swap defence) and `mode(0o600)`
+        // applies the permission at open(2), eliminating the world-readable
+        // window of a write-then-chmod sequence.
+        let mut key_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp_path)
+            .await
+            .map_err(|e| AppError::Domain(format!("port_forward: create key tempfile: {e}")))?;
+        key_file
+            .write_all(&self.key_material)
             .await
             .map_err(|e| AppError::Domain(format!("port_forward: write key tempfile: {e}")))?;
-
-        // Restrict permissions to owner-read-write only.
-        let perms = std::fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&tmp_path, perms)
+        key_file
+            .sync_all()
             .await
-            .map_err(|e| AppError::Domain(format!("port_forward: set tempfile perms: {e}")))?;
+            .map_err(|e| AppError::Domain(format!("port_forward: sync key tempfile: {e}")))?;
+        drop(key_file);
 
         // ------------------------------------------------------------------
         // Spawn the `ssh -L` child process (non-awaited background tunnel).
@@ -144,6 +154,8 @@ impl PortForwardCommand {
                 &forward_spec,
                 &self.ssh_target,
             ])
+            // The ssh child must never inherit the keystore passphrase.
+            .env_remove("MERKLE_KEYSTORE_PASSPHRASE")
             // Suppress terminal I/O.
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

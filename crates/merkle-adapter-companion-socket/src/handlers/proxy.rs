@@ -647,6 +647,9 @@ pub async fn spawn(
 
     let mut child_cmd = tokio::process::Command::new(&body.command);
     child_cmd.args(&body.args);
+    // Never let the spawned child inherit the keystore passphrase that
+    // protects every secret at rest.
+    child_cmd.env_remove("MERKLE_KEYSTORE_PASSPHRASE");
     for (k, v) in &body.env {
         child_cmd.env(k, v);
     }
