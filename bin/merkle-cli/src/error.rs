@@ -85,6 +85,12 @@ impl From<ClientError> for CliError {
             ClientError::Json(e) => Self::Json(e),
             ClientError::Sealed => Self::Sealed,
             ClientError::Build(e) => Self::Other(e),
+            ClientError::Timeout(secs) => {
+                Self::AgentUnreachable(format!("request timed out after {secs}s"))
+            }
+            ClientError::BodyTooLarge(limit) => {
+                Self::AgentUnreachable(format!("agent response exceeded {limit} bytes"))
+            }
         }
     }
 }

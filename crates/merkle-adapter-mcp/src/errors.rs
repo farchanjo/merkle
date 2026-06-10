@@ -129,6 +129,24 @@ pub fn client_error_to_mcp(err: ClientError) -> ErrorData {
                 "error_type": "vault.client_build_error",
             })),
         ),
+
+        ClientError::Timeout(secs) => ErrorData::new(
+            ErrorCode(codes::AGENT_UNREACHABLE),
+            format!("vault agent request timed out after {secs}s"),
+            Some(serde_json::json!({
+                "hint": "The agent did not respond in time; check that it is healthy (`merkle status`)",
+                "error_type": "vault.timeout",
+            })),
+        ),
+
+        ClientError::BodyTooLarge(limit) => ErrorData::new(
+            ErrorCode(codes::PROTOCOL_ERROR),
+            format!("vault agent response exceeded the {limit}-byte ceiling"),
+            Some(serde_json::json!({
+                "hint": "The agent returned an unexpectedly large response",
+                "error_type": "vault.body_too_large",
+            })),
+        ),
     }
 }
 
