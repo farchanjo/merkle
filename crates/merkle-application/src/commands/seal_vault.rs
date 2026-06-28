@@ -31,28 +31,23 @@ impl SealVaultCommand {
         if let Some(key) = *hmac_key {
             drop(hmac_key);
             let ns_id = NamespaceId::new();
-            let mut log = ctx.audit_log.write().await;
             let params = merkle_domain_audit_compliance::AppendParams::new(
                 AuditOp::Seal,
                 AuditOutcome::Allow,
                 ns_id,
             )
             .caller_program("merkle-agent");
-            if let Ok((entry, pinned)) =
-                merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &key)
-            {
-                drop(log);
-                // Sealing must still proceed if persistence fails (the key is
-                // about to be dropped regardless), but a lost seal event is an
-                // audit-trail gap and MUST be surfaced, not silently discarded.
-                if let Err(e) = ctx.storage.append_audit_entry(&entry).await {
-                    warn!(error = %e, "seal_vault: failed to persist seal audit entry");
-                }
-                if let Err(e) = ctx.storage.update_pinned_head(&pinned).await {
-                    warn!(error = %e, "seal_vault: failed to persist pinned head after seal");
-                }
-            } else {
-                drop(log);
+            // BUG-06: `audit_commit` holds the audit-log write guard across
+            // persistence and rolls the in-memory head back on failure, so a
+            // concurrent command can never observe — or chain off — a
+            // non-durable seal tail. Sealing must still proceed even when
+            // persistence fails (the HMAC key is about to be dropped), but the
+            // lost seal event is an audit-trail gap and MUST be surfaced.
+            if let Err(e) = crate::commands::unseal_vault::audit_commit(ctx, params, &key).await {
+                warn!(
+                    error = %e,
+                    "seal_vault: seal audit entry not persisted; in-memory head rolled back, sealing proceeds"
+                );
             }
         } else {
             drop(hmac_key);

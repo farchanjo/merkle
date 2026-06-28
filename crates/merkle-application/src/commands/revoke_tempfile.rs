@@ -58,21 +58,16 @@ impl RevokeTempfileCommand {
         let fifo_removed = tokio::fs::remove_file(&fifo_path).await.is_ok();
         let revoked = tmp_removed || fifo_removed;
 
-        // Audit (no matter whether the file existed or not — the intent was to revoke).
+        // Audit (no matter whether the file existed or not — the intent was to
+        // revoke). BUG-06: persist-then-advance atomically (see `audit_commit`).
         let hmac_key = ctx.require_hmac_key().await?;
-        let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::WriteTempfile,
             AuditOutcome::Allow,
             self.namespace_id,
         )
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        drop(log);
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         info!(revoked = revoked, "revoke_tempfile: complete");
         Ok(RevokeTempfileOutput { revoked })

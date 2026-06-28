@@ -639,6 +639,7 @@ async fn test_doctor_reports_chain_integrity_ok() {
 /// T11 — write_tempfile returns opaque token and file exists on disk.
 #[tokio::test]
 async fn test_write_tempfile_returns_opaque_token() {
+    use merkle_application::commands::use_token::UseTokenCommand;
     use merkle_application::commands::write_tempfile::WriteTempfileCommand;
 
     let ctx = make_ctx().await;
@@ -652,10 +653,22 @@ async fn test_write_tempfile_returns_opaque_token() {
     )
     .await;
 
+    // A single-use authorization token is now required before materialization.
+    let use_token = UseTokenCommand {
+        namespace_id: ns_id,
+        handle: handle.clone(),
+        session_id: merkle_types::UuidV7::new(),
+    }
+    .execute(&ctx)
+    .await
+    .expect("issue use-token")
+    .use_token;
+
     let cmd = WriteTempfileCommand {
         namespace_id: ns_id,
         handle,
         dek_bytes: test_dek(),
+        use_token,
     };
     let out = cmd
         .execute(&ctx)

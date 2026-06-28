@@ -170,9 +170,8 @@ impl RevealSecretCommand {
 
         match &authorization {
             RevealAuthorization::Deny { reason } => {
-                // Audit denied attempt.
+                // Audit denied attempt (BUG-06: persist-then-advance atomically).
                 let hmac_key = ctx.require_hmac_key().await?;
-                let mut log = ctx.audit_log.write().await;
                 let params = merkle_domain_audit_compliance::AppendParams::new(
                     AuditOp::Reveal,
                     AuditOutcome::Deny,
@@ -182,13 +181,7 @@ impl RevealSecretCommand {
                 .sensitivity(self.sensitivity)
                 .denial_reason(reason.clone())
                 .caller_program("merkle-agent");
-                let (entry, pinned) = merkle_domain_audit_compliance::AuditWriter::append(
-                    &mut log, params, &hmac_key,
-                )
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-                drop(log);
-                ctx.storage.append_audit_entry(&entry).await?;
-                ctx.storage.update_pinned_head(&pinned).await?;
+                crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
                 return Err(AppError::PolicyDenied(reason.as_str().to_owned()));
             }
@@ -255,9 +248,8 @@ impl RevealSecretCommand {
                 .aead_decrypt(&self.dek_bytes, &blob.nonce, &cipher_with_tag, &aad)?;
         aad.clear(); // defensive; aad is just the handle URI bytes
 
-        // 6. Audit success.
+        // 6. Audit success (BUG-06: persist-then-advance atomically).
         let hmac_key = ctx.require_hmac_key().await?;
-        let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::Reveal,
             AuditOutcome::Allow,
@@ -266,12 +258,7 @@ impl RevealSecretCommand {
         .handle(self.handle.clone())
         .sensitivity(self.sensitivity)
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        drop(log);
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         info!(handle = %self.handle, "reveal_secret: plaintext decrypted");
         Ok(RevealSecretOutput { plaintext })
