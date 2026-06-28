@@ -7,7 +7,7 @@ use merkle_ports::{
     StorageError,
 };
 use merkle_types::{Handle, NamespaceId, SecretId};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::error::AdapterError;
 use crate::mappers::{id_to_blob, row_to_secret, row_to_secret_version, uuid_to_blob};
@@ -19,8 +19,11 @@ use crate::mappers::{id_to_blob, row_to_secret, row_to_secret_version, uuid_to_b
 /// Upsert a single `SecretVersion` row, using `parent_id` as the canonical
 /// `secret_id` (overrides `v.secret_id` which may carry a placeholder value
 /// set before `Secret::new` generated the real identity).
+///
+/// Runs against a caller-supplied connection (typically the open transaction in
+/// [`put_secret`]) so the version writes commit atomically with the parent row.
 async fn upsert_version_with_parent(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     v: &SecretVersion,
     parent_id: &SecretId,
 ) -> Result<(), AdapterError> {
@@ -49,7 +52,7 @@ async fn upsert_version_with_parent(
     .bind(dek_version)
     .bind(&created_at)
     .bind(&deprecated_at)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
 
     Ok(())
@@ -77,20 +80,25 @@ fn flatten_tags_json(tags_json: &str) -> String {
 // Public operations
 // ---------------------------------------------------------------------------
 
-/// Upsert a [`Secret`] and all its [`SecretVersion`]s atomically.
-pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(), StorageError> {
+/// Upsert the `secrets` row for `secret` against an open connection.
+///
+/// Materializes `namespace_label` from the handle so the FTS5 triggers index
+/// the real namespace label (the `COALESCE(new.namespace_label, …)` fallback
+/// only fires when the column is `NULL`, never for the `''` default).
+async fn upsert_secret_row(
+    conn: &mut SqliteConnection,
+    secret: &Secret,
+) -> Result<(), AdapterError> {
     let id_blob = id_to_blob!(secret.id);
     let ns_blob = id_to_blob!(secret.namespace_id);
     let handle_str = secret.handle.to_string();
     let name_str = secret.handle.secret_name().to_string();
+    let namespace_label = secret.handle.namespace().to_string();
     let category_str = secret.category.to_string();
     let sensitivity_str = secret.sensitivity.to_string();
-    let public_metadata_json = serde_json::to_string(&secret.public_metadata)
-        .map_err(AdapterError::Json)
-        .map_err(StorageError::from)?;
-    let tags_json = serde_json::to_string(&secret.tags)
-        .map_err(AdapterError::Json)
-        .map_err(StorageError::from)?;
+    let public_metadata_json =
+        serde_json::to_string(&secret.public_metadata).map_err(AdapterError::Json)?;
+    let tags_json = serde_json::to_string(&secret.tags).map_err(AdapterError::Json)?;
     let tags_text = flatten_tags_json(&tags_json);
     let description = secret
         .public_metadata
@@ -101,18 +109,12 @@ pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(),
     let current_version_id_blob = uuid_to_blob(secret.current_version_id().inner());
     let created_at = secret.created_at.to_string();
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-
     sqlx::query(
         r"INSERT INTO secrets
             (id, namespace_id, handle, name, category, sensitivity,
              public_metadata_json, tags_json, tags_text, description,
-             current_version_id, created_at)
-          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+             current_version_id, created_at, namespace_label)
+          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
           ON CONFLICT(id) DO UPDATE SET
               handle               = excluded.handle,
               name                 = excluded.name,
@@ -121,7 +123,8 @@ pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(),
               tags_json            = excluded.tags_json,
               tags_text            = excluded.tags_text,
               description          = excluded.description,
-              current_version_id   = excluded.current_version_id",
+              current_version_id   = excluded.current_version_id,
+              namespace_label      = excluded.namespace_label",
     )
     .bind(&id_blob)
     .bind(&ns_blob)
@@ -135,26 +138,43 @@ pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(),
     .bind(&description)
     .bind(&current_version_id_blob)
     .bind(&created_at)
-    .execute(&mut *tx)
-    .await
-    .map_err(AdapterError::Sqlx)
-    .map_err(StorageError::from)?;
+    .bind(&namespace_label)
+    .execute(&mut *conn)
+    .await?;
 
-    tx.commit()
+    Ok(())
+}
+
+/// Upsert a [`Secret`] and all its [`SecretVersion`]s atomically.
+///
+/// The parent row and every version write share ONE transaction: a concurrent
+/// reader never observes the `secrets` row before its versions, and any failure
+/// rolls the whole batch back rather than leaving a dangling parent.
+pub(crate) async fn put_secret(pool: &SqlitePool, secret: &Secret) -> Result<(), StorageError> {
+    let mut tx = pool
+        .begin()
         .await
         .map_err(AdapterError::Sqlx)
         .map_err(StorageError::from)?;
 
-    // Versions use the pool directly (each version upsert is its own mini-tx).
+    upsert_secret_row(&mut tx, secret)
+        .await
+        .map_err(StorageError::from)?;
+
     // We override `secret_id` in the write path to guarantee it always matches
     // the parent `Secret::id` — the domain type doesn't enforce this at
     // construction time, so a newly-created Secret may carry a placeholder id
     // in the initial version's `secret_id` field.
     for version in secret.versions() {
-        upsert_version_with_parent(pool, version, &secret.id)
+        upsert_version_with_parent(&mut tx, version, &secret.id)
             .await
             .map_err(StorageError::from)?;
     }
+
+    tx.commit()
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
 
     Ok(())
 }
@@ -244,10 +264,15 @@ pub(crate) async fn list_secrets(
         bind_idx += 1;
     }
 
-    let limit_clause = filter
-        .limit
-        .map(|l| format!(" LIMIT {l}"))
-        .unwrap_or_default();
+    // The tag filter is applied row-by-row in Rust below (SQL JSON array
+    // intersection is verbose in SQLite). Pushing a SQL `LIMIT` here would
+    // truncate the result set BEFORE the tag filter runs, silently dropping
+    // matching rows. So only let SQL apply the limit when there is no tag
+    // filter; otherwise we fetch all candidates and truncate AFTER filtering.
+    let limit_clause = match (filter.limit, filter.tag_match.is_none()) {
+        (Some(l), true) => format!(" LIMIT {l}"),
+        _ => String::new(),
+    };
 
     let _ = bind_idx; // consumed above
 
@@ -310,6 +335,15 @@ pub(crate) async fn list_secrets(
 
         let secret = row_to_secret(row, &versions).map_err(StorageError::from)?;
         secrets.push(secret);
+    }
+
+    // When a tag filter is present the SQL query did NOT apply the limit (see
+    // `limit_clause` above), so enforce it here — AFTER tag matching — so the
+    // page reflects the filtered set rather than a pre-filter truncation.
+    if filter.tag_match.is_some() {
+        if let Some(limit) = filter.limit {
+            secrets.truncate(limit as usize);
+        }
     }
 
     Ok(secrets)
