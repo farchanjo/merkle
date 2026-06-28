@@ -111,7 +111,26 @@ yanked        = "deny"
 
 # Ignored advisories: add only with a justification comment and a review date.
 # Format: { id = "RUSTSEC-YYYY-NNNN", reason = "...", until = "YYYY-MM-DD" }
-ignore = []
+ignore = [
+    # RUSTSEC-2023-0071 — Marvin timing side-channel in `rsa` 0.9.x (CVSS 5.9 MED).
+    # No upstream fix exists as of 2026-06-28; the rsa crate has no patched release.
+    #
+    # Risk verdict: NEGLIGIBLE for Merkle.
+    # Dependency chain: sqlx 0.8 (features=["sqlite",...]) → sqlx-mysql 0.8.6 → rsa 0.9.10.
+    # The workspace enables only the "sqlite" feature of sqlx, NOT the "mysql" feature.
+    # Therefore sqlx-mysql and rsa are resolved into the lock file by cargo's exhaustive
+    # resolution but are NOT compiled into any Merkle binary. No RSA operations are
+    # reachable at runtime. Merkle's signing path uses Ed25519 (age + orion); key
+    # exchange uses X25519; encryption uses XChaCha20-Poly1305 AEAD. RSA is absent
+    # from all signing, encryption, and decryption code paths.
+    #
+    # Remediation path: when sqlx ships rsa-free mysql authentication (tracking upstream
+    # sqlx-mysql issue) or when the `rsa` crate publishes a patched release, remove
+    # this entry and re-run `cargo deny check`.
+    #
+    # Review date: 2026-12-28
+    { id = "RUSTSEC-2023-0071", reason = "rsa pulled by sqlx-mysql (mysql feature not enabled); no RSA operations compiled or reachable; no upstream fix; vault signing path is Ed25519/X25519/AEAD only" },
+]
 
 # ---------------------------------------------------------------------------
 # [sources]
