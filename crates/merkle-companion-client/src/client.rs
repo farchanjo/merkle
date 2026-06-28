@@ -362,6 +362,13 @@ impl CompanionSocketClient {
         if let Some(ref cat) = params.category {
             let _ = write!(path, "&category={}", enc(cat));
         }
+        // BUG-006: the `tags` filter is parsed into `ListSecretsParams` by the MCP
+        // adapter but was never serialized here, so `vault.list {tags:[…]}` was a
+        // silent no-op end-to-end. The list handler consumes `params.tags`
+        // (comma-separated `key:value`), so forward it.
+        if let Some(ref tags) = params.tags {
+            let _ = write!(path, "&tags={}", enc(tags));
+        }
         if let Some(ref pat) = params.name_pattern {
             let _ = write!(path, "&name_pattern={}", enc(pat));
         }
