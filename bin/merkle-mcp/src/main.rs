@@ -248,6 +248,78 @@ fn default_socket_path() -> PathBuf {
 // Tracing initialisation
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Directive sanitisation (GAP-005)
+//
+// Keep in sync with `bin/merkle-agent/src/tracing_init.rs::sanitize_directive`.
+// If the agent's implementation changes, update this copy as well.
+// ---------------------------------------------------------------------------
+
+/// Maximum verbosity ever allowed for the `sqlx` targets.  `warn` keeps error
+/// and warning diagnostics while suppressing the `DEBUG`/`TRACE` statement logs
+/// that echo SQL text and bound parameters.
+const SQLX_MAX_RANK: u8 = rank("warn");
+
+/// Map a level name to a verbosity rank (higher = more verbose).  Unknown names
+/// return `0` so non-level tokens are left untouched.
+const fn rank(level: &str) -> u8 {
+    match level.as_bytes() {
+        b"trace" => 5,
+        b"debug" => 4,
+        b"info" => 3,
+        b"warn" => 2,
+        b"error" => 1,
+        _ => 0, // "off" and anything unrecognised
+    }
+}
+
+/// Return the verbosity rank of a level token, case-insensitively, if it names
+/// a known level.
+fn level_rank(level: &str) -> Option<u8> {
+    let lower = level.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "trace" | "debug" | "info" | "warn" | "error" | "off" => Some(rank(&lower)),
+        _ => None,
+    }
+}
+
+/// Clamp an `EnvFilter` directive so the `sqlx` targets can never exceed
+/// [`SQLX_MAX_RANK`].
+///
+/// Comma-separated directives are processed individually: any explicit `sqlx*`
+/// target more verbose than `warn` is downgraded to `warn`, and a trailing
+/// `sqlx=warn` clamp is appended when the caller set no `sqlx` target (so a
+/// bare global `trace`/`debug` cannot enable SQL statement logging either —
+/// `EnvFilter` honours the most specific target match).
+fn sanitize_directive(directive: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut saw_sqlx = false;
+
+    for raw in directive.split(',') {
+        let part = raw.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((target, level)) = part.split_once('=')
+            && target.trim().to_ascii_lowercase().starts_with("sqlx")
+        {
+            saw_sqlx = true;
+            let clamped = match level_rank(level) {
+                Some(r) if r > SQLX_MAX_RANK => "warn",
+                _ => level.trim(),
+            };
+            parts.push(format!("{}={clamped}", target.trim()));
+            continue;
+        }
+        parts.push(part.to_owned());
+    }
+
+    if !saw_sqlx {
+        parts.push("sqlx=warn".to_owned());
+    }
+    parts.join(",")
+}
+
 /// Initialise the `tracing` subscriber, routing all output to **stderr**.
 ///
 /// Stdout is reserved for the MCP JSON-RPC transport frames emitted by `rmcp`.
@@ -258,9 +330,14 @@ fn default_socket_path() -> PathBuf {
 /// more than once in the same process).
 fn init_tracing(default_level: &str, json: bool) -> anyhow::Result<()> {
     // MERKLE_LOG overrides RUST_LOG, which overrides the CLI default.
-    let directive = std::env::var("MERKLE_LOG")
+    let raw = std::env::var("MERKLE_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .unwrap_or_else(|_| default_level.to_owned());
+
+    // Clamp the directive so no caller — via env or config — can turn on
+    // `sqlx` statement logging, which would spill raw SQL (and bound secret
+    // parameters) into the logs (GAP-005).
+    let directive = sanitize_directive(&raw);
 
     let env_filter = EnvFilter::try_new(&directive)
         .with_context(|| format!("invalid log directive: {directive}"))?;
@@ -280,4 +357,66 @@ fn init_tracing(default_level: &str, json: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests — directive sanitisation
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_directive;
+
+    #[test]
+    fn appends_sqlx_clamp_when_absent() {
+        // A bare global level must not enable sqlx statement logging via mcp.
+        assert_eq!(sanitize_directive("info"), "info,sqlx=warn");
+        assert_eq!(sanitize_directive("trace"), "trace,sqlx=warn");
+    }
+
+    #[test]
+    fn downgrades_explicit_sqlx_trace() {
+        assert_eq!(sanitize_directive("sqlx=trace"), "sqlx=warn");
+        assert_eq!(sanitize_directive("sqlx=debug"), "sqlx=warn");
+        assert_eq!(sanitize_directive("sqlx=info"), "sqlx=warn");
+    }
+
+    #[test]
+    fn downgrades_sqlx_query_subtarget() {
+        // `sqlx::query` is the exact target that emits SQL text.
+        assert_eq!(
+            sanitize_directive("merkle_mcp=debug,sqlx::query=trace"),
+            "merkle_mcp=debug,sqlx::query=warn"
+        );
+    }
+
+    #[test]
+    fn keeps_sqlx_error_which_is_less_verbose() {
+        assert_eq!(sanitize_directive("sqlx=error"), "sqlx=error");
+        assert_eq!(sanitize_directive("sqlx=off"), "sqlx=off");
+    }
+
+    #[test]
+    fn preserves_unrelated_targets() {
+        assert_eq!(
+            sanitize_directive("merkle_mcp=debug,hyper=info"),
+            "merkle_mcp=debug,hyper=info,sqlx=warn"
+        );
+    }
+
+    /// Verify the sanitised output is always accepted by `EnvFilter::try_new`,
+    /// which is the parser used in `init_tracing` (GAP-005).
+    #[test]
+    fn sanitized_directive_stays_parseable() {
+        use tracing_subscriber::EnvFilter;
+        for input in [
+            "trace",
+            "sqlx=trace",
+            "merkle_mcp=debug,sqlx::query=trace",
+            "info",
+        ] {
+            let out = sanitize_directive(input);
+            EnvFilter::try_new(&out).unwrap_or_else(|_| panic!("unparsable directive: {out}"));
+        }
+    }
 }
