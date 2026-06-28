@@ -124,7 +124,6 @@ impl RotateSecretCommand {
 
         // 5. Audit.
         let hmac_key = ctx.require_hmac_key().await?;
-        let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::Rotate,
             AuditOutcome::Allow,
@@ -133,11 +132,7 @@ impl RotateSecretCommand {
         .handle(self.handle.clone())
         .sensitivity(secret.sensitivity)
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         info!(handle = %self.handle, version = new_version_no, "rotate_secret: rotated");
         Ok(RotateSecretOutput { new_version_no })

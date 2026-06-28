@@ -108,18 +108,13 @@ impl TriggerBackupCommand {
         ctx.storage.put_backup(&backup).await?;
 
         // 7. Audit.
-        let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::Backup,
             AuditOutcome::Allow,
             self.namespace_id,
         )
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         info!("trigger_backup: backup complete");
         Ok(TriggerBackupOutput { backup })

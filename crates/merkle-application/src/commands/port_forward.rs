@@ -83,7 +83,6 @@ impl PortForwardCommand {
             );
 
             let hmac_key = ctx.require_hmac_key().await?;
-            let mut log = ctx.audit_log.write().await;
             let params = merkle_domain_audit_compliance::AppendParams::new(
                 AuditOp::PortForward,
                 AuditOutcome::Deny,
@@ -91,12 +90,7 @@ impl PortForwardCommand {
             )
             .denial_reason("missing_slash_command")
             .caller_program("merkle-agent");
-            let (entry, pinned) =
-                merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                    .map_err(|e| AppError::Domain(e.to_string()))?;
-            drop(log);
-            ctx.storage.append_audit_entry(&entry).await?;
-            ctx.storage.update_pinned_head(&pinned).await?;
+            crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
             return Err(AppError::PolicyDenied("missing_slash_command".into()));
         }
@@ -173,19 +167,13 @@ impl PortForwardCommand {
         // Audit: op=PortForward, outcome=Allow.
         // ------------------------------------------------------------------
         let hmac_key = ctx.require_hmac_key().await?;
-        let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::PortForward,
             AuditOutcome::Allow,
             self.namespace_id,
         )
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        drop(log);
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         let local_addr = format!("127.0.0.1:{}", self.local_port);
         info!(
