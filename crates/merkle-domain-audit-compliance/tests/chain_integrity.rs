@@ -15,7 +15,7 @@
 
 use merkle_domain_audit_compliance::{
     AppendParams, AuditLog, AuditQuery, AuditQueryModel, AuditWriter, ChainOutcome, ChainVerifier,
-    PinnedHead,
+    PinnedHead, audit_entry::AuditEntry,
 };
 use merkle_types::{
     AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, NamespaceId, Rfc3339Timestamp, hash::GENESIS,
@@ -49,6 +49,27 @@ fn fill_log(log: &mut AuditLog, count: usize) -> PinnedHead {
         last_head = put_allow(log, ns);
     }
     last_head
+}
+
+/// Append `count` allow/put entries and return them verbatim alongside the final
+/// authenticated `PinnedHead`. Used to feed a hand-tampered chain to the
+/// verifier via [`AuditLog::from_persisted`].
+fn append_entries(count: usize) -> (Vec<AuditEntry>, PinnedHead) {
+    let mut log = AuditLog::new();
+    let ns = test_namespace();
+    let mut entries = Vec::with_capacity(count);
+    let mut head = PinnedHead::new(GENESIS, 0, AuditEntryId::new(), Rfc3339Timestamp::now());
+    for _ in 0..count {
+        let (entry, pinned) = AuditWriter::append(
+            &mut log,
+            AppendParams::new(AuditOp::Put, AuditOutcome::Allow, ns),
+            &HMAC_KEY,
+        )
+        .expect("append must succeed");
+        entries.push(entry);
+        head = pinned;
+    }
+    (entries, head)
 }
 
 // ---------------------------------------------------------------------------
@@ -137,14 +158,17 @@ fn verify_full_head_hash_mismatch() {
     let pinned = fill_log(&mut log, 5);
 
     // A pinned head with the correct seq but a wrong head_hash models a
-    // rewritten chain tip whose entry count is preserved. The seq check passes
-    // (no truncation) but the head commitment must still reject it.
+    // rewritten chain tip whose entry count is preserved. The MAC is recomputed
+    // over the forged fields (the attacker is given the key here) so the head
+    // authentication passes and the reconstructed-tip equality check is the one
+    // that must reject the divergence.
     let forged = PinnedHead::new(
         GENESIS,
         pinned.head_seq,
         pinned.head_id,
         Rfc3339Timestamp::now(),
-    );
+    )
+    .with_head_mac(&HMAC_KEY, pinned.head_seq + 1);
     let result = ChainVerifier::verify_full(&log, &forged, &HMAC_KEY);
     assert!(
         matches!(result.outcome, ChainOutcome::HeadHashMismatch { .. }),
@@ -199,8 +223,6 @@ fn verify_full_empty_key_is_hash_only() {
 
 #[test]
 fn verify_full_tampered_entry_broken_at_entry() {
-    use merkle_domain_audit_compliance::audit_entry::AuditEntry;
-
     let mut log = AuditLog::new();
     let ns = test_namespace();
 
@@ -392,6 +414,103 @@ fn verify_link_detects_prev_hash_mismatch() {
     // Reverse: entry1 is not the successor of entry2.
     let err = entry1.verify_link(&entry2);
     assert!(err.is_err(), "reverse link must be rejected");
+}
+
+// ---------------------------------------------------------------------------
+// MERK-002: a keyed pass must reject an entry that carries no HMAC tag
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_missing_hmac_tag_is_not_intact() {
+    let (mut entries, pinned) = append_entries(3);
+
+    // Strip the HMAC tag from a middle entry. The BLAKE3 hash chain still lines
+    // up (the tag is excluded from canonical bytes), so before the fix this
+    // would slip through as Intact — the only keyed integrity check skipped.
+    let victim_id = entries[1].id;
+    entries[1] = AuditEntry {
+        hmac: None,
+        ..entries[1].clone()
+    };
+
+    let log = AuditLog::from_persisted(entries);
+    let result = ChainVerifier::verify_full(&log, &pinned, &HMAC_KEY);
+
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::MissingHmac {
+            entry_id: victim_id
+        },
+        "a present key over an entry with no HMAC must fail, not silently skip"
+    );
+    assert!(!result.is_intact());
+}
+
+// ---------------------------------------------------------------------------
+// MERK-003(a): a full pass that does not begin at the genesis anchor must fail
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_deleted_genesis_prefix_is_not_intact() {
+    let (entries, pinned) = append_entries(4);
+
+    // Remove the genesis entry (seq 0). The remaining chain is internally
+    // self-consistent from seq 1 onward, so the per-link and head checks would
+    // pass; only the genesis anchor catches the removed prefix.
+    let beheaded: Vec<AuditEntry> = entries.into_iter().skip(1).collect();
+    let first_id = beheaded[0].id;
+    let first_seq = beheaded[0].seq;
+
+    let log = AuditLog::from_persisted(beheaded);
+    let result = ChainVerifier::verify_full(&log, &pinned, &HMAC_KEY);
+
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::GenesisAnchorMissing {
+            entry_id: first_id,
+            found_seq: first_seq,
+        },
+        "a full pass whose first entry is not the genesis anchor must fail"
+    );
+    assert!(!result.is_intact());
+}
+
+// ---------------------------------------------------------------------------
+// MERK-003(b): a rewritten pinned head cannot be re-authenticated without the
+// key, even when its head fields are made consistent with a truncated log
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_rewritten_pinned_head_mac_mismatch() {
+    let mut log = AuditLog::new();
+    let pinned = fill_log(&mut log, 3);
+
+    // Baseline: the genuine, authenticated pinned head verifies clean.
+    assert_eq!(
+        ChainVerifier::verify_full(&log, &pinned, &HMAC_KEY).outcome,
+        ChainOutcome::Intact,
+        "the genuine authenticated head must verify Intact"
+    );
+
+    // Attacker rewrites the pinned head's tag. Head fields stay consistent with
+    // the log (so truncation/tip checks alone would pass) but the MAC, forged
+    // under the wrong key, cannot be re-authenticated.
+    let wrong_key = [0x00u8; 32];
+    let forged_mac = pinned.compute_head_mac(&wrong_key, pinned.head_seq + 1);
+    let forged = PinnedHead {
+        hmac_head: Some(forged_mac),
+        ..pinned.clone()
+    };
+
+    let result = ChainVerifier::verify_full(&log, &forged, &HMAC_KEY);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::HeadMacMismatch {
+            head_id: pinned.head_id,
+        },
+        "an unauthenticated pinned head must be rejected before its fields are trusted"
+    );
+    assert!(!result.is_intact());
 }
 
 // ---------------------------------------------------------------------------

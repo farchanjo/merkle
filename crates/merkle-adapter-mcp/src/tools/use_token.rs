@@ -167,12 +167,25 @@ impl MerkleMcpServer {
 
         let _ = input.mode; // agent always uses 0600
 
+        // Mint the single-use authorization token the agent now requires before
+        // it will materialize any plaintext, then consume it on the same call.
+        let mint = self
+            .client
+            .mint_use_token(UseTokenRequest {
+                namespace_id,
+                handle: handle.clone(),
+                session_id,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
+
         let resp = self
             .client
             .write_tempfile(WriteTempfileRequest {
                 namespace_id,
                 handle,
                 session_id,
+                use_token: mint.use_token,
             })
             .await
             .map_err(client_error_to_mcp)?;
@@ -209,12 +222,25 @@ impl MerkleMcpServer {
             (ns, sid)
         };
 
+        // Mint the single-use authorization token the agent now requires before
+        // it will create the FIFO or write any plaintext, then consume it here.
+        let mint = self
+            .client
+            .mint_use_token(UseTokenRequest {
+                namespace_id,
+                handle: handle.clone(),
+                session_id,
+            })
+            .await
+            .map_err(client_error_to_mcp)?;
+
         let resp = self
             .client
             .write_fifo(WriteFifoRequest {
                 namespace_id,
                 handle,
                 session_id,
+                use_token: mint.use_token,
             })
             .await
             .map_err(client_error_to_mcp)?;

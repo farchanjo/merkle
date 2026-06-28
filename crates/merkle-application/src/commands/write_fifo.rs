@@ -27,6 +27,12 @@ pub struct WriteFifoCommand {
     pub handle: Handle,
     /// 32-byte namespace DEK for decryption.
     pub dek_bytes: [u8; 32],
+    /// Opaque single-use authorization token issued by `UseTokenCommand`.
+    ///
+    /// Validated and consumed before the FIFO is created and any plaintext is
+    /// materialized; a missing, expired, replayed, or handle-mismatched token
+    /// rejects the request.
+    pub use_token: String,
 }
 
 /// Output of `WriteFifoCommand`.
@@ -51,6 +57,12 @@ impl WriteFifoCommand {
     /// - [`AppError::NotImplemented`] — non-UNIX platform.
     pub async fn execute(&self, ctx: &AppContext) -> Result<WriteFifoOutput, AppError> {
         ctx.require_unsealed().await?;
+
+        // Enforce the single-use + 60s-TTL use-token BEFORE the FIFO is created
+        // and any plaintext is produced: reject unknown / expired / replayed /
+        // handle-mismatched tokens. Consuming up-front means a replay never
+        // reaches `create_fifo` and cannot spawn a second blocking writer.
+        ctx.consume_use_token(&self.use_token, &self.handle).await?;
 
         info!(handle = %self.handle, "write_fifo: resolving secret");
 
@@ -86,6 +98,35 @@ impl WriteFifoCommand {
         // Create the named pipe (UNIX only).
         create_fifo(&fifo_path)?;
 
+        // Audit BEFORE spawning the writer task.
+        //
+        // BUG-07: the writer is a `spawn_blocking` thread that blocks on
+        // `open(FIFO, O_WRONLY)` until a reader connects — it cannot be aborted
+        // once running. If the audit write failed *after* the spawn, that thread
+        // would block forever and the FIFO would leak. We therefore persist the
+        // audit entry first (BUG-06: atomic persist-then-advance) and spawn the
+        // writer only once the operation is durably recorded; every error path
+        // before the spawn removes the FIFO and leaves no blocked thread.
+        let hmac_key = match ctx.require_hmac_key().await {
+            Ok(key) => key,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&fifo_path).await;
+                return Err(e);
+            }
+        };
+        let params = merkle_domain_audit_compliance::AppendParams::new(
+            AuditOp::WriteTempfile,
+            AuditOutcome::Allow,
+            self.namespace_id,
+        )
+        .handle(self.handle.clone())
+        .sensitivity(secret.sensitivity)
+        .caller_program("merkle-agent");
+        if let Err(e) = crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await {
+            let _ = tokio::fs::remove_file(&fifo_path).await;
+            return Err(e);
+        }
+
         // Spawn a task that opens the FIFO for writing, writes plaintext exactly
         // once (blocking until a reader connects), then removes the FIFO.
         {
@@ -110,24 +151,6 @@ impl WriteFifoCommand {
             real_path_redacted: fifo_path,
             consumed: false,
         };
-
-        // Audit: op=write_tempfile (closest available op in the closed enum).
-        let hmac_key = ctx.require_hmac_key().await?;
-        let mut log = ctx.audit_log.write().await;
-        let params = merkle_domain_audit_compliance::AppendParams::new(
-            AuditOp::WriteTempfile,
-            AuditOutcome::Allow,
-            self.namespace_id,
-        )
-        .handle(self.handle.clone())
-        .sensitivity(secret.sensitivity)
-        .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        drop(log);
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
 
         info!(handle = %self.handle, "write_fifo: FIFO created and writer task spawned");
         Ok(WriteFifoOutput {
@@ -167,5 +190,92 @@ fn create_fifo(path: &PathBuf) -> Result<(), AppError> {
     {
         let _ = path;
         Err(AppError::NotImplemented)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::commands::unseal_vault::test_support;
+    use crate::commands::use_token::UseTokenCommand;
+
+    use merkle_types::UuidV7;
+
+    /// Issue a valid use-token for `handle` via the production command path.
+    async fn issue_token(ctx: &AppContext, namespace_id: NamespaceId, handle: Handle) -> String {
+        UseTokenCommand {
+            namespace_id,
+            handle,
+            session_id: UuidV7::new(),
+        }
+        .execute(ctx)
+        .await
+        .expect("issue use-token")
+        .use_token
+    }
+
+    /// BUG-07: when the audit write fails the FIFO must be removed and no
+    /// blocked writer thread may be left behind. Auditing happens *before* the
+    /// writer task is spawned, so a failed audit never spawns the blocking
+    /// thread and the FIFO is cleaned up.
+    #[tokio::test]
+    async fn fifo_removed_when_audit_write_fails() {
+        let (ctx, storage) = test_support::make_failing_ctx().await;
+        test_support::unseal_ctx(&ctx).await;
+        let (namespace_id, handle) = test_support::seed_secret(&ctx).await;
+
+        // A valid token must be issued before arming the audit failure: it is
+        // now consumed up-front, before the FIFO is created.
+        let use_token = issue_token(&ctx, namespace_id, handle.clone()).await;
+
+        let token = hex::encode(test_support::FIXED_TOKEN);
+        let path = build_fifo_path(&token);
+        let _ = std::fs::remove_file(&path);
+
+        storage.arm_audit_failure();
+        let result = WriteFifoCommand {
+            namespace_id,
+            handle,
+            dek_bytes: test_support::TEST_DEK,
+            use_token,
+        }
+        .execute(&ctx)
+        .await;
+
+        assert!(result.is_err(), "audit failure must surface as an error");
+        assert!(
+            !path.exists(),
+            "BUG-07: FIFO must be removed when the audit write fails"
+        );
+    }
+
+    /// BUG-01: an unknown token is rejected before any FIFO is created, so no
+    /// blocking writer thread is ever spawned.
+    #[tokio::test]
+    async fn unknown_token_creates_no_fifo() {
+        let (ctx, _storage) = test_support::make_failing_ctx().await;
+        test_support::unseal_ctx(&ctx).await;
+        let (namespace_id, handle) = test_support::seed_secret(&ctx).await;
+
+        let path = build_fifo_path(&hex::encode(test_support::FIXED_TOKEN));
+        let _ = std::fs::remove_file(&path);
+
+        let result = WriteFifoCommand {
+            namespace_id,
+            handle,
+            dek_bytes: test_support::TEST_DEK,
+            use_token: "never-issued-token".to_owned(),
+        }
+        .execute(&ctx)
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::InvalidInput(_))),
+            "BUG-01: an unknown token must be rejected, got: {result:?}"
+        );
+        assert!(
+            !path.exists(),
+            "BUG-01: a rejected token must not create a FIFO"
+        );
     }
 }

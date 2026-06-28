@@ -16,7 +16,7 @@ use merkle_ports::{RankedSearchParams, SecretFilter, Storage};
 use merkle_types::{
     AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, CategoryName, CompanionDeviceClass, Handle,
     HmacSignature, NamespaceId, NamespaceLabel, Rfc3339Timestamp, SecretId, SecretName,
-    SecurityProfile, Sensitivity, UuidV7,
+    SecurityProfile, Sensitivity, Tag, UuidV7,
 };
 use std::path::PathBuf;
 
@@ -199,6 +199,110 @@ async fn list_secrets_with_limit_filter() {
         .expect("list_secrets with limit");
 
     assert_eq!(secrets.len(), 2);
+}
+
+/// Build a `Secret` with explicit tags and a deterministic `created_at` so the
+/// `ORDER BY created_at ASC` list ordering is reproducible across rows.
+fn make_secret_with_tags(
+    ns_id: NamespaceId,
+    handle: Handle,
+    tags: Vec<Tag>,
+    created_at: &str,
+) -> Secret {
+    let v_id = SecretId::new();
+    let v = make_version(&handle, 1, v_id);
+    let mut secret = Secret::new(
+        ns_id,
+        handle,
+        CategoryName::Token,
+        Sensitivity::Low,
+        tags,
+        PublicMetadata::default(),
+        v,
+    )
+    .expect("valid secret");
+    secret.created_at = created_at.parse().expect("valid timestamp");
+    secret
+}
+
+/// BUG-04: with a tag filter present, the SQL `LIMIT` must apply AFTER tag
+/// matching, not before. Two non-matching rows are inserted first (earliest
+/// `created_at`), then three matching rows. Before the fix, `LIMIT 2` truncated
+/// to the two earliest (non-matching) rows and the Rust tag filter then dropped
+/// both, yielding zero results.
+#[tokio::test]
+async fn list_secrets_tag_filter_applies_limit_after_matching() {
+    let db = open_memory().await;
+
+    let ns = make_namespace("tagfilter-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+
+    let prod: Tag = "env:prod".parse().expect("valid tag");
+
+    // Two non-matching secrets first (oldest created_at).
+    for i in 0..2u32 {
+        let handle = make_handle("tagfilter-ns", "token", &format!("dev-key-{i}"));
+        let secret =
+            make_secret_with_tags(ns.id, handle, vec![], &format!("2026-01-01T00:00:0{i}Z"));
+        db.put_secret(&secret).await.expect("put_secret");
+    }
+    // Three matching secrets after (newer created_at).
+    for i in 0..3u32 {
+        let handle = make_handle("tagfilter-ns", "token", &format!("prod-key-{i}"));
+        let secret = make_secret_with_tags(
+            ns.id,
+            handle,
+            vec![prod.clone()],
+            &format!("2026-01-01T00:00:1{i}Z"),
+        );
+        db.put_secret(&secret).await.expect("put_secret");
+    }
+
+    let filter = SecretFilter {
+        tag_match: Some(vec![prod.clone()]),
+        limit: Some(2),
+        ..SecretFilter::default()
+    };
+    let secrets = db
+        .list_secrets(&ns.id, filter)
+        .await
+        .expect("list_secrets with tag filter + limit");
+
+    assert_eq!(
+        secrets.len(),
+        2,
+        "tag filter + limit must return a full page of matching rows"
+    );
+    for secret in &secrets {
+        assert!(
+            secret.tags.contains(&prod),
+            "every returned secret must carry the env:prod tag"
+        );
+    }
+}
+
+/// BUG-03: `put_secret` must materialize `namespace_label` so the FTS5 triggers
+/// index the real namespace label. The only FTS column that can contain
+/// "zephyrnamespace" is `namespace_label`; before the fix it was stored as `''`
+/// and this search returned nothing.
+#[tokio::test]
+async fn search_by_namespace_label_returns_row() {
+    let db = open_memory().await;
+
+    let ns = make_namespace("zephyrnamespace");
+    db.put_namespace(&ns).await.expect("put_namespace");
+
+    let handle = make_handle("zephyrnamespace", "ssh", "mykey");
+    let secret = make_secret(ns.id, handle);
+    db.put_secret(&secret).await.expect("put_secret");
+
+    let result = ranked_search(&db, &ns.id, "zephyrnamespace", 10, 0).await;
+    assert_eq!(
+        result.items.len(),
+        1,
+        "search by namespace label must return the secret"
+    );
+    assert_eq!(result.items[0].secret.id, secret.id);
 }
 
 #[tokio::test]

@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS audit_entries (
     sensitivity TEXT,
     prev_hash TEXT,
     current_hash TEXT NOT NULL UNIQUE,
-    hmac TEXT
+    hmac TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_seq ON audit_entries(seq);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_entries(ts);
@@ -73,7 +73,11 @@ CREATE TABLE IF NOT EXISTS pinned_head (
     head_hash TEXT NOT NULL,
     head_seq INTEGER NOT NULL,
     head_id BLOB NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- Head-commitment MAC over head_hash || head_seq || head_id || entry_count.
+    -- Nullable: recovery/legacy heads may lack it, and the chain verifier fails
+    -- closed (HeadMacMismatch) on a NULL tag during a keyed pass.
+    hmac_head TEXT
 );
 
 CREATE TABLE IF NOT EXISTS backups (

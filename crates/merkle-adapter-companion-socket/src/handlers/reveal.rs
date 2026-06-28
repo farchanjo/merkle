@@ -93,8 +93,11 @@ pub async fn reveal(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<RevealRequest>,
 ) -> impl IntoResponse {
-    // 1. Enforce slash_command gate — the LLM cannot set this flag through
-    //    tool call arguments; it is injected by the Claude Code client.
+    // 1. Enforce slash_command gate. The flag's provenance is established by the
+    //    MCP adapter, which derives it from the client-injected request `_meta`
+    //    (set by the `/merkle-reveal` slash command) — the LLM cannot set it via
+    //    tool-call arguments (MERK-001). The Companion Socket peer is
+    //    credential-authenticated, so the daemon trusts the forwarded flag here.
     if !body.operator_confirmation.slash_command {
         return Problem {
             kind: ProblemType::OperatorConfirmationRequired,

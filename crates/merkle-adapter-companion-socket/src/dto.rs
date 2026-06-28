@@ -418,6 +418,20 @@ pub struct CreateSessionRequest {
     pub client_pid: Option<u32>,
 }
 
+impl CreateSessionRequest {
+    /// Char-safe fallback namespace slug derived from the first 24 characters
+    /// of `cwd_hash`.
+    ///
+    /// Uses `chars().take(24)` instead of a byte-index slice (`&cwd_hash[..24]`)
+    /// so a non-ASCII / multibyte `cwd_hash` cannot panic on a non-char
+    /// boundary (MERK-006). A well-formed `cwd_hash` is a 64-char lowercase hex
+    /// SHA-256 digest, but the agent must never crash on malformed input.
+    #[must_use]
+    pub fn cwd_hash_slug(&self) -> String {
+        self.cwd_hash.chars().take(24).collect()
+    }
+}
+
 /// Response body for `POST /v1/sessions`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionResponse {
@@ -699,6 +713,11 @@ pub struct WriteTempfileRequest {
     pub namespace_id: Uuid,
     pub handle: Handle,
     pub session_id: Uuid,
+    /// Opaque single-use authorization token from `POST /v1/use-tokens`.
+    ///
+    /// Required: the agent validates and consumes it (rejecting expired,
+    /// replayed, or unknown tokens) before materializing any plaintext.
+    pub use_token: String,
 }
 
 /// Response body for `POST /v1/use-tokens/tempfile`.
@@ -715,6 +734,12 @@ pub struct WriteFifoRequest {
     pub namespace_id: Uuid,
     pub handle: Handle,
     pub session_id: Uuid,
+    /// Opaque single-use authorization token from `POST /v1/use-tokens`.
+    ///
+    /// Required: the agent validates and consumes it (rejecting expired,
+    /// replayed, or unknown tokens) before creating the FIFO or materializing
+    /// any plaintext.
+    pub use_token: String,
 }
 
 /// Response body for `POST /v1/use-tokens/fifo`.
@@ -1051,4 +1076,39 @@ pub enum CryptoDecryptAlgorithm {
 pub struct ProxyCryptoDecryptResponse {
     /// Decrypted plaintext, base64-encoded.
     pub plaintext_b64: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CreateSessionRequest;
+
+    /// MERK-006: a multibyte `cwd_hash` whose byte index 24 falls inside a
+    /// codepoint must not panic. `"a"` (1 byte) followed by 3-byte `"あ"`
+    /// codepoints places byte index 24 mid-codepoint, so the old
+    /// `&cwd_hash[..24]` byte slice would panic.
+    #[test]
+    fn cwd_hash_slug_is_char_safe_for_multibyte() {
+        let req = CreateSessionRequest {
+            cwd_hash: format!("a{}", "あ".repeat(40)),
+            namespace_label: None,
+            client_pid: None,
+        };
+
+        // Must not panic.
+        let slug = req.cwd_hash_slug();
+
+        assert_eq!(slug.chars().count(), 24);
+        assert!(slug.starts_with('a'));
+    }
+
+    /// A shorter-than-24-char `cwd_hash` yields the whole string, no panic.
+    #[test]
+    fn cwd_hash_slug_handles_short_input() {
+        let req = CreateSessionRequest {
+            cwd_hash: "abc".into(),
+            namespace_label: None,
+            client_pid: None,
+        };
+        assert_eq!(req.cwd_hash_slug(), "abc");
+    }
 }

@@ -51,25 +51,39 @@ async fn server_info_name_is_merkle() {
     assert_eq!(info.server_info.name, "merkle");
 }
 
-/// `vault.reveal` with `operator_confirmation = false` must return
-/// `TOOL_NOT_IMPLEMENTED` (-32099) before contacting the socket.
+/// Build a `_meta` carrying the client-injected operator-confirmation marker,
+/// as the `/merkle-reveal` and `/merkle-delete` slash commands do. The LLM
+/// cannot produce this — it only fills the tool `arguments` object (MERK-001).
+fn confirmed_meta() -> rmcp::model::Meta {
+    let mut meta = rmcp::model::Meta::new();
+    meta.insert(
+        merkle_adapter_mcp::OPERATOR_CONFIRMATION_META_KEY.to_owned(),
+        serde_json::Value::Bool(true),
+    );
+    meta
+}
+
+/// `vault.reveal` without client-injected `_meta` provenance must be rejected
+/// with `INVALID_PARAMS` (-32602) before contacting the socket. A model can only
+/// fill the tool `arguments`, never the request `_meta` (MERK-001).
 #[tokio::test]
 async fn vault_reveal_requires_operator_confirmation() {
     let server = unreachable_server();
 
     let err = server
-        .vault_reveal(Parameters(VaultRevealInput {
-            handle: "vault://default/token/test".to_owned(),
-            purpose: "test".to_owned(),
-            operator_confirmation: false,
-        }))
+        .vault_reveal(
+            Parameters(VaultRevealInput {
+                handle: "vault://default/token/test".to_owned(),
+                purpose: "test".to_owned(),
+            }),
+            rmcp::model::Meta::new(),
+        )
         .await
-        .expect_err("should return error when operator_confirmation=false");
+        .expect_err("should return error without _meta provenance");
 
     assert_eq!(
-        err.code.0,
-        codes::TOOL_NOT_IMPLEMENTED,
-        "expected TOOL_NOT_IMPLEMENTED (-32099); got {}",
+        err.code.0, -32602,
+        "expected INVALID_PARAMS (-32602); got {}",
         err.code.0
     );
 }
@@ -153,18 +167,20 @@ async fn tools_return_namespace_not_bound_before_bind() {
     );
 }
 
-/// `vault.reveal` with `operator_confirmation = true` but without a bound
+/// `vault.reveal` with client-injected `_meta` provenance but without a bound
 /// namespace returns `NAMESPACE_NOT_BOUND` (-32005).
 #[tokio::test]
 async fn vault_reveal_unbound_returns_namespace_not_bound() {
     let server = unreachable_server();
 
     let err = server
-        .vault_reveal(Parameters(VaultRevealInput {
-            handle: "vault://default/token/test".to_owned(),
-            purpose: "unit-test".to_owned(),
-            operator_confirmation: true,
-        }))
+        .vault_reveal(
+            Parameters(VaultRevealInput {
+                handle: "vault://default/token/test".to_owned(),
+                purpose: "unit-test".to_owned(),
+            }),
+            confirmed_meta(),
+        )
         .await
         .expect_err("reveal without bind must return error");
 
@@ -293,11 +309,13 @@ async fn vault_delete_returns_agent_unreachable() {
     let server = pre_bound_unreachable_server().await;
 
     let err = server
-        .vault_delete(Parameters(VaultDeleteInput {
-            handle: "vault://smoke-ns/token/tok".to_owned(),
-            purpose: "smoke".to_owned(),
-            operator_confirmation: true,
-        }))
+        .vault_delete(
+            Parameters(VaultDeleteInput {
+                handle: "vault://smoke-ns/token/tok".to_owned(),
+                purpose: "smoke".to_owned(),
+            }),
+            confirmed_meta(),
+        )
         .await
         .expect_err("vault.delete to dead socket must return error");
 
@@ -309,18 +327,20 @@ async fn vault_delete_returns_agent_unreachable() {
     );
 }
 
-/// `vault.delete` without `operator_confirmation` is rejected up front and
-/// never reaches the agent (no autonomous deletion by the model).
+/// `vault.delete` without client-injected `_meta` provenance is rejected up
+/// front and never reaches the agent (no autonomous deletion by the model).
 #[tokio::test]
 async fn vault_delete_without_confirmation_is_rejected() {
     let server = pre_bound_unreachable_server().await;
 
     let err = server
-        .vault_delete(Parameters(VaultDeleteInput {
-            handle: "vault://smoke-ns/token/tok".to_owned(),
-            purpose: "smoke".to_owned(),
-            operator_confirmation: false,
-        }))
+        .vault_delete(
+            Parameters(VaultDeleteInput {
+                handle: "vault://smoke-ns/token/tok".to_owned(),
+                purpose: "smoke".to_owned(),
+            }),
+            rmcp::model::Meta::new(),
+        )
         .await
         .expect_err("vault.delete without confirmation must be rejected");
 

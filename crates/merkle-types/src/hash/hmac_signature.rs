@@ -160,7 +160,13 @@ mod tests {
         let a = HmacSignature::compute(&KEY, b"payload");
         let b = HmacSignature::compute(&KEY, b"payload");
         let c = HmacSignature::compute(&KEY, b"other");
-        assert!(a.ct_eq(&b), "identical tags must compare equal in constant time");
-        assert!(!a.ct_eq(&c), "differing tags must compare unequal in constant time");
+        assert!(
+            a.ct_eq(&b),
+            "identical tags must compare equal in constant time"
+        );
+        assert!(
+            !a.ct_eq(&c),
+            "differing tags must compare unequal in constant time"
+        );
     }
 }

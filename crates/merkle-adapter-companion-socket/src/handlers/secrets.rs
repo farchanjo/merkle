@@ -143,6 +143,26 @@ async fn derive_dek_bytes(
     Ok(*dek_sig.as_bytes())
 }
 
+/// Whether a secret's category passes the optional `category` filter (BUG-12).
+///
+/// `None` matches everything; `Some(c)` matches only secrets whose category
+/// equals `c`. Previously the `category` query parameter was parsed into the
+/// DTO but never applied to the result set.
+fn category_matches(secret_category: &str, filter: Option<&str>) -> bool {
+    filter.is_none_or(|c| c == secret_category)
+}
+
+/// Count the persisted versions of a secret, or `0` when it cannot be loaded.
+///
+/// Used to report the true `versions_removed` (BUG-14) and `versions_retained`
+/// (BUG-15) counts instead of the hardcoded placeholders.
+async fn secret_version_count(ctx: &AppContext, handle: &Handle) -> u32 {
+    match ctx.storage.get_secret_by_handle(handle).await {
+        Ok(Some(secret)) => u32::try_from(secret.versions().len()).unwrap_or(u32::MAX),
+        _ => 0,
+    }
+}
+
 /// Build the "invalid namespace ID" problem (reused in every handler).
 fn invalid_ns_id_problem() -> Problem {
     Problem {
@@ -237,17 +257,33 @@ pub async fn list_secrets(
         if tags.is_empty() { None } else { Some(tags) }
     });
 
+    // Fetch the full filtered set (no SQL limit) so `total`/`has_more` reflect
+    // every match after the handler-side `category` filter, not just the page.
+    // BUG-16.
     let cmd = ListSecretsCommand {
         namespace_id,
         tag_match,
         name_pattern: params.name_pattern.clone(),
-        limit: Some(params.limit),
+        limit: None,
     };
+
+    let category = params.category.as_deref();
 
     match cmd.execute(&ctx).await {
         Ok(output) => {
-            let items: Vec<SecretDto> = output.secrets.iter().map(secret_to_dto).collect();
-            let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+            // BUG-12: apply the `category` filter the command does not carry.
+            let matched: Vec<_> = output
+                .secrets
+                .iter()
+                .filter(|s| category_matches(&s.category.to_string(), category))
+                .collect();
+            // BUG-16: `total`/`has_more` count every match; the page is then
+            // truncated to the caller's requested limit.
+            let total = u32::try_from(matched.len()).unwrap_or(u32::MAX);
+            let limit = usize::try_from(params.limit).unwrap_or(usize::MAX);
+            let has_more = matched.len() > limit;
+            let items: Vec<SecretDto> =
+                matched.into_iter().take(limit).map(secret_to_dto).collect();
             (
                 StatusCode::OK,
                 Json(ListSecretsResponse {
@@ -255,7 +291,7 @@ pub async fn list_secrets(
                     total,
                     next_cursor: None,
                     ranked_items: None,
-                    has_more: None,
+                    has_more: Some(has_more),
                 }),
             )
                 .into_response()
@@ -411,7 +447,10 @@ pub async fn delete_secret(
         Err(p) => return p.into_response(),
     };
 
-    // Gate: DELETE requires operator confirmation with slash_command flag.
+    // Gate: DELETE requires operator confirmation. The slash_command flag's
+    // provenance is established by the MCP adapter, which derives it from the
+    // client-injected request `_meta` (set by the `/merkle-delete` slash
+    // command), not from model-controlled tool arguments (MERK-001).
     if !body.operator_confirmation.slash_command {
         return Problem {
             kind: ProblemType::OperatorConfirmationRequired,
@@ -432,6 +471,10 @@ pub async fn delete_secret(
         signed_config_flag: None,
     };
 
+    // BUG-14: capture the real version count BEFORE deletion so the response
+    // reports the actual number of versions removed, not a hardcoded 1.
+    let versions_removed = secret_version_count(&ctx, &handle).await;
+
     let cmd = DeleteSecretCommand {
         namespace_id,
         handle,
@@ -442,7 +485,7 @@ pub async fn delete_secret(
         Ok(_output) => {
             let resp = DeleteSecretResponse {
                 deleted: true,
-                versions_removed: 1,
+                versions_removed,
             };
             (StatusCode::OK, Json(resp)).into_response()
         }
@@ -526,11 +569,15 @@ pub async fn rotate_secret(
 
     match cmd.execute(&ctx).await {
         Ok(output) => {
+            // BUG-15: report the real number of versions retained after
+            // rotation (bounded by the retention policy), not the new version
+            // number. Read it back from the persisted, pruned aggregate.
+            let versions_retained = secret_version_count(&ctx, &handle).await;
             let resp = RotateSecretResponse {
                 handle,
                 version: output.new_version_no,
                 rotated_at: chrono::Utc::now(),
-                versions_retained: output.new_version_no,
+                versions_retained,
             };
             (StatusCode::OK, Json(resp)).into_response()
         }
@@ -591,4 +638,23 @@ pub async fn rollback_secret(
         "rollback_secret: RollbackSecretCommand not yet implemented in application layer (Phase 6.B)",
     )
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::category_matches;
+
+    /// BUG-12: the `category` filter must select only matching secrets.
+    #[test]
+    fn category_filter_applies() {
+        assert!(category_matches("ssh", Some("ssh")));
+        assert!(!category_matches("token", Some("ssh")));
+    }
+
+    /// Absent filter matches every category.
+    #[test]
+    fn category_filter_absent_matches_all() {
+        assert!(category_matches("ssh", None));
+        assert!(category_matches("token", None));
+    }
 }

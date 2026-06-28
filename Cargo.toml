@@ -151,7 +151,10 @@ merkle-companion-client              = { path = "crates/merkle-companion-client"
 merkle-application              = { path = "crates/merkle-application" }
 
 # Metrics
-prometheus       = { version = "0.13", features = ["process"] }
+# `default-features = false` drops the `protobuf` exposition feature (and its
+# vulnerable protobuf 2.x dep, RUSTSEC-2024-0437); the agent serves only the
+# text exposition format, so the protobuf encoder is never used.
+prometheus       = { version = "0.13", default-features = false, features = ["process"] }
 
 # String utilities
 once_cell        = "1.21"
@@ -201,3 +204,8 @@ opt-level       = 3
 lto             = true
 codegen-units   = 1
 strip           = true
+# Vault hardening: abort on panic so a poisoned/half-mutated invariant can
+# never be observed by another thread after an unwind. The only known
+# input-reachable panic is fixed separately (MERK-006); every remaining panic
+# is an invariant violation where aborting is the safe failure mode.
+panic           = "abort"

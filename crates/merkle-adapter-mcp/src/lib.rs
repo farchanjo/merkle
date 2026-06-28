@@ -72,6 +72,34 @@ use tracing::info;
 pub use prompts::MerklePrompts;
 pub use session::SessionState;
 
+/// `_meta` key the MCP client attaches to a `tools/call` request envelope when
+/// the call originates from a `/merkle-reveal` or `/merkle-delete` slash command
+/// issued by the human operator.
+///
+/// Security boundary (MERK-001): the LLM populates only the tool `arguments`
+/// object — which rmcp deserializes into the `Parameters<…>` extractor — and
+/// cannot write to the request `_meta`, which is attached by the MCP client
+/// transport. Sourcing operator-confirmation provenance from here, rather than
+/// from a model-controlled tool argument, makes the confirmation unforgeable by
+/// the model.
+///
+/// Exposed so the MCP client (and tests) can reference the exact key the
+/// `/merkle-reveal` and `/merkle-delete` slash commands must set.
+pub const OPERATOR_CONFIRMATION_META_KEY: &str = "dev.fapp.merkle/operator_confirmation";
+
+/// Returns `true` only when the request `_meta` carries the client-injected
+/// operator-confirmation marker as the JSON boolean `true`.
+///
+/// Any other shape (absent, `false`, a string, a number) yields `false`, so a
+/// model that echoes the key inside its tool `arguments` — the only JSON it
+/// controls — cannot satisfy the gate.
+#[must_use]
+pub(crate) fn operator_confirmation_from_meta(meta: &rmcp::model::Meta) -> bool {
+    meta.get(OPERATOR_CONFIRMATION_META_KEY)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// MCP server that exposes all 29 Vault Agent capabilities as MCP tools.
 ///
 /// Each instance wraps an [`Arc<CompanionSocketClient>`] pointing at the
@@ -160,5 +188,47 @@ impl ServerHandler for MerkleMcpServer {
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<GetPromptResult, ErrorData> {
         MerklePrompts::get(request)
+    }
+}
+
+#[cfg(test)]
+mod meta_provenance_tests {
+    use super::{OPERATOR_CONFIRMATION_META_KEY, operator_confirmation_from_meta};
+    use rmcp::model::Meta;
+
+    fn meta_with(value: serde_json::Value) -> Meta {
+        let mut m = Meta::new();
+        m.insert(OPERATOR_CONFIRMATION_META_KEY.to_owned(), value);
+        m
+    }
+
+    /// MERK-001: no client provenance ⇒ no confirmation.
+    #[test]
+    fn absent_meta_is_unconfirmed() {
+        assert!(!operator_confirmation_from_meta(&Meta::new()));
+    }
+
+    /// Only the client-injected `_meta` boolean `true` authorizes.
+    #[test]
+    fn bool_true_marker_confirms() {
+        assert!(operator_confirmation_from_meta(&meta_with(
+            serde_json::Value::Bool(true)
+        )));
+    }
+
+    #[test]
+    fn bool_false_marker_does_not_confirm() {
+        assert!(!operator_confirmation_from_meta(&meta_with(
+            serde_json::Value::Bool(false)
+        )));
+    }
+
+    /// A model can only emit JSON inside its tool arguments; even if it smuggled
+    /// the key with a stringly-typed `"true"`, the gate must stay closed.
+    #[test]
+    fn string_true_marker_does_not_confirm() {
+        assert!(!operator_confirmation_from_meta(&meta_with(
+            serde_json::Value::String("true".to_owned())
+        )));
     }
 }

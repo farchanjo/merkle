@@ -52,8 +52,8 @@ impl DeleteSecretCommand {
         // NOTE: `Sensitivity::Critical` was removed from the enum (only Low/Medium/High exist).
         // Using `Sensitivity::High` as the threshold per the doc-comment intent.
         if secret.sensitivity >= Sensitivity::High && !self.operator_confirmation.slash_command {
+            // BUG-06: persist-then-advance atomically (see `audit_commit`).
             let hmac_key = ctx.require_hmac_key().await?;
-            let mut log = ctx.audit_log.write().await;
             let params = merkle_domain_audit_compliance::AppendParams::new(
                 AuditOp::Delete,
                 AuditOutcome::Deny,
@@ -63,12 +63,7 @@ impl DeleteSecretCommand {
             .sensitivity(secret.sensitivity)
             .denial_reason("operator confirmation required for critical-sensitivity delete")
             .caller_program("merkle-agent");
-            let (entry, pinned) =
-                merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                    .map_err(|e| AppError::Domain(e.to_string()))?;
-            drop(log);
-            ctx.storage.append_audit_entry(&entry).await?;
-            ctx.storage.update_pinned_head(&pinned).await?;
+            crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
             return Err(AppError::PolicyDenied(
                 "operator confirmation required for critical-sensitivity delete".into(),
             ));
@@ -77,9 +72,8 @@ impl DeleteSecretCommand {
         // Hard-delete from storage.
         ctx.storage.delete_secret(&secret.id).await?;
 
-        // Audit success.
+        // Audit success (BUG-06: persist-then-advance atomically).
         let hmac_key = ctx.require_hmac_key().await?;
-        let mut log = ctx.audit_log.write().await;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::Delete,
             AuditOutcome::Allow,
@@ -88,12 +82,7 @@ impl DeleteSecretCommand {
         .handle(self.handle.clone())
         .sensitivity(secret.sensitivity)
         .caller_program("merkle-agent");
-        let (entry, pinned) =
-            merkle_domain_audit_compliance::AuditWriter::append(&mut log, params, &hmac_key)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-        drop(log);
-        ctx.storage.append_audit_entry(&entry).await?;
-        ctx.storage.update_pinned_head(&pinned).await?;
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         info!(handle = %self.handle, "delete_secret: secret deleted");
         Ok(DeleteSecretOutput {

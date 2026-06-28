@@ -1,15 +1,26 @@
 //! HTTP smoke tests using `wiremock` to verify auth header generation and
 //! response propagation.
 
+use std::time::Duration;
+
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use merkle_adapter_external_services::ExternalServicesAdapter;
+use merkle_adapter_external_services::{DestinationPolicy, ExternalServicesAdapter};
 use merkle_ports::{ExternalServices, HttpAuth, HttpRequestSpec};
 
 fn base64_basic(user: &str, pass: &str) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))
+}
+
+/// These smoke tests exercise auth-header generation and response propagation
+/// against a plaintext `http://127.0.0.1` `wiremock` server. The production
+/// default ([`DestinationPolicy::strict`]) correctly rejects loopback + non-https
+/// as SSRF (MERK-004), so the tests opt into the permissive policy explicitly —
+/// the header/response logic under test is independent of the egress guard.
+fn test_adapter() -> ExternalServicesAdapter {
+    ExternalServicesAdapter::with_config(Duration::from_secs(30), DestinationPolicy::permissive())
 }
 
 #[tokio::test]
@@ -24,7 +35,7 @@ async fn bearer_auth_header_is_set_correctly() {
         .mount(&server)
         .await;
 
-    let adapter = ExternalServicesAdapter::new();
+    let adapter = test_adapter();
     let spec = HttpRequestSpec {
         method: "GET".to_owned(),
         url: format!("{}/api/data", server.uri()),
@@ -56,7 +67,7 @@ async fn basic_auth_header_is_base64_encoded_correctly() {
         .mount(&server)
         .await;
 
-    let adapter = ExternalServicesAdapter::new();
+    let adapter = test_adapter();
     let spec = HttpRequestSpec {
         method: "POST".to_owned(),
         url: format!("{}/login", server.uri()),
@@ -97,7 +108,7 @@ async fn no_auth_sends_no_authorization_header() {
         .mount(&server)
         .await;
 
-    let adapter = ExternalServicesAdapter::new();
+    let adapter = test_adapter();
     let spec = HttpRequestSpec {
         method: "GET".to_owned(),
         url: format!("{}/open", server.uri()),
@@ -127,7 +138,7 @@ async fn response_status_and_body_propagated() {
         .mount(&server)
         .await;
 
-    let adapter = ExternalServicesAdapter::new();
+    let adapter = test_adapter();
     let spec = HttpRequestSpec {
         method: "DELETE".to_owned(),
         url: format!("{}/resource/42", server.uri()),
@@ -158,7 +169,7 @@ async fn caller_supplied_headers_are_forwarded() {
         .mount(&server)
         .await;
 
-    let adapter = ExternalServicesAdapter::new();
+    let adapter = test_adapter();
     let spec = HttpRequestSpec {
         method: "GET".to_owned(),
         url: format!("{}/headers", server.uri()),

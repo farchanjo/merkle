@@ -217,32 +217,23 @@ impl InitVaultCommand {
         }
 
         // ── Step 8: Emit audit entry ────────────────────────────────────────
-        // HMAC key = BLAKE3-KDF(VRK, "merkle vault hmac key v1") per ADR-0021.
+        // BUG-08: the audit-chain HMAC key is derived through the SAME shared
+        // function used by `unseal_vault`, so the chain key produced at init is
+        // identical to the one re-derived on every later unseal.
         info!("init_vault: appending audit entry op=init (step 8)");
         let namespace_id = NamespaceId::new(); // vault root namespace
-        let hmac_key = ctx
-            .crypto
-            .blake3_keyed(&vrk_bytes, b"merkle vault hmac key v1");
+        let hmac_key =
+            crate::commands::unseal_vault::derive_audit_hmac_key(ctx.crypto.as_ref(), &vrk_bytes);
 
         let vault_id = UuidV7::new();
-        {
-            let mut log = ctx.audit_log.write().await;
-            let params = merkle_domain_audit_compliance::AppendParams::new(
-                AuditOp::Init,
-                AuditOutcome::Allow,
-                namespace_id,
-            )
-            .caller_program("merkle-agent");
-            let (entry, pinned) = merkle_domain_audit_compliance::AuditWriter::append(
-                &mut log,
-                params,
-                hmac_key.as_bytes(),
-            )
-            .map_err(|e| AppError::Domain(e.to_string()))?;
-            drop(log);
-            ctx.storage.append_audit_entry(&entry).await?;
-            ctx.storage.update_pinned_head(&pinned).await?;
-        }
+        let params = merkle_domain_audit_compliance::AppendParams::new(
+            AuditOp::Init,
+            AuditOutcome::Allow,
+            namespace_id,
+        )
+        .caller_program("merkle-agent");
+        // BUG-06: persist-then-advance under a single guard (see `audit_commit`).
+        crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
         info!(vault_id = %vault_id, "init_vault: ceremony complete");
 
