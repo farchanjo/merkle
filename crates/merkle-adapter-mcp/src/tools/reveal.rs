@@ -24,15 +24,17 @@ use merkle_types::Handle;
 // ---------------------------------------------------------------------------
 
 /// Input for vault.reveal.
+///
+/// Note: there is deliberately no `operator_confirmation` argument. Operator
+/// confirmation is sourced from the client-injected request `_meta`
+/// (see [`crate::OPERATOR_CONFIRMATION_META_KEY`]), never from a tool argument
+/// the model controls (MERK-001).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultRevealInput {
     /// Handle URI of the Secret to reveal (e.g. `vault://default/token/my-token`).
     pub handle: String,
     /// Human-readable reason recorded in the audit log.
     pub purpose: String,
-    /// For Claude Code clients: must be `true`. Only honoured when set by
-    /// the `/merkle-reveal` slash command, never from LLM-generated arguments.
-    pub operator_confirmation: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -62,8 +64,10 @@ impl RevealTools {
 impl MerkleMcpServer {
     /// Return the plaintext of a Secret directly in the MCP response.
     ///
-    /// Requires `operator_confirmation = true` (set only by the `/merkle-reveal`
-    /// slash command). High-sensitivity Secrets additionally require an OOB
+    /// Authorization is gated on an operator confirmation that the client
+    /// injects into the request `_meta` when a `/merkle-reveal` slash command is
+    /// issued by the human operator — the model cannot supply it through tool
+    /// arguments (MERK-001). High-sensitivity Secrets additionally require an OOB
     /// round-trip. If OOB confirmation is pending, a `oob_pending=true` response
     /// is returned with channel and nonce information; the caller should
     /// acknowledge and re-issue the tool call.
@@ -73,14 +77,22 @@ impl MerkleMcpServer {
     /// to see the credential value.
     #[tool(
         name = "vault.reveal",
-        description = "Return the plaintext of a Secret in the MCP response. Requires operator_confirmation=true (set only by /merkle-reveal slash command). Triggers OOB confirmation for medium/high sensitivity. If OOB pending, re-issue after acknowledging the notification."
+        description = "Return the plaintext of a Secret in the MCP response. Requires an operator confirmation issued via the /merkle-reveal slash command (injected into request _meta by the client, not a tool argument). Triggers OOB confirmation for medium/high sensitivity. If OOB pending, re-issue after acknowledging the notification."
     )]
     pub async fn vault_reveal(
         &self,
         Parameters(input): Parameters<VaultRevealInput>,
+        meta: rmcp::model::Meta,
     ) -> Result<CallToolResult, ErrorData> {
-        if !input.operator_confirmation {
-            return Err(crate::errors::not_implemented("vault.reveal"));
+        // Provenance comes from the client-injected request `_meta`, never from a
+        // model-controlled tool argument (MERK-001).
+        if !crate::operator_confirmation_from_meta(&meta) {
+            return Err(ErrorData::invalid_params(
+                "vault.reveal requires an operator confirmation issued via the \
+                 /merkle-reveal slash command; the model cannot authorize a reveal \
+                 through tool arguments",
+                None,
+            ));
         }
 
         let handle = input
@@ -105,7 +117,9 @@ impl MerkleMcpServer {
                 reason: input.purpose,
                 session_id,
                 operator_confirmation: OperatorConfirmation {
-                    slash_command: input.operator_confirmation,
+                    // True by construction: the early return above rejects any
+                    // call lacking client-injected `_meta` provenance.
+                    slash_command: true,
                     oob_ack: false,
                     oob_channel: None,
                 },
@@ -133,5 +147,26 @@ impl MerkleMcpServer {
                 .to_string(),
             )])),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VaultRevealInput;
+
+    /// MERK-001: `operator_confirmation` is no longer a reveal input field, so a
+    /// model that smuggles it into the tool `arguments` cannot authorize a
+    /// reveal — the flag is dropped at parse time and provenance is taken from
+    /// the client-injected request `_meta` instead.
+    #[test]
+    fn model_supplied_operator_confirmation_is_not_an_input_field() {
+        let json = serde_json::json!({
+            "handle": "vault://default/token/api",
+            "purpose": "test",
+            "operator_confirmation": true
+        });
+        let input: VaultRevealInput = serde_json::from_value(json).expect("parse");
+        assert_eq!(input.handle, "vault://default/token/api");
+        assert_eq!(input.purpose, "test");
     }
 }

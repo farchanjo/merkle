@@ -90,7 +90,9 @@ impl MerklePrompts {
             ),
             Some(vec![PromptArgument {
                 name: "handle".to_owned(),
-                description: Some("Secret handle URI (vault://<label>/<category>/<name>).".to_owned()),
+                description: Some(
+                    "Secret handle URI (vault://<label>/<category>/<name>).".to_owned(),
+                ),
                 required: Some(true),
             }]),
         )
@@ -140,9 +142,7 @@ impl MerklePrompts {
                 },
                 PromptArgument {
                     name: "version".to_owned(),
-                    description: Some(
-                        "Version number to restore (positive integer).".to_owned(),
-                    ),
+                    description: Some("Version number to restore (positive integer).".to_owned()),
                     required: Some(true),
                 },
             ]),
@@ -233,9 +233,7 @@ fn required_str(
     args.get(key)
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| {
-            ErrorData::invalid_params(format!("missing required argument: {key}"), None)
-        })
+        .ok_or_else(|| ErrorData::invalid_params(format!("missing required argument: {key}"), None))
 }
 
 fn optional_str<'a>(
@@ -280,10 +278,7 @@ mod tests {
         })
         .expect("doctor prompt must resolve");
         assert_eq!(result.messages.len(), 1);
-        assert!(matches!(
-            result.messages[0].role,
-            PromptMessageRole::User
-        ));
+        assert!(matches!(result.messages[0].role, PromptMessageRole::User));
     }
 
     #[test]
@@ -340,10 +335,7 @@ mod tests {
 
     #[test]
     fn rollback_get_emits_both_tool_calls() {
-        let args = args_with(&[
-            ("handle", "vault://prod/token/github-ci"),
-            ("version", "2"),
-        ]);
+        let args = args_with(&[("handle", "vault://prod/token/github-ci"), ("version", "2")]);
         let result = MerklePrompts::get(GetPromptRequestParam {
             name: "merkle-rollback".to_owned(),
             arguments: Some(args),

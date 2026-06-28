@@ -227,6 +227,32 @@ mod tests {
         }
     }
 
+    /// MERK-001: when the MCP request carries no client-injected confirmation
+    /// provenance, the adapter forwards `slash_command = false`; the domain must
+    /// then deny Low and Medium reveals just as it denies High ones. A model that
+    /// echoes a confirmation into its tool arguments never reaches this flag.
+    #[test]
+    fn unprovenanced_confirmation_denies_low_and_medium() {
+        for sensitivity in [Sensitivity::Low, Sensitivity::Medium] {
+            let r = evaluate(
+                &no_confirm(),
+                sensitivity,
+                Sensitivity::High,
+                SecurityProfile::Balanced,
+                CompanionDeviceClass::Software,
+                CompanionDeviceClass::Software,
+            )
+            .expect("evaluate");
+            assert!(
+                !r.is_allowed(),
+                "low/medium reveal must require confirmation provenance for {sensitivity:?}"
+            );
+            assert!(
+                matches!(&r, RevealAuthorization::Deny { reason } if reason.as_str() == "missing_slash_command")
+            );
+        }
+    }
+
     #[test]
     fn paranoid_profile_forces_oob_even_for_low_sensitivity() {
         let r = evaluate(
