@@ -319,6 +319,24 @@ impl Keychain for FileKeystoreAdapter {
 // age helpers
 // ---------------------------------------------------------------------------
 
+/// Fixed scrypt work factor (`log_n`) for the keystore.
+///
+/// age 0.11 derives the scrypt work factor from a *runtime measurement* of the
+/// device (`with_user_passphrase` targets ~1 s of work *as measured right now*),
+/// and `scrypt::Identity` then refuses to decrypt anything whose `log_n` exceeds
+/// `measured_target + 4`. Under load the measured target drops, so a keystore
+/// written when the machine was idle becomes undecryptable later
+/// ("Excessive work parameter"). Pinning both sides to a fixed `log_n` makes the
+/// keystore deterministic and portable regardless of momentary device load.
+const KEYSTORE_SCRYPT_LOG_N: u8 = 18;
+
+/// Upper bound on the scrypt `log_n` we will accept when *decrypting* the
+/// keystore. Decoupled from age's load-sensitive measurement so a valid local
+/// keystore is never rejected; generous enough to open keystores written by
+/// earlier versions (observed `log_n` 20). The keystore file is local and 0600,
+/// so a high ceiling is not a meaningful DoS surface.
+const KEYSTORE_SCRYPT_MAX_LOG_N: u8 = 22;
+
 /// Encrypt `plaintext` with `passphrase` using age passphrase-based encryption.
 fn age_encrypt(
     plaintext: &[u8],
@@ -328,7 +346,13 @@ fn age_encrypt(
     // secrecy 0.10 (age 0.11): `SecretString::new` now takes `Box<str>`, so use
     // the `From<String>` conversion instead.
     let age_passphrase = age::secrecy::SecretString::from(passphrase.expose_secret().to_owned());
-    let encryptor = age::Encryptor::with_user_passphrase(age_passphrase);
+    // Pin the scrypt work factor (see `KEYSTORE_SCRYPT_LOG_N`) rather than using
+    // `with_user_passphrase`, whose factor depends on momentary device speed.
+    let mut recipient = age::scrypt::Recipient::new(age_passphrase);
+    recipient.set_work_factor(KEYSTORE_SCRYPT_LOG_N);
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
+            .map_err(|e| KeychainError::Backend(format!("age encryptor: {e}")))?;
     let mut ciphertext: Vec<u8> = Vec::new();
     let mut writer = encryptor
         .wrap_output(&mut ciphertext)
@@ -353,7 +377,11 @@ fn age_decrypt(
     // (no scrypt stanza) simply yields no matching key and fails here.
     let decryptor = age::Decryptor::new(ciphertext)
         .map_err(|e| KeychainError::Backend(format!("age decryptor: {e}")))?;
-    let identity = age::scrypt::Identity::new(age_passphrase);
+    let mut identity = age::scrypt::Identity::new(age_passphrase);
+    // Accept a fixed `log_n` ceiling instead of age's load-sensitive
+    // `measured_target + 4`, so a valid keystore is never spuriously rejected
+    // (see `KEYSTORE_SCRYPT_MAX_LOG_N`).
+    identity.set_max_work_factor(KEYSTORE_SCRYPT_MAX_LOG_N);
     let mut reader = decryptor
         .decrypt(std::iter::once(&identity as &dyn age::Identity))
         .map_err(|e| KeychainError::Backend(format!("age decrypt: {e}")))?;
