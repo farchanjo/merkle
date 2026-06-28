@@ -189,7 +189,10 @@ mod tests {
     /// BUG-09: a plaintext tempfile must not survive a failed audit write.
     #[tokio::test]
     async fn tempfile_removed_when_audit_write_fails() {
-        let (ctx, storage) = test_support::make_failing_ctx().await;
+        // Unique per-test token so the materialized tmp path never collides with
+        // a sibling test running concurrently.
+        const TOKEN: [u8; 32] = [0x21; 32];
+        let (ctx, storage) = test_support::make_failing_ctx_with_token(TOKEN).await;
         test_support::unseal_ctx(&ctx).await;
         let (namespace_id, handle) = test_support::seed_secret(&ctx).await;
 
@@ -198,7 +201,7 @@ mod tests {
         let use_token = issue_token(&ctx, namespace_id, handle.clone()).await;
 
         // FixedTokenCrypto yields a deterministic token, so the path is known.
-        let token = hex::encode(test_support::FIXED_TOKEN);
+        let token = hex::encode(TOKEN);
         let path = build_tmp_path(&token);
         let _ = std::fs::remove_file(&path);
 
@@ -218,12 +221,15 @@ mod tests {
     /// second attempt with the same token is rejected as a replay.
     #[tokio::test]
     async fn valid_token_is_consumed_exactly_once() {
-        let (ctx, _storage) = test_support::make_failing_ctx().await;
+        // Unique per-test token so the materialized tmp path never collides with
+        // a sibling test running concurrently.
+        const TOKEN: [u8; 32] = [0x22; 32];
+        let (ctx, _storage) = test_support::make_failing_ctx_with_token(TOKEN).await;
         test_support::unseal_ctx(&ctx).await;
         let (namespace_id, handle) = test_support::seed_secret(&ctx).await;
 
         let use_token = issue_token(&ctx, namespace_id, handle.clone()).await;
-        let path = build_tmp_path(&hex::encode(test_support::FIXED_TOKEN));
+        let path = build_tmp_path(&hex::encode(TOKEN));
         let _ = std::fs::remove_file(&path);
 
         let first = make_cmd(namespace_id, handle.clone(), use_token.clone())

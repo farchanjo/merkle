@@ -359,12 +359,18 @@ pub(crate) mod test_support {
     /// FIFO path is predictable.
     pub(crate) struct FixedTokenCrypto {
         inner: RustCryptoAdapter,
+        token: [u8; 32],
     }
 
     impl FixedTokenCrypto {
-        pub(crate) fn new() -> Self {
+        /// Construct with a caller-chosen deterministic token. Tests that
+        /// materialize a tempfile/FIFO use a UNIQUE token so their
+        /// `temp_dir()/merkle_<token>.*` paths never collide when the suite runs
+        /// concurrently.
+        pub(crate) fn with_token(token: [u8; 32]) -> Self {
             Self {
                 inner: RustCryptoAdapter::new(),
+                token,
             }
         }
     }
@@ -451,7 +457,7 @@ pub(crate) mod test_support {
             self.inner.age_decrypt(identity, ciphertext)
         }
         fn random_bytes_32(&self) -> [u8; 32] {
-            FIXED_TOKEN
+            self.token
         }
         fn random_bytes_24(&self) -> [u8; 24] {
             self.inner.random_bytes_24()
@@ -587,11 +593,20 @@ pub(crate) mod test_support {
     /// [`AuditFailingStorage`]) and a [`FixedTokenCrypto`]. Returns the context
     /// plus the concrete storage handle so a test can arm the audit failure.
     pub(crate) async fn make_failing_ctx() -> (AppContext, Arc<AuditFailingStorage>) {
+        make_failing_ctx_with_token(FIXED_TOKEN).await
+    }
+
+    /// Like [`make_failing_ctx`] but with a caller-chosen deterministic token.
+    /// Tests that materialize a tempfile/FIFO pass a UNIQUE token so their paths
+    /// do not collide under concurrent execution.
+    pub(crate) async fn make_failing_ctx_with_token(
+        token: [u8; 32],
+    ) -> (AppContext, Arc<AuditFailingStorage>) {
         let sqlite = SqliteStorage::open("sqlite::memory:")
             .await
             .expect("in-memory sqlite");
         let storage = Arc::new(AuditFailingStorage::new(Arc::new(sqlite)));
-        let crypto = Arc::new(FixedTokenCrypto::new());
+        let crypto = Arc::new(FixedTokenCrypto::with_token(token));
         let keychain = Arc::new(MockKeychainAdapter::new());
         let oob = Arc::new(MockOobNotifier::new());
         let external = Arc::new(MockExternalServices::new());

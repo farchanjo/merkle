@@ -220,7 +220,10 @@ mod tests {
     /// thread and the FIFO is cleaned up.
     #[tokio::test]
     async fn fifo_removed_when_audit_write_fails() {
-        let (ctx, storage) = test_support::make_failing_ctx().await;
+        // Unique per-test token so the materialized FIFO path never collides with
+        // a sibling test running concurrently.
+        const TOKEN: [u8; 32] = [0x23; 32];
+        let (ctx, storage) = test_support::make_failing_ctx_with_token(TOKEN).await;
         test_support::unseal_ctx(&ctx).await;
         let (namespace_id, handle) = test_support::seed_secret(&ctx).await;
 
@@ -228,7 +231,7 @@ mod tests {
         // now consumed up-front, before the FIFO is created.
         let use_token = issue_token(&ctx, namespace_id, handle.clone()).await;
 
-        let token = hex::encode(test_support::FIXED_TOKEN);
+        let token = hex::encode(TOKEN);
         let path = build_fifo_path(&token);
         let _ = std::fs::remove_file(&path);
 
@@ -253,11 +256,14 @@ mod tests {
     /// blocking writer thread is ever spawned.
     #[tokio::test]
     async fn unknown_token_creates_no_fifo() {
-        let (ctx, _storage) = test_support::make_failing_ctx().await;
+        // Unique per-test token so this defensive path cleanup cannot disturb a
+        // sibling test's FIFO under concurrent execution.
+        const TOKEN: [u8; 32] = [0x24; 32];
+        let (ctx, _storage) = test_support::make_failing_ctx_with_token(TOKEN).await;
         test_support::unseal_ctx(&ctx).await;
         let (namespace_id, handle) = test_support::seed_secret(&ctx).await;
 
-        let path = build_fifo_path(&hex::encode(test_support::FIXED_TOKEN));
+        let path = build_fifo_path(&hex::encode(TOKEN));
         let _ = std::fs::remove_file(&path);
 
         let result = WriteFifoCommand {
