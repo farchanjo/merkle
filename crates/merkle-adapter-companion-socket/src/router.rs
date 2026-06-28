@@ -1,4 +1,4 @@
-//! axum `Router` wiring all 34 companion socket endpoints.
+//! axum `Router` wiring all companion socket endpoints.
 //!
 //! Also defines the `peer_cred_check` middleware that runs before every
 //! handler.
@@ -19,7 +19,7 @@ use crate::{
     problem::{Problem, ProblemType},
 };
 
-/// Build the axum `Router` for all 34 companion socket endpoints.
+/// Build the axum `Router` for all companion socket endpoints.
 ///
 /// Layers applied (outer to inner):
 /// 1. `TraceLayer` — structured HTTP access logging via `tracing`.
@@ -62,6 +62,13 @@ pub fn build(ctx: Arc<AppContext>) -> Router {
         .route(
             "/v1/sessions/{session_id}",
             delete(handlers::sessions::close_session),
+        )
+        // Companion devices (ADR-0020). Pairing (POST) is a separate OOB
+        // enrollment ceremony and is intentionally not exposed here.
+        .route("/v1/devices", get(handlers::devices::list_devices))
+        .route(
+            "/v1/devices/{device_id}",
+            delete(handlers::devices::revoke_device),
         )
         // Use-tokens (ADR-0024 gap matrix — PR3)
         .route("/v1/use-tokens", post(handlers::use_token::issue_use_token))

@@ -954,6 +954,85 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
 
   # ---------------------------------------------------------------------------
+  # Access Mediation — Companion Devices (ADR-0020)
+  # ---------------------------------------------------------------------------
+
+  /v1/devices:
+    get:
+      operationId: access-mediation--list-devices
+      summary: List enrolled Companion Devices
+      description: >
+        Returns every enrolled Companion Device, including revoked ones. The
+        Vault Agent must be in Unsealed State. Public keys are returned as
+        lowercase hex; the attestation chain is never exposed.
+
+        Device pairing is an out-of-band enrollment ceremony (ADR-0019 /
+        ADR-0020) and is deliberately not exposed as a socket operation.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      responses:
+        "200":
+          description: Companion device list returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceList"
+        "403":
+          description: Caller not authorized to list devices.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/devices/{device_id}:
+    delete:
+      operationId: access-mediation--revoke-device
+      summary: Revoke a Companion Device
+      description: >
+        Marks an enrolled Companion Device as revoked by stamping `revoked_at`.
+        The record is retained for audit purposes but is no longer valid for OOB
+        challenge signing. The Vault Agent must be in Unsealed State.
+      tags:
+        - access-mediation
+      x-merkle-sensitivity: low
+      x-merkle-oob-required: false
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdPath"
+      responses:
+        "200":
+          description: Device revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokeDeviceResult"
+        "400":
+          description: Device is already revoked.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: No enrolled device with the given id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  # ---------------------------------------------------------------------------
   # Access Mediation — Reveal
   # ---------------------------------------------------------------------------
 
@@ -2182,6 +2261,15 @@ components:
         type: string
         format: uuid
 
+    DeviceIdPath:
+      name: device_id
+      in: path
+      required: true
+      description: UUIDv7 of the target Companion Device.
+      schema:
+        type: string
+        format: uuid
+
     LimitParam:
       name: limit
       in: query
@@ -2441,6 +2529,80 @@ components:
         secret_count:
           type: integer
           description: Total number of active Secrets in this Namespace.
+
+    CompanionDeviceClass:
+      type: string
+      enum:
+        - software
+        - secure_enclave
+        - hardware_token
+      description: >-
+        Hardware assurance tier (ADR-0020). Ordering reflects increasing key
+        isolation: software < secure_enclave < hardware_token.
+
+    CompanionDevice:
+      type: object
+      description: >-
+        An enrolled Companion Device used for out-of-band confirmation
+        (ADR-0019 / ADR-0020). Public keys are lowercase hex; the attestation
+        chain is verified at enrollment and never returned.
+      required:
+        - device_id
+        - class
+        - ed25519_pubkey
+        - x25519_pubkey
+        - enrolled_at
+        - revoked
+      properties:
+        device_id:
+          type: string
+          format: uuid
+          description: UUIDv7 assigned at enrollment.
+        class:
+          $ref: "#/components/schemas/CompanionDeviceClass"
+        ed25519_pubkey:
+          type: string
+          description: Ed25519 public key (lowercase hex) for OOB signatures.
+        x25519_pubkey:
+          type: string
+          description: X25519 public key (lowercase hex) for ECIES.
+        enrolled_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+          description: Set when the device has been revoked; absent otherwise.
+        revoked:
+          type: boolean
+          description: Convenience flag mirroring the presence of `revoked_at`.
+
+    DeviceList:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompanionDevice"
+        total:
+          type: integer
+          description: Total count of enrolled devices.
+
+    RevokeDeviceResult:
+      type: object
+      required:
+        - device_id
+        - revoked_at
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        revoked_at:
+          type: string
+          format: date-time
 
     Tag:
       type: object

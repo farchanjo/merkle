@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use merkle_types::{Handle, OobChannel, SecurityProfile, Sensitivity};
+use merkle_types::{CompanionDeviceClass, Handle, OobChannel, SecurityProfile, Sensitivity};
 
 // ---------------------------------------------------------------------------
 // Shared sub-types
@@ -188,6 +188,40 @@ pub struct ListNamespacesResponse {
     pub total: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Companion devices (ADR-0020)
+// ---------------------------------------------------------------------------
+
+/// A single enrolled companion device in the list response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceDto {
+    pub device_id: Uuid,
+    pub class: CompanionDeviceClass,
+    /// Ed25519 public key, lowercase hex (64 chars).
+    pub ed25519_pubkey: String,
+    /// X25519 public key, lowercase hex (64 chars).
+    pub x25519_pubkey: String,
+    pub enrolled_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<DateTime<Utc>>,
+    /// Convenience flag mirroring `revoked_at.is_some()`.
+    pub revoked: bool,
+}
+
+/// Response body for `GET /v1/devices`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListDevicesResponse {
+    pub items: Vec<DeviceDto>,
+    pub total: u32,
+}
+
+/// Response body for `DELETE /v1/devices/{device_id}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokeDeviceResponse {
+    pub device_id: Uuid,
+    pub revoked_at: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------

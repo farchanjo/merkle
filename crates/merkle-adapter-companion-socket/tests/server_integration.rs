@@ -581,3 +581,55 @@ async fn test_reveal_with_slash_command_requires_unsealed_vault() {
     let json: serde_json::Value = serde_json::from_slice(&resp_body).expect("JSON");
     assert_eq!(json["type"], "agent_sealed");
 }
+
+/// 12. `GET /v1/devices` is routed and returns 200 with an items array.
+///
+/// Regression for the missing device route: before the handler was wired, the
+/// CLI's `merkle device list` hit an unregistered path and got a bare 404.
+#[tokio::test]
+async fn test_device_list_route_exists() {
+    let ctx = make_app_ctx().await;
+    let (_dir, sock) = spawn_server(ctx).await;
+    unseal(&sock).await;
+
+    let (status, body) = http(&sock, "GET", "/v1/devices", None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 (route missing would be 404), body: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("JSON response");
+    assert!(
+        json["items"].is_array(),
+        "expected items array, got: {json}"
+    );
+    assert_eq!(
+        json["total"].as_u64().unwrap_or(u64::MAX),
+        json["items"].as_array().map_or(0, Vec::len) as u64
+    );
+}
+
+/// 13. `DELETE /v1/devices/{id}` is routed: an unknown device yields an
+/// application-level 404 problem body, not a bare route-missing 404.
+#[tokio::test]
+async fn test_device_revoke_route_exists() {
+    let ctx = make_app_ctx().await;
+    let (_dir, sock) = spawn_server(ctx).await;
+    unseal(&sock).await;
+
+    // A well-formed UUIDv7 that matches no enrolled device.
+    let device_id = "01890000-0000-7000-8000-000000000abc";
+    let (status, body) =
+        http(&sock, "DELETE", &format!("/v1/devices/{device_id}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404 for unknown device, body: {}",
+        String::from_utf8_lossy(&body)
+    );
+    // A missing route returns an empty body; the handler returns a Problem JSON.
+    let json: serde_json::Value =
+        serde_json::from_slice(&body).expect("handler must return a JSON problem body");
+    assert_eq!(json["status"], 404, "problem envelope status: {json}");
+}

@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod audit;
 pub mod backup;
+pub mod devices;
 pub mod diagnostics;
 pub mod namespaces;
 pub mod proxy;
