@@ -68,8 +68,9 @@ enum AgentCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Load configuration.
-    let mut cfg = config::load().context("failed to load agent configuration")?;
+    // Load configuration. The `--config` flag (or `$MERKLE_CONFIG`) selects the
+    // file; CLI flags below override individual fields.
+    let mut cfg = config::load(cli.config.clone()).context("failed to load agent configuration")?;
 
     // CLI flags override config-file settings.
     if let Some(ref level) = cli.log_level {

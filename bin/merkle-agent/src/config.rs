@@ -436,11 +436,13 @@ impl Default for LoggingConfig {
 ///
 /// Returns `ConfigError` when the TOML is malformed or a required field
 /// cannot be resolved.
-pub fn load() -> Result<AgentConfig, ::config::ConfigError> {
-    let config_path = std::env::var("MERKLE_CONFIG").map_or_else(
-        |_| xdg_config_home().join("merkle/config.toml"),
-        PathBuf::from,
-    );
+pub fn load(cli_config_path: Option<PathBuf>) -> Result<AgentConfig, ::config::ConfigError> {
+    // Precedence for the file path: explicit `--config` flag, then
+    // `$MERKLE_CONFIG`, then the XDG default. Previously the `--config` flag was
+    // parsed but never threaded here, so it was silently ignored.
+    let config_path = cli_config_path
+        .or_else(|| std::env::var("MERKLE_CONFIG").ok().map(PathBuf::from))
+        .unwrap_or_else(|| xdg_config_home().join("merkle/config.toml"));
 
     let cfg = ::config::Config::builder()
         .add_source(
