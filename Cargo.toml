@@ -97,7 +97,7 @@ dashmap          = "6.1"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 blake3           = "1.8"
 argon2           = "0.5"
-age              = { version = "0.10", features = ["async"] }
+age              = { version = "0.11", features = ["async"] }
 ed25519-dalek    = { version = "2.1", features = ["serde", "rand_core"] }
 x25519-dalek     = { version = "2.0", features = ["serde", "static_secrets"] }
 

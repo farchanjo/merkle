@@ -27,8 +27,12 @@ pub(crate) fn encrypt(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let encryptor = age::Encryptor::with_recipients(boxed)
-        .ok_or_else(|| CryptoError::Age("recipient list is empty".to_owned()))?;
+    // age 0.11: `with_recipients` takes an iterator of `&dyn Recipient` and
+    // returns `Result` (empty list → `Err`), replacing the 0.10
+    // `Vec<Box<dyn Recipient>>` + `Option` signature.
+    let encryptor =
+        age::Encryptor::with_recipients(boxed.iter().map(|b| b.as_ref() as &dyn age::Recipient))
+            .map_err(|e| CryptoError::Age(format!("encryptor creation failed: {e}")))?;
 
     let mut output: Vec<u8> = Vec::new();
     let mut writer = encryptor
@@ -57,16 +61,11 @@ pub(crate) fn decrypt(identity: &AgeIdentity, ciphertext: &[u8]) -> Result<Vec<u
         .parse()
         .map_err(|e| CryptoError::Age(format!("invalid identity: {e}")))?;
 
-    let decryptor = match age::Decryptor::new(ciphertext)
-        .map_err(|e| CryptoError::Age(format!("decryptor creation failed: {e}")))?
-    {
-        age::Decryptor::Recipients(d) => d,
-        age::Decryptor::Passphrase(_) => {
-            return Err(CryptoError::Age(
-                "expected recipient-based age file, got passphrase-based".to_owned(),
-            ));
-        }
-    };
+    // age 0.11: `Decryptor` is a single type (no `Recipients`/`Passphrase`
+    // enum); `decrypt` is driven by the supplied identities. A passphrase-based
+    // file simply yields no matching key for an x25519 identity and fails here.
+    let decryptor = age::Decryptor::new(ciphertext)
+        .map_err(|e| CryptoError::Age(format!("decryptor creation failed: {e}")))?;
 
     let mut output = Vec::new();
     let mut reader = decryptor

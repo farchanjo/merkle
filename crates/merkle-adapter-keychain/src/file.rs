@@ -324,8 +324,10 @@ fn age_encrypt(
     plaintext: &[u8],
     passphrase: &secrecy::SecretString,
 ) -> Result<Vec<u8>, KeychainError> {
-    // age uses its own re-exported secrecy crate (0.8); we bridge via expose_secret.
-    let age_passphrase = age::secrecy::SecretString::new(passphrase.expose_secret().to_owned());
+    // age uses its own re-exported secrecy crate; bridge via expose_secret.
+    // secrecy 0.10 (age 0.11): `SecretString::new` now takes `Box<str>`, so use
+    // the `From<String>` conversion instead.
+    let age_passphrase = age::secrecy::SecretString::from(passphrase.expose_secret().to_owned());
     let encryptor = age::Encryptor::with_user_passphrase(age_passphrase);
     let mut ciphertext: Vec<u8> = Vec::new();
     let mut writer = encryptor
@@ -345,24 +347,21 @@ fn age_decrypt(
     ciphertext: &[u8],
     passphrase: &secrecy::SecretString,
 ) -> Result<Vec<u8>, KeychainError> {
-    let age_passphrase = age::secrecy::SecretString::new(passphrase.expose_secret().to_owned());
+    let age_passphrase = age::secrecy::SecretString::from(passphrase.expose_secret().to_owned());
+    // age 0.11: the `Decryptor::Passphrase`/`Recipients` enum is gone. Passphrase
+    // decryption is driven by an `scrypt::Identity`; a recipient-based file
+    // (no scrypt stanza) simply yields no matching key and fails here.
     let decryptor = age::Decryptor::new(ciphertext)
         .map_err(|e| KeychainError::Backend(format!("age decryptor: {e}")))?;
-    match decryptor {
-        age::Decryptor::Passphrase(d) => {
-            let mut reader = d
-                .decrypt(&age_passphrase, None)
-                .map_err(|e| KeychainError::Backend(format!("age decrypt: {e}")))?;
-            let mut plaintext = Vec::new();
-            reader
-                .read_to_end(&mut plaintext)
-                .map_err(|e| KeychainError::Backend(format!("age read: {e}")))?;
-            Ok(plaintext)
-        }
-        age::Decryptor::Recipients(_) => Err(KeychainError::Backend(
-            "keystore file uses recipient-based encryption; expected passphrase".to_owned(),
-        )),
-    }
+    let identity = age::scrypt::Identity::new(age_passphrase);
+    let mut reader = decryptor
+        .decrypt(std::iter::once(&identity as &dyn age::Identity))
+        .map_err(|e| KeychainError::Backend(format!("age decrypt: {e}")))?;
+    let mut plaintext = Vec::new();
+    reader
+        .read_to_end(&mut plaintext)
+        .map_err(|e| KeychainError::Backend(format!("age read: {e}")))?;
+    Ok(plaintext)
 }
 
 /// Load a flat `HashMap<StoreKey, Vec<u8>>` from an age-encrypted JSON file.
