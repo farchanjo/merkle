@@ -161,8 +161,26 @@ fn check_hmac(
     to_id: Option<AuditEntryId>,
     verified_at: Rfc3339Timestamp,
 ) -> Result<(), Box<ChainVerifyResult>> {
-    let (Some(key), Some(stored_hmac)) = (hmac_key, entry.hmac) else {
+    // No key supplied → explicit hash-only pass; the tag is not examined.
+    let Some(key) = hmac_key else {
         return Ok(());
+    };
+    // A key IS present, so every entry MUST carry a tag to authenticate. A
+    // missing tag can no longer be silently accepted: that would skip the only
+    // keyed integrity check (MERK-002). Persisting a NULL tag is also blocked at
+    // the storage layer (`hmac NOT NULL`).
+    let Some(stored_hmac) = entry.hmac else {
+        return Err(Box::new(ChainVerifyResult {
+            outcome: ChainOutcome::MissingHmac { entry_id: entry.id },
+            head_hash: None,
+            entries_checked: state.entries_checked,
+            anomalies_detected: state.anomalies_detected + 1,
+            hmac_checked: false,
+            range_from_id: from_id,
+            range_to_id: to_id,
+            triggered_by: None,
+            verified_at,
+        }));
     };
     let mut hmac_input = Vec::with_capacity(48);
     hmac_input.extend_from_slice(entry.current_hash.as_bytes());
@@ -216,6 +234,37 @@ fn slice_entries<'a>(
     collected
 }
 
+/// Genesis-anchor check for a full-range pass.
+///
+/// A complete chain MUST begin at the genesis entry (`seq == 0`, no
+/// `prev_hash`). A first entry with a non-zero `seq` or a present `prev_hash`
+/// means the genesis prefix was removed — a head-of-log truncation that the
+/// tail/seq checks alone would miss. Returns `Some(result)` on failure.
+fn check_genesis_anchor(
+    entries: &[&AuditEntry],
+    log: &AuditLog,
+    verified_at: Rfc3339Timestamp,
+) -> Option<ChainVerifyResult> {
+    let first = entries.first()?;
+    if first.seq == 0 && first.prev_hash.is_none() {
+        return None;
+    }
+    Some(ChainVerifyResult {
+        outcome: ChainOutcome::GenesisAnchorMissing {
+            entry_id: first.id,
+            found_seq: first.seq,
+        },
+        head_hash: log.head().copied(),
+        entries_checked: 0,
+        anomalies_detected: 1,
+        hmac_checked: false,
+        range_from_id: None,
+        range_to_id: None,
+        triggered_by: None,
+        verified_at,
+    })
+}
+
 /// Full-range head-commitment check: truncation followed by pinned-head
 /// equality.
 ///
@@ -226,10 +275,42 @@ fn slice_entries<'a>(
 fn check_head_commitment(
     state: &WalkState,
     pinned_head: &PinnedHead,
+    hmac_key: Option<&[u8; 32]>,
     verified_at: Rfc3339Timestamp,
 ) -> Option<ChainVerifyResult> {
     let final_head_hash = state.last_hash;
     let final_seq = state.last_seq.unwrap_or(0);
+
+    // Authenticate the pinned head BEFORE trusting head_seq / head_hash. The MAC
+    // binds (head_hash, head_seq, head_id, entry_count) under the key, so a
+    // pinned head rewritten to look consistent with a truncated log cannot be
+    // re-authenticated without the key. entry_count is derived from the pinned
+    // head's own claim (head_seq + 1) so the check authenticates the head blob
+    // itself; an actual length divergence is then surfaced separately as
+    // TruncationDetected below.
+    if let Some(key) = hmac_key {
+        let entry_count = pinned_head.head_seq.saturating_add(1);
+        let expected = pinned_head.compute_head_mac(key, entry_count);
+        let authentic = pinned_head
+            .hmac_head
+            .as_ref()
+            .is_some_and(|stored| expected.ct_eq(stored));
+        if !authentic {
+            return Some(ChainVerifyResult {
+                outcome: ChainOutcome::HeadMacMismatch {
+                    head_id: pinned_head.head_id,
+                },
+                head_hash: Some(final_head_hash),
+                entries_checked: state.entries_checked,
+                anomalies_detected: state.anomalies_detected + 1,
+                hmac_checked: false,
+                range_from_id: None,
+                range_to_id: None,
+                triggered_by: None,
+                verified_at,
+            });
+        }
+    }
 
     // Truncation: fewer entries than the pinned head implies.
     if pinned_head.head_seq > final_seq {
@@ -357,6 +438,14 @@ impl ChainVerifier {
             };
         }
 
+        // Genesis anchor (full-range only): a complete chain MUST begin at the
+        // genesis entry (seq == 0, no prev_hash).
+        if from_id.is_none() && to_id.is_none() {
+            if let Some(result) = check_genesis_anchor(&entries, log, verified_at) {
+                return result;
+            }
+        }
+
         let mut state = WalkState::new();
 
         for entry in &entries {
@@ -396,7 +485,9 @@ impl ChainVerifier {
 
         // Head-commitment checks: full-range only (both bounds are None).
         if from_id.is_none() && to_id.is_none() {
-            if let Some(result) = check_head_commitment(&state, pinned_head, verified_at) {
+            if let Some(result) =
+                check_head_commitment(&state, pinned_head, hmac_key_array, verified_at)
+            {
                 return result;
             }
         }

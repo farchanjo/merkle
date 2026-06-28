@@ -212,7 +212,13 @@ impl AuditWriter {
             hmac: Some(hmac),
         };
 
-        let pinned = PinnedHead::new(current_hash, seq, id, ts);
+        // entry_count is the total number of entries the chain now commits to.
+        // For the gap-free append-only chain this is `seq + 1`; binding it into
+        // the head MAC lets the verifier reject a pinned head whose claimed
+        // length was rewritten to match a truncated log.
+        let entry_count = seq + 1;
+        let pinned =
+            PinnedHead::new(current_hash, seq, id, ts).with_head_mac(key_array, entry_count);
         log.push(entry.clone());
 
         Ok((entry, pinned))

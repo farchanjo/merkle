@@ -12,7 +12,7 @@ use sqlx::{Row, SqlitePool};
 
 use crate::error::AdapterError;
 use crate::mappers::{blob_to_audit_entry_id, row_to_audit_entry, uuid_to_blob};
-use merkle_types::{Blake3Hash, Rfc3339Timestamp};
+use merkle_types::{Blake3Hash, HmacSignature, Rfc3339Timestamp};
 
 /// Append one [`AuditEntry`] and atomically update the pinned head.
 ///
@@ -73,15 +73,20 @@ pub(crate) async fn append_audit_entry(
     .map_err(AdapterError::Sqlx)
     .map_err(StorageError::from)?;
 
-    // Atomically upsert the pinned_head singleton row.
+    // Atomically upsert the pinned_head singleton row. The entry alone does not
+    // carry the head-commitment MAC (that needs the key), so hmac_head is reset
+    // to NULL here and authenticated immediately afterwards by the application
+    // layer's update_pinned_head call. Leaving a stale MAC from the prior head
+    // would be a valid-looking tag for the wrong head, so we fail closed.
     sqlx::query(
-        r"INSERT INTO pinned_head (singleton, head_hash, head_seq, head_id, updated_at)
-          VALUES (1, ?1, ?2, ?3, ?4)
+        r"INSERT INTO pinned_head (singleton, head_hash, head_seq, head_id, updated_at, hmac_head)
+          VALUES (1, ?1, ?2, ?3, ?4, NULL)
           ON CONFLICT(singleton) DO UPDATE SET
               head_hash  = excluded.head_hash,
               head_seq   = excluded.head_seq,
               head_id    = excluded.head_id,
-              updated_at = excluded.updated_at",
+              updated_at = excluded.updated_at,
+              hmac_head  = NULL",
     )
     .bind(&head_hash)
     .bind(head_seq)
@@ -193,7 +198,8 @@ pub(crate) async fn read_audit(
 /// Fetch the current pinned chain head, returning `None` on an empty vault.
 pub(crate) async fn pinned_head(pool: &SqlitePool) -> Result<Option<PinnedHead>, StorageError> {
     let row = sqlx::query(
-        "SELECT head_hash, head_seq, head_id, updated_at FROM pinned_head WHERE singleton = 1",
+        "SELECT head_hash, head_seq, head_id, updated_at, hmac_head \
+         FROM pinned_head WHERE singleton = 1",
     )
     .fetch_optional(pool)
     .await
@@ -231,12 +237,23 @@ pub(crate) async fn pinned_head(pool: &SqlitePool) -> Result<Option<PinnedHead>,
         .parse::<Rfc3339Timestamp>()
         .map_err(|e| StorageError::Constraint(e.to_string()))?;
 
-    Ok(Some(PinnedHead::new(
+    let hmac_head_str: Option<String> = r
+        .try_get("hmac_head")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let hmac_head = hmac_head_str
+        .map(|s| s.parse::<HmacSignature>())
+        .transpose()
+        .map_err(|e| StorageError::Constraint(e.to_string()))?;
+
+    let mut head = PinnedHead::new(
         head_hash,
         u64::try_from(head_seq).unwrap_or(0),
         head_id,
         updated_at,
-    )))
+    );
+    head.hmac_head = hmac_head;
+    Ok(Some(head))
 }
 
 /// Overwrite the pinned chain head directly (used by the chain verifier /
@@ -249,20 +266,23 @@ pub(crate) async fn update_pinned_head(
     let head_seq = i64::try_from(head.head_seq).unwrap_or(i64::MAX);
     let head_id_blob = uuid_to_blob(head.head_id.inner());
     let updated_at = head.updated_at.to_string();
+    let hmac_head = head.hmac_head.map(|h| h.to_string());
 
     sqlx::query(
-        r"INSERT INTO pinned_head (singleton, head_hash, head_seq, head_id, updated_at)
-          VALUES (1, ?1, ?2, ?3, ?4)
+        r"INSERT INTO pinned_head (singleton, head_hash, head_seq, head_id, updated_at, hmac_head)
+          VALUES (1, ?1, ?2, ?3, ?4, ?5)
           ON CONFLICT(singleton) DO UPDATE SET
               head_hash  = excluded.head_hash,
               head_seq   = excluded.head_seq,
               head_id    = excluded.head_id,
-              updated_at = excluded.updated_at",
+              updated_at = excluded.updated_at,
+              hmac_head  = excluded.hmac_head",
     )
     .bind(&head_hash)
     .bind(head_seq)
     .bind(&head_id_blob)
     .bind(&updated_at)
+    .bind(&hmac_head)
     .execute(pool)
     .await
     .map_err(AdapterError::Sqlx)

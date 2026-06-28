@@ -29,6 +29,46 @@ pub enum ChainOutcome {
         entry_id: AuditEntryId,
     },
 
+    /// A verification key was supplied but the entry carries no HMAC tag.
+    ///
+    /// A keyed verification pass MUST authenticate every entry. An entry whose
+    /// `hmac` is `None` while a key is present cannot be authenticated, so it is
+    /// a verification failure rather than a silently-skipped check. Persisting a
+    /// `NULL` tag is additionally blocked at the storage layer (`hmac` is
+    /// `NOT NULL`), so this outcome flags an in-memory or out-of-band tamper.
+    MissingHmac {
+        /// The entry that is missing its HMAC tag.
+        entry_id: AuditEntryId,
+    },
+
+    /// A full-range pass did not begin at the genesis anchor.
+    ///
+    /// The first entry of a complete chain MUST have `seq == 0` and no
+    /// `prev_hash` (it hashes against the [`merkle_types::hash::GENESIS`]
+    /// sentinel). A first entry with a non-zero `seq` or a present `prev_hash`
+    /// indicates the genesis prefix was removed — a head-of-log truncation that
+    /// the tail-oriented seq/head checks would otherwise miss.
+    GenesisAnchorMissing {
+        /// The first entry actually present in the full-range pass.
+        entry_id: AuditEntryId,
+        /// The `seq` of that first entry (non-zero signals a removed prefix).
+        found_seq: u64,
+    },
+
+    /// The pinned head's authentication tag does not match the recomputed MAC.
+    ///
+    /// The [`crate::PinnedHead`] carries an HMAC over
+    /// `head_hash || head_seq || head_id || entry_count`. On a keyed full-range
+    /// pass the verifier recomputes this MAC and rejects the pinned head when it
+    /// fails (or is absent) **before** trusting `head_seq`/`head_hash`. Catches
+    /// truncate-then-rewrite-pinned-head attacks where the head fields are made
+    /// internally consistent with a shortened log but cannot be re-authenticated
+    /// without the key.
+    HeadMacMismatch {
+        /// The pinned head's claimed head entry id.
+        head_id: AuditEntryId,
+    },
+
     /// The log has fewer entries than the pinned head implies.
     ///
     /// Detected when the last entry's `seq` is less than the pinned head's
