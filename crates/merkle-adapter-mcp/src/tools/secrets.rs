@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::{MerkleMcpServer, errors::client_error_to_mcp};
 use merkle_companion_client::dto::{
     DeleteSecretRequest, ListSecretsParams, OperatorConfirmationDeleteSecret, PutSecretRequest,
-    RotateSecretRequest,
+    RotateSecretRequest, TagDto, ValueFormatDto,
 };
 use merkle_types::Handle;
 
@@ -93,17 +93,17 @@ pub struct VaultRotateInput {
 }
 
 /// Input for vault.delete — permanently delete a Secret and all its versions.
+///
+/// Note: there is deliberately no `operator_confirmation` argument. The
+/// confirmation for this irreversible operation is sourced from the
+/// client-injected request `_meta` (see [`crate::OPERATOR_CONFIRMATION_META_KEY`]),
+/// never from a tool argument the model controls (MERK-001).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultDeleteInput {
     /// Handle URI of the Secret to delete.
     pub handle: String,
     /// Human-readable reason; recorded in the audit log.
     pub purpose: String,
-    /// Explicit operator confirmation. MUST be set to `true` by a human
-    /// operator for this irreversible delete to proceed; defaults to `false`
-    /// so the model cannot delete a secret autonomously.
-    #[serde(default)]
-    pub operator_confirmation: bool,
 }
 
 /// Input for vault.search — free-text search over public metadata.
@@ -163,6 +163,62 @@ fn resolve_namespace(session: &crate::session::SessionState) -> Result<Uuid, Err
         .ok_or_else(crate::errors::namespace_not_bound)
 }
 
+/// Convert MCP tag strings into transport [`TagDto`]s.
+///
+/// Each tag is expressed as `key:value`. A bare token without a `:` is mapped
+/// to a tag whose key and value are both the token, so it survives the daemon's
+/// `key`/`value` tag validation. Without this conversion the tags supplied to
+/// `vault.put` were silently dropped (BUG-10).
+fn tag_strings_to_dto(tags: Vec<String>) -> Vec<TagDto> {
+    tags.into_iter()
+        .map(|t| match t.split_once(':') {
+            Some((key, value)) => TagDto {
+                key: key.to_owned(),
+                value: value.to_owned(),
+            },
+            None => TagDto {
+                key: t.clone(),
+                value: t,
+            },
+        })
+        .collect()
+}
+
+/// Build the daemon [`PutSecretRequest`] from the tool input, forwarding the
+/// `tags` and `sensitivity` fields that were previously dropped (BUG-10).
+fn put_request_from_input(input: VaultPutInput) -> PutSecretRequest {
+    PutSecretRequest {
+        name: input.name,
+        category: input.category,
+        value: input.value,
+        value_format: ValueFormatDto::Utf8,
+        schema_id: input.schema_id,
+        tags: input.tags.map(tag_strings_to_dto).unwrap_or_default(),
+        sensitivity: input.sensitivity.as_deref().and_then(|s| s.parse().ok()),
+        description: None,
+        expose: input.expose.unwrap_or(false),
+        expires_at: None,
+        force: false,
+    }
+}
+
+/// Build the daemon [`ListSecretsParams`] from the tool input, forwarding the
+/// `tags`, `sensitivity`, and `expires_before` filters that were previously
+/// dropped (BUG-11).
+fn list_params_from_input(input: VaultListInput) -> ListSecretsParams {
+    ListSecretsParams {
+        category: input.category,
+        sensitivity: input.sensitivity.as_deref().and_then(|s| s.parse().ok()),
+        tags: input.tags.filter(|t| !t.is_empty()).map(|t| t.join(",")),
+        name_pattern: input.name_pattern,
+        expires_before: input.expires_before.as_deref().and_then(|s| s.parse().ok()),
+        fts_query: input.fts_query,
+        limit: input.limit.unwrap_or(50),
+        cursor: None,
+        offset: 0,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tool implementations
 // ---------------------------------------------------------------------------
@@ -193,22 +249,7 @@ impl MerkleMcpServer {
 
         let resp = self
             .client
-            .put_secret(
-                namespace_id,
-                PutSecretRequest {
-                    name: input.name,
-                    category: input.category,
-                    value: input.value,
-                    value_format: merkle_companion_client::dto::ValueFormatDto::Utf8,
-                    schema_id: input.schema_id,
-                    tags: vec![],
-                    sensitivity: None,
-                    description: None,
-                    expose: input.expose.unwrap_or(false),
-                    expires_at: None,
-                    force: false,
-                },
-            )
+            .put_secret(namespace_id, put_request_from_input(input))
             .await
             .map_err(client_error_to_mcp)?;
 
@@ -276,20 +317,7 @@ impl MerkleMcpServer {
 
         let resp = self
             .client
-            .list_secrets(
-                namespace_id,
-                &ListSecretsParams {
-                    category: input.category,
-                    sensitivity: None,
-                    tags: None,
-                    name_pattern: input.name_pattern,
-                    expires_before: None,
-                    fts_query: input.fts_query,
-                    limit: input.limit.unwrap_or(50),
-                    cursor: None,
-                    offset: 0,
-                },
-            )
+            .list_secrets(namespace_id, &list_params_from_input(input))
             .await
             .map_err(client_error_to_mcp)?;
 
@@ -398,23 +426,32 @@ impl MerkleMcpServer {
     }
 
     /// Permanently delete a Secret and all its versions. Irreversible.
+    ///
+    /// Gated on an operator confirmation that the client injects into the
+    /// request `_meta` when a `/merkle-delete` slash command is issued by the
+    /// human operator — the model cannot supply it through tool arguments
+    /// (MERK-001).
     #[tool(
         name = "vault.delete",
-        description = "Permanently delete a Secret and all its versions. This operation is irreversible. Recorded in the audit log."
+        description = "Permanently delete a Secret and all its versions. Irreversible. Requires an operator confirmation issued via the /merkle-delete slash command (injected into request _meta by the client, not a tool argument). Recorded in the audit log."
     )]
     pub async fn vault_delete(
         &self,
         Parameters(input): Parameters<VaultDeleteInput>,
+        meta: rmcp::model::Meta,
     ) -> Result<CallToolResult, ErrorData> {
         let handle = parse_handle(&input.handle)?;
 
         // Irreversible deletion must never be initiated autonomously by the
-        // model. Require an explicit human-set confirmation flag; without it
-        // the call is rejected before any state change.
-        if !input.operator_confirmation {
+        // model. The confirmation provenance is read from the client-injected
+        // request `_meta` (set by the /merkle-delete slash command), not from a
+        // model-controlled tool argument (MERK-001). Without it the call is
+        // rejected before any state change.
+        if !crate::operator_confirmation_from_meta(&meta) {
             return Err(ErrorData::invalid_params(
-                "vault.delete is irreversible and requires operator_confirmation=true \
-                 (a human operator must set it); refusing to delete autonomously",
+                "vault.delete is irreversible and requires an operator confirmation \
+                 issued via the /merkle-delete slash command; refusing to delete \
+                 autonomously",
                 None,
             ));
         }
@@ -432,7 +469,9 @@ impl MerkleMcpServer {
                 DeleteSecretRequest {
                     purpose: input.purpose,
                     operator_confirmation: OperatorConfirmationDeleteSecret {
-                        slash_command: input.operator_confirmation,
+                        // True by construction: the early return above rejects any
+                        // call lacking client-injected `_meta` provenance.
+                        slash_command: true,
                         oob_ack: false,
                     },
                 },
@@ -570,5 +609,89 @@ impl MerkleMcpServer {
             })
             .to_string(),
         )]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        VaultDeleteInput, VaultListInput, VaultPutInput, list_params_from_input,
+        put_request_from_input,
+    };
+    use merkle_types::Sensitivity;
+
+    /// MERK-001: `operator_confirmation` is no longer a delete input field, so a
+    /// model that smuggles it into the tool `arguments` cannot authorize an
+    /// irreversible delete — the flag is dropped at parse time and provenance is
+    /// taken from the client-injected request `_meta` instead.
+    #[test]
+    fn model_supplied_operator_confirmation_is_not_a_delete_input_field() {
+        let json = serde_json::json!({
+            "handle": "vault://default/token/api",
+            "purpose": "cleanup",
+            "operator_confirmation": true
+        });
+        let input: VaultDeleteInput = serde_json::from_value(json).expect("parse");
+        assert_eq!(input.handle, "vault://default/token/api");
+        assert_eq!(input.purpose, "cleanup");
+    }
+
+    /// BUG-10: vault.put must forward `tags` and `sensitivity` to the daemon.
+    #[test]
+    fn put_request_forwards_tags_and_sensitivity() {
+        let input = VaultPutInput {
+            category: "token".into(),
+            name: "api".into(),
+            value: serde_json::json!("v"),
+            schema_id: None,
+            tags: Some(vec!["env:prod".into(), "team:core".into()]),
+            sensitivity: Some("high".into()),
+            expose: None,
+        };
+
+        let req = put_request_from_input(input);
+
+        assert_eq!(req.tags.len(), 2, "tags must be forwarded, not dropped");
+        assert_eq!(req.tags[0].key, "env");
+        assert_eq!(req.tags[0].value, "prod");
+        assert_eq!(req.tags[1].key, "team");
+        assert_eq!(req.tags[1].value, "core");
+        assert_eq!(req.sensitivity, Some(Sensitivity::High));
+    }
+
+    /// BUG-11: vault.list must forward `tags`, `sensitivity`, and
+    /// `expires_before` filters to the daemon.
+    #[test]
+    fn list_params_forward_dropped_filters() {
+        let input = VaultListInput {
+            category: Some("ssh".into()),
+            tags: Some(vec!["env:prod".into(), "team:core".into()]),
+            name_pattern: None,
+            expires_before: Some("2030-01-01T00:00:00Z".into()),
+            sensitivity: Some("medium".into()),
+            fts_query: None,
+            limit: None,
+        };
+
+        let params = list_params_from_input(input);
+
+        assert_eq!(params.tags.as_deref(), Some("env:prod,team:core"));
+        assert_eq!(params.sensitivity, Some(Sensitivity::Medium));
+        assert!(
+            params.expires_before.is_some(),
+            "expires_before must be parsed and forwarded"
+        );
+        assert_eq!(params.category.as_deref(), Some("ssh"));
+    }
+
+    /// Empty tag list must not produce an empty `tags=` filter string.
+    #[test]
+    fn list_params_skip_empty_tags() {
+        let input = VaultListInput {
+            tags: Some(vec![]),
+            ..VaultListInput::default()
+        };
+        let params = list_params_from_input(input);
+        assert!(params.tags.is_none());
     }
 }

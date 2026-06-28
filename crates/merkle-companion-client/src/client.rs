@@ -132,13 +132,17 @@ impl CompanionSocketClient {
 
     /// Read a response body with a hard size ceiling so a runaway or malicious
     /// body cannot OOM the client process.
-    async fn read_body(response: hyper::Response<Incoming>) -> Result<(hyper::StatusCode, Bytes), ClientError> {
+    async fn read_body(
+        response: hyper::Response<Incoming>,
+    ) -> Result<(hyper::StatusCode, Bytes), ClientError> {
         let status = response.status();
         let bytes = Limited::new(response.into_body(), MAX_BODY_BYTES)
             .collect()
             .await
             .map_err(|e| {
-                if e.downcast_ref::<http_body_util::LengthLimitError>().is_some() {
+                if e.downcast_ref::<http_body_util::LengthLimitError>()
+                    .is_some()
+                {
                     ClientError::BodyTooLarge(MAX_BODY_BYTES)
                 } else {
                     ClientError::Unreachable(e.to_string())

@@ -17,18 +17,16 @@ use crate::{
     problem::app_error_to_problem,
 };
 
-/// `GET /v1/audit`
+/// Map HTTP query params → domain `AuditQuery` filter.
 ///
-/// Returns audit entries matching the supplied filter criteria.
-#[instrument(skip(ctx))]
-pub async fn query_audit(
-    State(ctx): State<Arc<AppContext>>,
-    Query(params): Query<AuditQuery>,
-) -> impl IntoResponse {
-    // Map HTTP query params → domain AuditQuery filter.
-    let filter = DomainAuditQuery {
-        op: None, // string→enum parse requires AuditOp FromStr; leave as no-filter for now
-        outcome: None,
+/// The `op` and `outcome` filters are parsed from their string query values via
+/// the [`AuditOp`](merkle_types::AuditOp) / [`AuditOutcome`](merkle_types::AuditOutcome)
+/// `FromStr` impls. Previously both were hardcoded to `None`, making the
+/// documented `op` and `outcome` filters silent no-ops (BUG-13).
+fn to_domain_query(params: &AuditQuery) -> DomainAuditQuery {
+    DomainAuditQuery {
+        op: params.op.as_deref().and_then(|s| s.parse().ok()),
+        outcome: params.outcome.as_deref().and_then(|s| s.parse().ok()),
         namespace_id: None,
         handle: params.handle.as_deref().and_then(|h| h.parse().ok()),
         sensitivity: None,
@@ -45,7 +43,18 @@ pub async fn query_audit(
             .ok()
             .flatten(),
         limit: Some(params.limit),
-    };
+    }
+}
+
+/// `GET /v1/audit`
+///
+/// Returns audit entries matching the supplied filter criteria.
+#[instrument(skip(ctx))]
+pub async fn query_audit(
+    State(ctx): State<Arc<AppContext>>,
+    Query(params): Query<AuditQuery>,
+) -> impl IntoResponse {
+    let filter = to_domain_query(&params);
 
     let query = QueryAuditQuery {
         filter,
@@ -89,5 +98,47 @@ pub async fn query_audit(
                 .into_response()
         }
         Err(err) => app_error_to_problem(err).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AuditQuery, to_domain_query};
+    use merkle_types::{AuditOp, AuditOutcome};
+
+    /// BUG-13: `op` and `outcome` query params must be parsed and applied, not
+    /// silently dropped to `None`.
+    #[test]
+    fn parses_op_and_outcome_filters() {
+        let params = AuditQuery {
+            handle: None,
+            op: Some("rotate".into()),
+            since: None,
+            until: None,
+            session_id: None,
+            outcome: Some("deny".into()),
+            verify_chain: false,
+            limit: 50,
+        };
+
+        let filter = to_domain_query(&params);
+
+        assert_eq!(filter.op, Some(AuditOp::Rotate));
+        assert_eq!(filter.outcome, Some(AuditOutcome::Deny));
+    }
+
+    /// Unparseable op/outcome degrade to no-filter rather than erroring.
+    #[test]
+    fn unknown_op_outcome_become_none() {
+        let params = AuditQuery {
+            op: Some("not-an-op".into()),
+            outcome: Some("maybe".into()),
+            ..AuditQuery::default()
+        };
+
+        let filter = to_domain_query(&params);
+
+        assert_eq!(filter.op, None);
+        assert_eq!(filter.outcome, None);
     }
 }

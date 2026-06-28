@@ -52,16 +52,12 @@ pub async fn create_session(
 ) -> impl IntoResponse {
     // Derive a namespace label from the optional namespace_label field or the
     // cwd_hash prefix so that each distinct project directory gets its own
-    // namespace.
+    // namespace. The fallback uses a char-safe prefix (MERK-006) so a
+    // multibyte cwd_hash cannot panic on a non-char-boundary byte index.
     let raw_label = body
         .namespace_label
         .as_deref()
-        .unwrap_or_else(|| {
-            // Fall back to first 24 chars of cwd_hash as a slug.
-            let end = body.cwd_hash.len().min(24);
-            &body.cwd_hash[..end]
-        })
-        .to_owned();
+        .map_or_else(|| body.cwd_hash_slug(), str::to_owned);
 
     // NamespaceLabel requires DNS-safe format; sanitize to [a-z0-9-].
     let sanitized = raw_label
