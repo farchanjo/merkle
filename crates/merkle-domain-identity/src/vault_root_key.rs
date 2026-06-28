@@ -9,7 +9,6 @@
 
 use std::fmt;
 
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use merkle_types::Rfc3339Timestamp;
@@ -95,7 +94,7 @@ impl VaultRootKey {
     #[must_use]
     pub fn generate() -> Self {
         let mut bytes = [0u8; 32];
-        rand::rng().fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         Self {
             inner: secrecy::SecretBox::new(Box::new(bytes)),
         }
