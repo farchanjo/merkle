@@ -21,6 +21,7 @@
 //! only the auth variant (bearer/basic/none) is recorded in tracing spans.
 
 mod destination_policy;
+mod dns_guard;
 mod http;
 mod mock;
 mod ssh;
@@ -28,11 +29,14 @@ mod ssh;
 pub use destination_policy::DestinationPolicy;
 pub use mock::MockExternalServices;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client;
 use tracing::instrument;
+
+use crate::dns_guard::ValidatingDnsResolver;
 
 use merkle_ports::{
     ExternalError, ExternalServices, HttpAuth, HttpRequestSpec, HttpResponse, SshExecOutput,
@@ -48,14 +52,20 @@ const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Build the hardened shared HTTP client: rustls, explicit request + connect
-/// timeouts, and redirects disabled (a 3xx must not be auto-followed to an
-/// unvalidated — possibly internal — host with the credential still attached).
+/// timeouts, redirects disabled (a 3xx must not be auto-followed to an
+/// unvalidated — possibly internal — host with the credential still attached),
+/// and a [`ValidatingDnsResolver`] so every hostname connect is screened
+/// through the same egress denylist as pre-flight validation. The resolver
+/// closes the TOCTOU DNS-rebinding gap: the IP `reqwest` actually dials is
+/// re-checked against `is_forbidden_ip`, so a host that rebinds to an internal
+/// address after validation still fails closed.
 fn build_http_client() -> Client {
     Client::builder()
         .use_rustls_tls()
         .timeout(HTTP_REQUEST_TIMEOUT)
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
+        .dns_resolver(Arc::new(ValidatingDnsResolver))
         .build()
         .expect("reqwest::Client build should never fail under normal conditions")
 }

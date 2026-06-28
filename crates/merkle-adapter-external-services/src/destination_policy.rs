@@ -134,7 +134,14 @@ async fn resolve(host: &str, port: u16) -> Result<Vec<IpAddr>, ExternalError> {
 
 /// `true` if `ip` is any non-public / internal / special-use address that the
 /// HTTP Bridge must refuse to target.
-fn is_forbidden_ip(ip: IpAddr) -> bool {
+///
+/// This is the **single source of truth** for the egress IP denylist. It is
+/// consulted both by the pre-flight [`DestinationPolicy::validate`] (above) and
+/// by the connect-time [`crate::dns_guard::ValidatingDnsResolver`], so the two
+/// can never drift: every IP the request might actually reach is screened
+/// through exactly this predicate. Closing the TOCTOU DNS-rebinding gap depends
+/// on both call sites sharing this function.
+pub(crate) fn is_forbidden_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_forbidden_v4(v4),
         IpAddr::V6(v6) => v6
