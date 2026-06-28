@@ -201,10 +201,7 @@ impl FileKeystoreAdapter {
                 use std::os::unix::fs::PermissionsExt as _;
                 std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
                     .map_err(|e| {
-                        KeychainError::Backend(format!(
-                            "set tmp perms {}: {e}",
-                            tmp_path.display()
-                        ))
+                        KeychainError::Backend(format!("set tmp perms {}: {e}", tmp_path.display()))
                     })?;
             }
             std::fs::rename(&tmp_path, &path).map_err(|e| {
@@ -466,7 +463,10 @@ mod tests {
             .await
             .expect("store ok");
 
-        let mode = std::fs::metadata(&path).expect("stat keystore").permissions().mode();
+        let mode = std::fs::metadata(&path)
+            .expect("stat keystore")
+            .permissions()
+            .mode();
         assert_eq!(
             mode & 0o777,
             0o600,

@@ -221,7 +221,7 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
     };
     let external: Arc<dyn ExternalServices> = Arc::new(ExternalServicesAdapter::new());
 
-    let identity = build_initial_identity();
+    let identity = build_initial_identity()?;
 
     let ctx = Arc::new(AppContext::new(
         storage, keychain, crypto, oob, external, identity,
@@ -432,28 +432,125 @@ async fn ensure_parent_dir(database_url: &str) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Initial VaultIdentity builder (Phase 4 stub)
+// Initial VaultIdentity builder (GAP-003)
 // ---------------------------------------------------------------------------
 
-/// Build a stub `VaultIdentity` in the `Sealed` state for Phase 4.
+/// Environment variable holding the operator's age recovery recipient
+/// (`age1...`). REQUIRED at startup: the agent refuses to seed a placeholder
+/// recipient, because any backup/encrypt path would otherwise encrypt the
+/// vault to a key nobody controls (GAP-003).
+const RECOVERY_RECIPIENT_ENV: &str = "MERKLE_RECOVERY_RECIPIENT";
+
+/// Optional environment variable carrying the SHA-256 fingerprint of the
+/// recovery recipient (`SHA256:<base64>`). Display/audit metadata only — never
+/// used as an encryption target — so a clearly-marked default is safe when it
+/// is absent.
+const RECOVERY_FINGERPRINT_ENV: &str = "MERKLE_RECOVERY_FINGERPRINT";
+
+/// Build the initial `VaultIdentity` from a real recovery recipient.
 ///
-/// In Phase 5 this is replaced by reading the persisted identity from the
-/// SQLite database (or running `merkle init` if no identity exists).
-fn build_initial_identity() -> VaultIdentity {
+/// Phase 5 will instead read the persisted identity from SQLite; until then the
+/// recipient is sourced from the environment so backups can target a key the
+/// operator actually holds. There is deliberately NO placeholder fallback: a
+/// missing or malformed recipient fails closed (see [`assert_real_recipient`]).
+///
+/// # Errors
+///
+/// Returns an error when no recovery recipient is configured, or when the
+/// configured value is not a structurally valid, non-placeholder age recipient.
+fn build_initial_identity() -> anyhow::Result<VaultIdentity> {
     use merkle_domain_identity::{KeychainEntry, recovery_key::RecoveryPublicKey};
     use merkle_types::Rfc3339Timestamp;
 
-    // Stub keychain reference — service / account name used by the OS keychain adapter.
+    let recipient = std::env::var(RECOVERY_RECIPIENT_ENV).map_err(|_| {
+        anyhow::anyhow!(
+            "vault uninitialized: no recovery recipient configured. Set \
+             {RECOVERY_RECIPIENT_ENV} to the operator's age recipient (run `merkle init` to \
+             generate one). Refusing to seed a placeholder recipient that backup/encrypt \
+             would target."
+        )
+    })?;
+
+    assert_real_recipient(&recipient)?;
+
+    let fingerprint =
+        std::env::var(RECOVERY_FINGERPRINT_ENV).unwrap_or_else(|_| "SHA256:unverified".to_owned());
+
     let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
+    let recovery_pubkey = RecoveryPublicKey::new(recipient, fingerprint, Rfc3339Timestamp::now());
+    Ok(VaultIdentity::new(keychain_ref, recovery_pubkey))
+}
 
-    // Stub recovery public key (placeholder age recipient).
-    let recovery_pubkey = RecoveryPublicKey::new(
-        "age1placeholder000000000000000000000000000000000000000000000000".to_owned(),
-        "SHA256:placeholder=".to_owned(),
-        Rfc3339Timestamp::now(),
+/// Reject anything that is not a structurally valid, non-placeholder age
+/// X25519 recipient before it can be used as an encryption target.
+///
+/// This is the GAP-003 guard: even if a future caller hands us a value, the
+/// built-in `age1placeholder…` stub (and any malformed string) is refused.
+///
+/// # Errors
+///
+/// Returns an error when `recipient` does not look like a real age recipient.
+fn assert_real_recipient(recipient: &str) -> anyhow::Result<()> {
+    // "age1" human-readable prefix + 58 bech32 data characters.
+    const AGE_RECIPIENT_LEN: usize = 62;
+    const BECH32_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+    anyhow::ensure!(
+        recipient.starts_with("age1"),
+        "recovery recipient is not an age recipient (must start with `age1`)"
     );
+    anyhow::ensure!(
+        !recipient.contains("placeholder"),
+        "recovery recipient is the built-in placeholder; configure a real recipient via {RECOVERY_RECIPIENT_ENV}"
+    );
+    anyhow::ensure!(
+        recipient.len() == AGE_RECIPIENT_LEN,
+        "recovery recipient has invalid length {} (expected {AGE_RECIPIENT_LEN})",
+        recipient.len()
+    );
+    anyhow::ensure!(
+        recipient[4..].chars().all(|c| BECH32_CHARSET.contains(c)),
+        "recovery recipient contains non-bech32 characters"
+    );
+    Ok(())
+}
 
-    VaultIdentity::new(keychain_ref, recovery_pubkey)
+#[cfg(test)]
+mod recovery_recipient_tests {
+    use super::assert_real_recipient;
+
+    /// A structurally valid age X25519 recipient (length 62, bech32 charset).
+    const VALID: &str = "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p";
+
+    #[test]
+    fn placeholder_recipient_is_rejected() {
+        // GAP-003: the old built-in stub must never be accepted as a target.
+        let placeholder = "age1placeholder000000000000000000000000000000000000000000000000";
+        let err = assert_real_recipient(placeholder).expect_err("placeholder must be rejected");
+        assert!(err.to_string().contains("placeholder"), "got: {err}");
+    }
+
+    #[test]
+    fn real_recipient_is_accepted() {
+        assert_real_recipient(VALID).expect("valid age recipient must be accepted");
+    }
+
+    #[test]
+    fn non_age_recipient_is_rejected() {
+        assert!(assert_real_recipient("ssh-ed25519 AAAA").is_err());
+    }
+
+    #[test]
+    fn wrong_length_is_rejected() {
+        assert!(assert_real_recipient("age1short").is_err());
+    }
+
+    #[test]
+    fn non_bech32_chars_are_rejected() {
+        // 'b', 'i', 'o' are excluded from the bech32 charset; length still 62.
+        let bad = format!("age1{}", "b".repeat(58));
+        assert!(assert_real_recipient(&bad).is_err());
+    }
 }
 
 #[cfg(test)]

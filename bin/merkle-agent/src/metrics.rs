@@ -15,12 +15,13 @@
 //! Per-operation wiring (incrementing on each request) is Phase 5 polish.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use anyhow::Context as _;
 use axum::Router;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use prometheus::{
@@ -519,14 +520,50 @@ fn register_histograms(r: Registry, b: MetricsBuilder) -> anyhow::Result<(Regist
 // HTTP `/metrics` server
 // ---------------------------------------------------------------------------
 
-/// Serve Prometheus `/metrics` on `cfg.host:cfg.port` until `shutdown` fires.
+/// Shared handler state — carries the optional bearer token guarding access.
+#[derive(Clone)]
+struct MetricsState {
+    /// `Some` enforces `Authorization: Bearer <token>` on every request.
+    token: Option<Arc<str>>,
+}
+
+/// Resolve and validate the metrics bind address.
 ///
-/// No-op when `cfg.enabled` is `false`.
+/// The Prometheus registry exposes namespace labels and live secret counts, so
+/// it must never be reachable off-host without authentication. A non-loopback
+/// host (e.g. `0.0.0.0`) is therefore only permitted when an explicit
+/// `auth_token` is configured.
 ///
 /// # Errors
 ///
-/// Returns an error if the TCP listener cannot be bound or if `axum::serve`
-/// exits with an I/O error.
+/// Returns an error if `host:port` does not parse, or if the address is
+/// non-loopback while no `auth_token` is set.
+fn resolve_listen_addr(cfg: &MetricsConfig) -> anyhow::Result<SocketAddr> {
+    let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port)
+        .parse()
+        .with_context(|| format!("invalid metrics bind address {}:{}", cfg.host, cfg.port))?;
+
+    if !addr.ip().is_loopback() && cfg.auth_token.is_none() {
+        anyhow::bail!(
+            "refusing to bind metrics endpoint to non-loopback host {} without \
+             an auth token: the registry leaks namespace labels and secret \
+             counts. Set [metrics] auth_token, or bind 127.0.0.1.",
+            addr.ip()
+        );
+    }
+    Ok(addr)
+}
+
+/// Serve Prometheus `/metrics` on `cfg.host:cfg.port` until `shutdown` fires.
+///
+/// No-op when `cfg.enabled` is `false`. Binds loopback-only unless an
+/// `auth_token` is configured (see [`resolve_listen_addr`]); when a token is
+/// set it is enforced on every request.
+///
+/// # Errors
+///
+/// Returns an error if the bind address is rejected, the TCP listener cannot be
+/// bound, or `axum::serve` exits with an I/O error.
 pub async fn serve_task(cfg: MetricsConfig, shutdown: CancellationToken) -> anyhow::Result<()> {
     if !cfg.enabled {
         tracing::debug!("metrics server disabled; task exiting");
@@ -534,19 +571,24 @@ pub async fn serve_task(cfg: MetricsConfig, shutdown: CancellationToken) -> anyh
         return Ok(());
     }
 
-    let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port)
-        .parse()
-        .with_context(|| format!("invalid metrics bind address {}:{}", cfg.host, cfg.port))?;
+    let addr = resolve_listen_addr(&cfg)?;
 
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("cannot bind metrics server on {addr}"))?;
 
-    info!(addr = %addr, "metrics HTTP server listening");
+    info!(
+        addr = %addr,
+        auth = cfg.auth_token.is_some(),
+        "metrics HTTP server listening"
+    );
 
+    let state = MetricsState {
+        token: cfg.auth_token.as_deref().map(Arc::from),
+    };
     let app = Router::new()
         .route("/metrics", get(metrics_handler))
-        .with_state(());
+        .with_state(state);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { shutdown.cancelled().await })
@@ -556,8 +598,41 @@ pub async fn serve_task(cfg: MetricsConfig, shutdown: CancellationToken) -> anyh
     Ok(())
 }
 
-async fn metrics_handler(State(()): State<()>) -> impl IntoResponse {
+/// Constant-time byte comparison to avoid leaking the token via response timing.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Return `true` when no token is required, or when the request presents the
+/// matching `Authorization: Bearer <token>` header.
+fn is_authorized(headers: &HeaderMap, token: Option<&str>) -> bool {
+    let Some(expected) = token else {
+        return true;
+    };
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .is_some_and(|presented| constant_time_eq(presented.as_bytes(), expected.as_bytes()))
+}
+
+async fn metrics_handler(
+    State(state): State<MetricsState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
     use prometheus::Encoder as _;
+
+    if !is_authorized(&headers, state.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     let encoder = prometheus::TextEncoder::new();
     let mut buf = Vec::new();
 
@@ -632,5 +707,82 @@ mod register_refactor_tests {
         op.unseal_total.with_label_values(&["t"]);
         // 5 + 6 + 6 = 17 counter/gauge entries from observability.md §2.
         assert_eq!(r.gather().len(), 17);
+    }
+}
+
+#[cfg(test)]
+mod metrics_security_tests {
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    use super::{constant_time_eq, is_authorized, resolve_listen_addr};
+    use crate::config::MetricsConfig;
+
+    fn cfg(host: &str, auth_token: Option<&str>) -> MetricsConfig {
+        MetricsConfig {
+            enabled: true,
+            port: 9117,
+            host: host.to_owned(),
+            auth_token: auth_token.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn loopback_default_binds() {
+        let addr = resolve_listen_addr(&cfg("127.0.0.1", None)).expect("loopback must bind");
+        assert!(addr.ip().is_loopback());
+    }
+
+    #[test]
+    fn ipv6_loopback_binds() {
+        // IPv6 literals are bracketed in the `host:port` form.
+        let addr = resolve_listen_addr(&cfg("[::1]", None)).expect("ipv6 loopback must bind");
+        assert!(addr.ip().is_loopback());
+    }
+
+    #[test]
+    fn non_loopback_without_token_is_refused() {
+        // GAP-001: never expose the registry off-host without auth.
+        let err = resolve_listen_addr(&cfg("0.0.0.0", None))
+            .expect_err("0.0.0.0 without token must be refused");
+        assert!(err.to_string().contains("non-loopback"), "got: {err}");
+    }
+
+    #[test]
+    fn non_loopback_with_token_is_allowed() {
+        let addr =
+            resolve_listen_addr(&cfg("0.0.0.0", Some("tok"))).expect("token unlocks non-loopback");
+        assert!(!addr.ip().is_loopback());
+    }
+
+    #[test]
+    fn authorization_required_when_token_set() {
+        let mut headers = HeaderMap::new();
+        // No header → unauthorized.
+        assert!(!is_authorized(&headers, Some("s3cret")));
+        // Wrong token → unauthorized.
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer nope"),
+        );
+        assert!(!is_authorized(&headers, Some("s3cret")));
+        // Correct token → authorized.
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer s3cret"),
+        );
+        assert!(is_authorized(&headers, Some("s3cret")));
+    }
+
+    #[test]
+    fn no_token_means_open_on_loopback() {
+        let headers = HeaderMap::new();
+        assert!(is_authorized(&headers, None));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_identical_bytes() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
     }
 }

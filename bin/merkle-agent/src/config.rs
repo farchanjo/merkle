@@ -51,7 +51,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Full agent configuration, assembled from TOML + environment variables.
+///
+/// `deny_unknown_fields` is intentional: a typo'd hardening key (e.g.
+/// `enabledd` instead of `enabled`) must fail loudly instead of being silently
+/// dropped to its insecure compiled-in default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     /// Storage adapter settings.
     #[serde(default)]
@@ -111,6 +116,7 @@ pub enum KeystoreBackend {
 
 /// Configuration for the keychain / keystore adapter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeystoreConfig {
     /// Which backend to use. Default: `auto`.
     #[serde(default)]
@@ -152,6 +158,7 @@ impl KeystoreConfig {
 
 /// SQLite storage settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     /// SQLite connection URL (e.g. `sqlite:~/.local/share/merkle/vault.db`).
     #[serde(default = "default_database_url")]
@@ -193,6 +200,7 @@ impl Default for StorageConfig {
 
 /// Companion Socket settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompanionSocketConfig {
     /// Unix domain socket path.
     #[serde(default = "default_socket_path")]
@@ -233,6 +241,7 @@ pub enum McpTransport {
 
 /// MCP adapter settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpConfig {
     /// Transport mode: `stdio` or `subprocess`.
     #[serde(default)]
@@ -258,18 +267,28 @@ impl Default for McpConfig {
 
 /// Prometheus metrics HTTP server settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     /// Enable the `/metrics` endpoint.
     #[serde(default = "default_metrics_enabled")]
     pub enabled: bool,
 
-    /// TCP port to listen on (localhost only).
+    /// TCP port to listen on (loopback only unless `auth_token` is set).
     #[serde(default = "default_metrics_port")]
     pub port: u16,
 
-    /// Bind host (should always be `127.0.0.1` in production).
+    /// Bind host. Defaults to `127.0.0.1`; binding to a non-loopback address
+    /// (e.g. `0.0.0.0`) is refused unless [`auth_token`](Self::auth_token) is
+    /// configured, because the registry leaks namespace labels and secret
+    /// counts to any peer that can reach the port.
     #[serde(default = "default_metrics_host")]
     pub host: String,
+
+    /// Optional bearer token gating `/metrics`. REQUIRED before the server is
+    /// allowed to bind a non-loopback host; when set, every request must carry
+    /// `Authorization: Bearer <token>`.
+    #[serde(default)]
+    pub auth_token: Option<String>,
 }
 
 fn default_metrics_enabled() -> bool {
@@ -290,12 +309,14 @@ impl Default for MetricsConfig {
             enabled: true,
             port: 9117,
             host: "127.0.0.1".to_owned(),
+            auth_token: None,
         }
     }
 }
 
 /// OOB notifier settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OobConfig {
     /// Default channel name when none is specified by the caller.
     #[serde(default = "default_oob_channel")]
@@ -338,6 +359,7 @@ pub enum SecurityProfile {
 
 /// Top-level security settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
     /// Active security profile.
     #[serde(default)]
@@ -375,6 +397,7 @@ pub enum LogFormat {
 
 /// Logging settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     /// Log level directive (e.g. `"info"`, `"merkle=debug,sqlx=warn"`).
     #[serde(default = "default_log_level")]
@@ -663,5 +686,51 @@ format = "json"
         let toml = "[keystore]\nbackend = \"os\"\n";
         let cfg = load_from_str(toml).expect("should parse");
         assert_eq!(cfg.keystore.backend, KeystoreBackend::Os);
+    }
+
+    #[test]
+    fn typoed_hardening_key_is_rejected_not_silently_dropped() {
+        // GAP-004: a typo'd key (`enabledd` vs `enabled`) must fail loudly.
+        // Without `deny_unknown_fields` the unknown key is dropped and the
+        // field silently falls back to its insecure compiled-in default.
+        let toml = "[metrics]\nenabledd = false\n";
+        let err = load_from_str(toml).expect_err("unknown field must be rejected");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("enabledd") || msg.contains("unknown"),
+            "expected unknown-field error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_top_level_section_is_rejected() {
+        // GAP-004: a bogus/misspelled section name must not be ignored.
+        let toml = "[securityy]\nsecurity_profile = \"paranoid\"\n";
+        let err = load_from_str(toml).expect_err("unknown section must be rejected");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("securityy") || msg.contains("unknown"),
+            "expected unknown-field error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_security_field_is_rejected() {
+        // GAP-004: downgrade attempt via a typo'd security knob must fail.
+        let toml = "[security]\nlock_on_sleepp = false\n";
+        let err = load_from_str(toml).expect_err("unknown field must be rejected");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("lock_on_sleepp") || msg.contains("unknown"),
+            "expected unknown-field error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn metrics_auth_token_parses_when_present() {
+        let toml = "[metrics]\nhost = \"0.0.0.0\"\nauth_token = \"s3cret\"\n";
+        let cfg = load_from_str(toml).expect("should parse");
+        assert_eq!(cfg.metrics.auth_token.as_deref(), Some("s3cret"));
+        assert_eq!(cfg.metrics.host, "0.0.0.0");
     }
 }

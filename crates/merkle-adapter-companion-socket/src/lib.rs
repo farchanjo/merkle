@@ -39,6 +39,7 @@ pub mod router;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use tokio::net::UnixListener;
 use tracing::info;
 
@@ -96,24 +97,7 @@ impl CompanionSocketServer {
     /// Returns `Err` if the socket cannot be bound or if `axum::serve` exits
     /// with an I/O error.
     pub async fn serve(self) -> anyhow::Result<()> {
-        // Remove stale socket from previous run, if present.
-        if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path)?;
-        }
-
-        let listener = UnixListener::bind(&self.socket_path)?;
-
-        // Restrict the socket to the owner UID — only the agent's own user may
-        // even connect. Combined with the per-connection peer-credential check
-        // this is defence in depth.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(
-                &self.socket_path,
-                std::fs::Permissions::from_mode(0o600),
-            )?;
-        }
+        let listener = Self::bind_hardened(&self.socket_path)?;
 
         info!(
             socket = %self.socket_path.display(),
@@ -122,6 +106,106 @@ impl CompanionSocketServer {
 
         let app = router::build(Arc::clone(&self.app_ctx));
         serve_with_peer_cred(listener, app).await
+    }
+
+    /// Bind the Unix socket with no window in which another user could connect
+    /// to an over-permissive socket.
+    ///
+    /// The original `bind()` → `set_permissions(0600)` sequence left a TOCTOU
+    /// window: between the kernel creating the socket inode (with `0666 & !umask`
+    /// permissions) and the explicit `chmod`, a process owned by another user
+    /// could `connect()` and reach the handlers before the per-connection
+    /// peer-credential check tightened things. GAP-007 closes that window with
+    /// two independent mitigations, applied *before* the bind:
+    ///
+    /// 1. The socket's parent directory is forced to `0700`, so no other user
+    ///    can even traverse to the socket inode during the window.
+    /// 2. A restrictive `umask` (`0o177`) makes the socket itself `0600` at
+    ///    creation time; the subsequent explicit `chmod` is defence in depth.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if a stale socket cannot be removed, the parent directory
+    /// cannot be created/hardened, or the bind fails.
+    fn bind_hardened(socket_path: &std::path::Path) -> anyhow::Result<UnixListener> {
+        // Remove stale socket from previous run, if present.
+        if socket_path.exists() {
+            std::fs::remove_file(socket_path)
+                .with_context(|| format!("remove stale socket {}", socket_path.display()))?;
+        }
+
+        #[cfg(unix)]
+        harden_parent_dir(socket_path)?;
+
+        // Hold a restrictive umask across the bind; restored on drop.
+        #[cfg(unix)]
+        let _umask = UmaskGuard::owner_only();
+
+        let listener = UnixListener::bind(socket_path)
+            .with_context(|| format!("bind companion socket {}", socket_path.display()))?;
+
+        // Defence in depth: umask only clears bits, so pin the mode explicitly.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("chmod 0600 socket {}", socket_path.display()))?;
+        }
+
+        Ok(listener)
+    }
+}
+
+/// Force the socket's parent directory to `0700` (owner-only traverse) before
+/// the socket is bound, eliminating the TOCTOU window around the bind.
+#[cfg(unix)]
+fn harden_parent_dir(socket_path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    if let Some(parent) = socket_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create socket directory {}", parent.display()))?;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("chmod 0700 socket directory {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+/// RAII guard that tightens the process `umask` for the duration of a socket
+/// bind and restores the previous value on drop.
+#[cfg(unix)]
+struct UmaskGuard(libc::mode_t);
+
+#[cfg(unix)]
+impl UmaskGuard {
+    /// Set the umask to `0o177` so any file created during the guard's lifetime
+    /// is at most `0600`, capturing the previous mask for restoration.
+    fn owner_only() -> Self {
+        // SAFETY: `umask(2)` is infallible and only reads/replaces the calling
+        // process's file-mode-creation mask, returning the previous value. It
+        // has no preconditions and touches no shared or aliased memory.
+        #[expect(
+            unsafe_code,
+            reason = "umask(2) has no safe Rust wrapper; blocked on adding nix/rustix to the workspace dependency set."
+        )]
+        let prev = unsafe { libc::umask(0o177) };
+        Self(prev)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        // SAFETY: restore the previously captured mask; identical contract to
+        // `owner_only` above.
+        #[expect(
+            unsafe_code,
+            reason = "umask(2) has no safe Rust wrapper; blocked on adding nix/rustix to the workspace dependency set."
+        )]
+        unsafe {
+            libc::umask(self.0);
+        }
     }
 }
 
@@ -138,10 +222,7 @@ impl CompanionSocketServer {
 ///
 /// Returns `Err` only if the listener itself fails irrecoverably; per-connection
 /// errors are logged and do not abort the accept loop.
-pub async fn serve_with_peer_cred(
-    listener: UnixListener,
-    app: axum::Router,
-) -> anyhow::Result<()> {
+pub async fn serve_with_peer_cred(listener: UnixListener, app: axum::Router) -> anyhow::Result<()> {
     use hyper::server::conn::http1;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
@@ -189,5 +270,56 @@ pub async fn serve_with_peer_cred(
                 debug!(error = %e, "companion connection closed with error");
             }
         });
+    }
+}
+
+#[cfg(all(test, unix))]
+mod bind_hardening_tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::CompanionSocketServer;
+
+    /// GAP-007: the parent directory is locked to `0700` and the socket to
+    /// `0600`, leaving no window for another user to connect.
+    #[tokio::test]
+    async fn bind_hardened_sets_0700_parent_and_0600_socket() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("run/merkle");
+        let sock = dir.join("agent.sock");
+
+        let listener = CompanionSocketServer::bind_hardened(&sock).expect("bind");
+
+        let dir_mode = std::fs::metadata(&dir)
+            .expect("dir meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700, "parent dir must be 0700, got {dir_mode:o}");
+
+        let sock_mode = std::fs::metadata(&sock)
+            .expect("sock meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(sock_mode, 0o600, "socket must be 0600, got {sock_mode:o}");
+
+        drop(listener);
+    }
+
+    /// A stale socket file from a previous run is replaced, not an error.
+    #[tokio::test]
+    async fn bind_hardened_replaces_stale_socket() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sock = tmp.path().join("agent.sock");
+        std::fs::write(&sock, b"stale").expect("write stale");
+
+        let listener = CompanionSocketServer::bind_hardened(&sock).expect("bind over stale");
+        let sock_mode = std::fs::metadata(&sock)
+            .expect("sock meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(sock_mode, 0o600);
+        drop(listener);
     }
 }
