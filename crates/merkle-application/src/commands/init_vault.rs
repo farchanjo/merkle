@@ -24,7 +24,17 @@ use tracing::info;
 use crate::{AppContext, AppError};
 
 /// OS Keychain account for the master-wrapped VRK.
-const KEYCHAIN_ACCOUNT_VRK_MASTER: &str = "vrk-master-v1";
+///
+/// `pub` so test fixtures (in sibling crates) can seed a correctly-wrapped VRK
+/// the way `init_vault` does, keeping the keychain account name a single source
+/// of truth shared by the wrap (init) and unwrap (unseal) paths.
+pub const KEYCHAIN_ACCOUNT_VRK_MASTER: &str = "vrk-master-v1";
+/// AEAD additional-authenticated-data bound to the master-wrapped VRK.
+///
+/// BUG-005: `init_vault` (wrap) and `unseal_vault` (unwrap) MUST use the
+/// identical AAD; a mismatch makes the unwrap fail and the audit-chain HMAC key
+/// diverge. Sharing this constant prevents the two sides drifting apart.
+pub const VRK_MASTER_AAD: &[u8] = b"vault-root-key";
 /// OS Keychain account for the recovery-wrapped VRK.
 const KEYCHAIN_ACCOUNT_VRK_RECOVERY: &str = "vrk-recovery-v1";
 /// Canonical service+account reference returned in the response.
@@ -137,12 +147,7 @@ impl InitVaultCommand {
         let nonce_master: [u8; 24] = ctx.crypto.random_bytes_24();
         let wrapped_by_master = ctx
             .crypto
-            .aead_encrypt(
-                &master_key_bytes,
-                &nonce_master,
-                &vrk_bytes,
-                b"vault-root-key",
-            )
+            .aead_encrypt(&master_key_bytes, &nonce_master, &vrk_bytes, VRK_MASTER_AAD)
             .inspect_err(|_e| {
                 // Clean up keychain on failure (best-effort): drop key material.
                 let _ = std::hint::black_box((&master_key_bytes, &recovery_privkey.0));

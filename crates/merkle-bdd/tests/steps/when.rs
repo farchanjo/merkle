@@ -1058,6 +1058,11 @@ async fn when_post_init_with_body(world: &mut MerkleWorld, step: &Step) {
                 .await
                 .is_ok()
             {
+                // BUG-005: real init also persists the master-wrapped VRK, which
+                // `UnsealVaultCommand` now AEAD-decrypts. Mirror that on the
+                // success path only (the write-failure path must not seed it) so
+                // a subsequent unseal in the same scenario succeeds.
+                crate::steps::seed_master_wrapped_vrk(world.keychain.as_ref(), &fake_master).await;
                 world.last_error = None;
                 world.init_http_status = 201;
                 world.init_recovery_key =

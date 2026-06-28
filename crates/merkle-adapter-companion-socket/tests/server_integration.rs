@@ -62,6 +62,7 @@ async fn make_app_ctx() -> Arc<AppContext> {
         )
         .await
         .expect("seed test master key");
+    seed_master_wrapped_vrk(keychain.as_ref(), &test_master_key).await;
 
     let recovery_pubkey = RecoveryPublicKey::new(
         "age1test".to_owned(),
@@ -171,6 +172,33 @@ async fn http(
         .to_bytes()
         .to_vec();
     (status, bytes)
+}
+
+/// Wrap a deterministic VRK under `master_key` and store it where
+/// `UnsealVaultCommand` expects it — mirroring the blob `InitVaultCommand` persists.
+async fn seed_master_wrapped_vrk(
+    keychain: &dyn merkle_ports::keychain::Keychain,
+    master_key: &[u8; 32],
+) {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use merkle_application::commands::init_vault::{KEYCHAIN_ACCOUNT_VRK_MASTER, VRK_MASTER_AAD};
+    use merkle_domain_identity::KEYCHAIN_SERVICE;
+    use merkle_ports::Crypto as _;
+
+    let crypto = RustCryptoAdapter::new();
+    let vrk = [0x11_u8; 32];
+    let nonce = [0x22_u8; 24];
+    let ciphertext = crypto
+        .aead_encrypt(master_key, &nonce, &vrk, VRK_MASTER_AAD)
+        .expect("wrap VRK under master key");
+    let mut buf = Vec::with_capacity(nonce.len() + ciphertext.len());
+    buf.extend_from_slice(&nonce);
+    buf.extend_from_slice(&ciphertext);
+    let payload = BASE64.encode(&buf).into_bytes();
+    keychain
+        .store(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_VRK_MASTER, &payload)
+        .await
+        .expect("store master-wrapped VRK");
 }
 
 // ---------------------------------------------------------------------------

@@ -25,16 +25,21 @@
 //! vault whose `hmac_key` is still `None`. Any failure while fetching key
 //! material rolls the state back to `Sealed`.
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use merkle_domain_audit_compliance::{AppendParams, AuditEntry, AuditLog, AuditWriter, PinnedHead};
-use merkle_domain_identity::{SealedState, VaultRootKey};
+use merkle_domain_identity::{KEYCHAIN_SERVICE, SealedState, VaultRootKey};
 use merkle_ports::Crypto;
 use merkle_types::{AuditOp, AuditOutcome, Blake3Hash, NamespaceId};
 use tracing::info;
 
+use crate::commands::init_vault::{KEYCHAIN_ACCOUNT_VRK_MASTER, VRK_MASTER_AAD};
 use crate::{AppContext, AppError};
 
 /// Domain-separation label for the audit-chain HMAC key derivation (ADR-0021).
 const AUDIT_HMAC_KEY_DOMAIN: &[u8] = b"merkle vault hmac key v1";
+
+/// XChaCha20-Poly1305 nonce length (bytes) prefixed to the wrapped VRK blob.
+const NONCE_LEN: usize = 24;
 
 /// Input for unsealing the vault.
 #[derive(Debug)]
@@ -152,12 +157,37 @@ impl UnsealVaultCommand {
             .try_into()
             .map_err(|_| AppError::InvalidInput("master key has wrong length".into()))?;
 
-        // Derive VRK from the master key. In production this would AEAD-decrypt
-        // the wrapped VRK using master_key_arr; here we derive it via BLAKE3-keyed.
-        let vrk_bytes = *ctx
+        // BUG-005: reproduce the EXACT Vault Root Key by AEAD-decrypting the
+        // master-wrapped blob `init_vault` persisted. The previous placeholder
+        // (`blake3_keyed(master_key, "vault-root-key")`) produced a *different*
+        // VRK than the random one minted at init, so the audit-HMAC key derived
+        // here diverged from the genesis key — every chain verification failed on
+        // the seq-0 entry after the first unseal. Format mirrors init exactly:
+        // BASE64(nonce[24] || ciphertext), AAD = VRK_MASTER_AAD.
+        let wrapped_b64 = ctx
+            .keychain
+            .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_VRK_MASTER)
+            .await
+            .map_err(AppError::Keychain)?;
+        let wrapped = BASE64
+            .decode(&wrapped_b64)
+            .map_err(|e| AppError::InvalidInput(format!("wrapped VRK is not valid base64: {e}")))?;
+        if wrapped.len() <= NONCE_LEN {
+            return Err(AppError::InvalidInput(
+                "wrapped VRK blob is too short to contain a nonce".into(),
+            ));
+        }
+        let (nonce_bytes, ciphertext) = wrapped.split_at(NONCE_LEN);
+        let nonce: [u8; NONCE_LEN] = nonce_bytes
+            .try_into()
+            .map_err(|_| AppError::InvalidInput("wrapped VRK nonce has wrong length".into()))?;
+        let vrk_vec = ctx
             .crypto
-            .blake3_keyed(&master_key_arr, b"vault-root-key")
-            .as_bytes();
+            .aead_decrypt(&master_key_arr, &nonce, ciphertext, VRK_MASTER_AAD)
+            .map_err(|e| AppError::Domain(format!("failed to unwrap vault root key: {e}")))?;
+        let vrk_bytes: [u8; 32] = vrk_vec
+            .try_into()
+            .map_err(|_| AppError::InvalidInput("unwrapped VRK has wrong length".into()))?;
         let hmac_key = derive_audit_hmac_key(ctx.crypto.as_ref(), &vrk_bytes);
         Ok((VaultRootKey::from_bytes(vrk_bytes), hmac_key))
     }
@@ -580,10 +610,14 @@ pub(crate) mod test_support {
 
     /// Pre-load the master key and unseal the vault.
     pub(crate) async fn unseal_ctx(ctx: &AppContext) {
+        let master_key = [0xAB_u8; 32];
         ctx.keychain
-            .store("dev.fapp.merkle", "master-v1", &[0xAB_u8; 32])
+            .store("dev.fapp.merkle", "master-v1", &master_key)
             .await
             .expect("store master key");
+        // BUG-005: unseal AEAD-decrypts the init-stored wrapped VRK, so seed one
+        // in the exact format init persists (modelling an already-init'd vault).
+        seed_master_wrapped_vrk(ctx, &master_key).await;
         UnsealVaultCommand {
             preconditions: UnsealPreconditions {
                 security_profile: SecurityProfile::Balanced,
@@ -595,6 +629,34 @@ pub(crate) mod test_support {
         .execute(ctx)
         .await
         .expect("unseal should succeed");
+    }
+
+    /// Wrap a deterministic VRK under `master_key` and store it where
+    /// `unseal_vault` expects it, mirroring `init_vault`'s persisted format
+    /// (`BASE64(nonce || ciphertext)`, AAD = `VRK_MASTER_AAD`).
+    pub(crate) async fn seed_master_wrapped_vrk(ctx: &AppContext, master_key: &[u8; 32]) {
+        use base64::{Engine as _, engine::general_purpose::STANDARD as Base64};
+        use merkle_domain_identity::KEYCHAIN_SERVICE;
+        use merkle_ports::Crypto as _;
+
+        use crate::commands::init_vault::{KEYCHAIN_ACCOUNT_VRK_MASTER, VRK_MASTER_AAD};
+
+        let crypto = RustCryptoAdapter::new();
+        let vrk = [0x11_u8; 32];
+        let nonce = [0x22_u8; 24];
+        let ciphertext = crypto
+            .aead_encrypt(master_key, &nonce, &vrk, VRK_MASTER_AAD)
+            .expect("wrap vrk under master key");
+
+        let mut buf = Vec::with_capacity(nonce.len() + ciphertext.len());
+        buf.extend_from_slice(&nonce);
+        buf.extend_from_slice(&ciphertext);
+        let payload = Base64.encode(&buf).into_bytes();
+
+        ctx.keychain
+            .store(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_VRK_MASTER, &payload)
+            .await
+            .expect("store master-wrapped VRK");
     }
 
     /// Bind a namespace and store a single secret; returns `(namespace_id, handle)`.
@@ -759,11 +821,12 @@ mod tests {
         );
     }
 
-    /// BUG-05: the vault is `Unsealed` if and only if the HMAC key is present —
-    /// there is never a window where the state and key material disagree. A
-    /// keychain that fails only on a *second* retrieve must not produce a
-    /// half-unsealed context (the pre-fix code re-read the keychain after the
-    /// state had already flipped to `Unsealed`).
+    /// BUG-05 / BUG-005: the vault is `Unsealed` if and only if the HMAC key is
+    /// present — there is never a window where the state and key material
+    /// disagree. Both window-2 keychain reads (master key, then the wrapped VRK
+    /// that BUG-005 made unseal AEAD-decrypt) happen *before* the state flips to
+    /// `Unsealed`, so a failure on either one must roll the vault cleanly back to
+    /// `Sealed` with no key, never a half-unsealed context.
     #[tokio::test]
     async fn unseal_never_leaves_state_and_hmac_disagreeing() {
         let inner = MockKeychainAdapter::new();
@@ -771,6 +834,9 @@ mod tests {
             .store("dev.fapp.merkle", "master-v1", &[0xAB_u8; 32])
             .await
             .expect("store master key");
+        // Fail on the SECOND retrieve — the wrapped-VRK read in window 2. This
+        // exercises a failure that lands after the master-key read but still
+        // before the Unsealed flip.
         let keychain = Arc::new(CountingFailKeychain {
             inner,
             calls: AtomicUsize::new(0),
@@ -790,7 +856,12 @@ mod tests {
             unsealed, has_key,
             "BUG-05: Unsealed state and HMAC-key presence must never disagree"
         );
-        // With the fix, the single keychain read succeeds and the unseal commits.
-        assert!(result.is_ok() && unsealed && has_key);
+        // The window-2 VRK read fails, so the unseal must abort and roll back to
+        // a clean Sealed state — no half-unsealed window.
+        assert!(
+            result.is_err() && !unsealed && !has_key,
+            "a failed window-2 read must leave the vault Sealed with no HMAC key"
+        );
+        assert_eq!(ctx.identity.read().await.state(), SealedState::Sealed);
     }
 }

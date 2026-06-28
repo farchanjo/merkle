@@ -68,12 +68,42 @@ fn test_dek() -> [u8; 32] {
     [0xCD_u8; 32]
 }
 
-/// Pre-load the MasterKey in the mock keychain so `unseal_vault` can retrieve it.
+/// Pre-load the MasterKey **and** a correctly master-wrapped VRK in the mock
+/// keychain so `unseal_vault` can retrieve both — modelling a vault that has
+/// already run `init_vault`. BUG-005: unseal AEAD-decrypts the wrapped VRK that
+/// init persisted (it no longer recomputes a placeholder), so the wrapped blob
+/// must be present in the same `BASE64(nonce || ciphertext)` format init writes.
 async fn preload_master_key(ctx: &AppContext) {
     ctx.keychain
         .store("dev.fapp.merkle", "master-v1", &master_key_bytes())
         .await
         .expect("store master key");
+    seed_master_wrapped_vrk(ctx).await;
+}
+
+/// Wrap a deterministic VRK under the master key and store it where
+/// `unseal_vault` expects it, mirroring `init_vault`'s persisted format.
+async fn seed_master_wrapped_vrk(ctx: &AppContext) {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use merkle_application::commands::init_vault::{KEYCHAIN_ACCOUNT_VRK_MASTER, VRK_MASTER_AAD};
+    use merkle_ports::Crypto;
+
+    let crypto = RustCryptoAdapter::new();
+    let vrk = [0x11_u8; 32];
+    let nonce = [0x22_u8; 24];
+    let ciphertext = crypto
+        .aead_encrypt(&master_key_bytes(), &nonce, &vrk, VRK_MASTER_AAD)
+        .expect("wrap vrk under master key");
+
+    let mut buf = Vec::with_capacity(nonce.len() + ciphertext.len());
+    buf.extend_from_slice(&nonce);
+    buf.extend_from_slice(&ciphertext);
+    let payload = BASE64.encode(&buf).into_bytes();
+
+    ctx.keychain
+        .store(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_VRK_MASTER, &payload)
+        .await
+        .expect("store master-wrapped VRK");
 }
 
 /// Unseal the vault and return `true`.
@@ -827,6 +857,75 @@ async fn test_init_then_unseal_succeeds_keychain_naming_aligned() {
         id_guard.state(),
         SealedState::Unsealed,
         "vault must be Unsealed after successful unseal"
+    );
+}
+
+/// BUG-005 regression — a REAL `init` followed by a real `unseal` must yield an
+/// audit chain that verifies end-to-end.
+///
+/// The genesis `Init` entry (seq 0) is HMAC-signed at init time with a key
+/// derived from the random VRK. If `unseal` re-derives a *different* VRK (the
+/// old `blake3_keyed(master, …)` placeholder) its audit-HMAC key diverges from
+/// the genesis key, so the seq-0 entry fails verification and `chain_valid`
+/// becomes `Some(false)`. With `unseal` AEAD-decrypting the init-stored
+/// master-wrapped VRK, both lifecycle paths share one key and the chain is
+/// intact. This is the end-to-end assertion the prior parity test never made.
+#[tokio::test]
+async fn init_then_unseal_audit_chain_verifies_end_to_end() {
+    let storage = SqliteStorage::open("sqlite::memory:")
+        .await
+        .expect("in-memory sqlite");
+    let crypto = Arc::new(RustCryptoAdapter::new());
+    let keychain = Arc::new(MockKeychainAdapter::new());
+    let oob = Arc::new(MockOobNotifier::new());
+    let external = Arc::new(MockExternalServices::new());
+    let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
+    let recovery_pubkey = RecoveryPublicKey::new(
+        "age1test".to_owned(),
+        "SHA256:test=".to_owned(),
+        Rfc3339Timestamp::now(),
+    );
+    let identity = VaultIdentity::new(keychain_ref, recovery_pubkey);
+    let ctx = AppContext::new(Arc::new(storage), keychain, crypto, oob, external, identity);
+
+    // Real init: writes the genesis entry under the init-derived audit key and
+    // persists the master-wrapped VRK blob.
+    InitVaultCommand {
+        interactive: false,
+        security_profile: SecurityProfile::Relaxed,
+    }
+    .execute(&ctx)
+    .await
+    .expect("init must succeed on a fresh vault");
+
+    // Real unseal: must reconstruct the SAME VRK by AEAD-decrypting that blob.
+    UnsealVaultCommand {
+        preconditions: UnsealPreconditions {
+            security_profile: SecurityProfile::Relaxed,
+            mlock_succeeded: false,
+            entropy_seeded: true,
+            keychain_reachable: true,
+        },
+    }
+    .execute(&ctx)
+    .await
+    .expect("unseal must succeed after init");
+
+    let out = QueryAuditQuery {
+        filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: true,
+    }
+    .execute(&ctx)
+    .await
+    .expect("query_audit");
+
+    assert_eq!(
+        out.chain_valid,
+        Some(true),
+        "BUG-005: genesis Init entry must verify under the unseal-derived audit \
+         key; got chain_valid={:?} over {} entries",
+        out.chain_valid,
+        out.entries.len(),
     );
 }
 
