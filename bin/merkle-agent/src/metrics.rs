@@ -543,7 +543,13 @@ fn resolve_listen_addr(cfg: &MetricsConfig) -> anyhow::Result<SocketAddr> {
         .parse()
         .with_context(|| format!("invalid metrics bind address {}:{}", cfg.host, cfg.port))?;
 
-    if !addr.ip().is_loopback() && cfg.auth_token.is_none() {
+    // An empty or whitespace-only token provides no real authentication:
+    // constant_time_eq("","") trivially accepts any peer that sends `Bearer `.
+    // Normalise it to None so the non-loopback guard treats it identically to
+    // a missing token (GAP-001).
+    let effective_token = cfg.auth_token.as_deref().filter(|t| !t.trim().is_empty());
+
+    if !addr.ip().is_loopback() && effective_token.is_none() {
         anyhow::bail!(
             "refusing to bind metrics endpoint to non-loopback host {} without \
              an auth token: the registry leaks namespace labels and secret \
@@ -577,14 +583,22 @@ pub async fn serve_task(cfg: MetricsConfig, shutdown: CancellationToken) -> anyh
         .await
         .with_context(|| format!("cannot bind metrics server on {addr}"))?;
 
+    // Normalise empty/whitespace-only tokens to None so MetricsState and the
+    // log line reflect the same effective auth state as resolve_listen_addr.
+    let effective_token: Option<Arc<str>> = cfg
+        .auth_token
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+        .map(Arc::from);
+
     info!(
         addr = %addr,
-        auth = cfg.auth_token.is_some(),
+        auth = effective_token.is_some(),
         "metrics HTTP server listening"
     );
 
     let state = MetricsState {
-        token: cfg.auth_token.as_deref().map(Arc::from),
+        token: effective_token,
     };
     let app = Router::new()
         .route("/metrics", get(metrics_handler))
@@ -616,6 +630,12 @@ fn is_authorized(headers: &HeaderMap, token: Option<&str>) -> bool {
     let Some(expected) = token else {
         return true;
     };
+    // An empty/whitespace-only token is a misconfiguration: constant_time_eq
+    // would accept any peer that sends `Bearer ` (empty bearer). Deny all
+    // requests rather than granting open access (GAP-001 defense-in-depth).
+    if expected.trim().is_empty() {
+        return false;
+    }
     headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -784,5 +804,68 @@ mod metrics_security_tests {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"ab"));
+    }
+
+    // --- GAP-001 regression tests ---
+
+    /// An empty token string offers no authentication (constant_time_eq("","")
+    /// trivially matches every empty bearer), so the non-loopback bind guard
+    /// must treat it identically to `auth_token = None`.
+    #[test]
+    fn non_loopback_with_empty_token_is_refused() {
+        let err = resolve_listen_addr(&cfg("0.0.0.0", Some("")))
+            .expect_err("0.0.0.0 with empty token must be refused");
+        assert!(
+            err.to_string().contains("non-loopback"),
+            "expected non-loopback error, got: {err}"
+        );
+    }
+
+    /// Whitespace-only tokens are equally useless as authentication material.
+    #[test]
+    fn non_loopback_with_whitespace_token_is_refused() {
+        let err = resolve_listen_addr(&cfg("0.0.0.0", Some("   ")))
+            .expect_err("0.0.0.0 with whitespace-only token must be refused");
+        assert!(
+            err.to_string().contains("non-loopback"),
+            "expected non-loopback error, got: {err}"
+        );
+    }
+
+    /// An empty configured token must never authorize any request — including
+    /// one that sends `Bearer ` (empty bearer), which previously matched via
+    /// `constant_time_eq("", "") == true`.
+    #[test]
+    fn is_authorized_rejects_empty_configured_token() {
+        let mut headers = HeaderMap::new();
+
+        // No header at all → denied.
+        assert!(
+            !is_authorized(&headers, Some("")),
+            "empty token + no header must deny"
+        );
+
+        // Empty bearer → denied.
+        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer "));
+        assert!(
+            !is_authorized(&headers, Some("")),
+            "empty token + empty bearer must deny"
+        );
+
+        // Non-empty bearer → still denied; empty expected never matches anything.
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer sometoken"),
+        );
+        assert!(
+            !is_authorized(&headers, Some("")),
+            "empty token + non-empty bearer must deny"
+        );
+
+        // Whitespace-only token behaves the same.
+        assert!(
+            !is_authorized(&headers, Some("   ")),
+            "whitespace-only token + any header must deny"
+        );
     }
 }
