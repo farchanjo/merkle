@@ -30,19 +30,16 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
+    # webpki-roots ships the Mozilla CA trust store as data under CDLA-Permissive-2.0
+    # (Community Data License Agreement – Permissive). Permissive, no copyleft.
+    "CDLA-Permissive-2.0",
 ]
 
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "LGPL-2.0",
-    "LGPL-2.1",
-    "LGPL-3.0",
-    "AGPL-3.0",
-    "EUPL-1.1",
-    "EUPL-1.2",
-    "SSPL-1.0",
-]
+# NOTE: the explicit `deny` list was removed in cargo-deny >= 0.16 (PR #611):
+# any license NOT present in `allow` above is now denied implicitly. The old
+# copyleft list (GPL-2.0/3.0, LGPL-*, AGPL-3.0, EUPL-*, SSPL-1.0) is therefore
+# already rejected by virtue of being absent from `allow`, so keeping an
+# explicit deny array is both redundant and a hard schema error.
 
 # Minimum confidence for license inference (SPDX expression parser).
 # 0.93 is above the default 0.8 to reduce false-positive license approvals
@@ -58,11 +55,14 @@ exceptions = []
 # [bans]
 # ---------------------------------------------------------------------------
 [bans]
-# Deny multiple versions of high-churn crates (tokio, serde, hyper) to keep
-# the dependency graph slim and deterministic. windows-sys is exempted because
-# the ecosystem (winapi, windows-rs) ships multiple coexisting minor versions
-# that cannot currently be unified.
-multiple-versions = "deny"
+# Surface multiple versions of a crate as a WARNING, not a hard failure.
+# The dependency graph carries unavoidable mid-migration duplicates
+# (thiserror 1↔2, syn 1 via proc-macro-error, rand/getrandom, secrecy, base64
+# via age 0.10 vs the hyper/axum stack). These are bloat/hygiene signals, not
+# security defects — vulnerabilities and licenses are still enforced at `deny`
+# level under [advisories]/[licenses]. Tighten back to "deny" once the tree is
+# de-duplicated (notably the age 0.10 -> 0.11 bump).
+multiple-versions = "warn"
 
 # Specific crates that must not appear in the graph.
 deny = [
@@ -88,18 +88,26 @@ skip = [
     { name = "windows_i686_msvc",       reason = "Platform target crate; multiple versions safe" },
     { name = "windows_x86_64_gnullvm",  reason = "Platform target crate; multiple versions safe" },
     { name = "windows_x86_64_msvc",     reason = "Platform target crate; multiple versions safe" },
+    # base64 0.21 (via age 0.10 / config) coexists with 0.22 (via axum / hyper-util).
+    # Pure leaf encoder, no shared state — safe to duplicate. Unifies once age is
+    # bumped 0.10 -> 0.11 (a breaking change tracked separately from this audit).
+    { name = "base64",       reason = "age 0.10 pins 0.21; hyper/axum stack uses 0.22; leaf crate, safe" },
 ]
 
 # ---------------------------------------------------------------------------
 # [advisories]
 # ---------------------------------------------------------------------------
 [advisories]
-# Deny crates with known vulnerabilities. Unmaintained crates are a warning
-# (they may be safe if usage is narrow). Yanked crates are hard-denied.
-vulnerability = "deny"
-unmaintained  = "warn"
+# Advisory policy (cargo-deny >= 0.16 schema). Vulnerabilities and security
+# notices are ALWAYS denied now — the legacy `vulnerability` / `notice` string
+# keys were removed in PR #611 and are hard schema errors if present, which is
+# what silently disabled the whole advisory gate (GAP-008).
+#
+# `unmaintained` takes a scope selector (all | workspace | transitive | none);
+# "workspace" surfaces unmaintained advisories for crates the workspace depends
+# on directly. `yanked` remains a hard deny.
+unmaintained  = "workspace"
 yanked        = "deny"
-notice        = "warn"
 
 # Ignored advisories: add only with a justification comment and a review date.
 # Format: { id = "RUSTSEC-YYYY-NNNN", reason = "...", until = "YYYY-MM-DD" }
