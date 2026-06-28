@@ -139,6 +139,7 @@ pub async fn write_tempfile(
         namespace_id,
         handle: body.handle,
         dek_bytes,
+        use_token: body.use_token,
     };
 
     match cmd.execute(&ctx).await {
@@ -183,6 +184,7 @@ pub async fn write_fifo(
         namespace_id,
         handle: body.handle,
         dek_bytes,
+        use_token: body.use_token,
     };
 
     match cmd.execute(&ctx).await {

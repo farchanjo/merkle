@@ -8,13 +8,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
 use tokio::process::Child;
 use tokio::sync::RwLock;
 
+use merkle_domain_access_mediation::error::DomainError;
+use merkle_domain_access_mediation::use_token::UseToken;
 use merkle_domain_audit_compliance::AuditLog;
 use merkle_domain_identity::VaultIdentity;
 use merkle_ports::{Crypto, ExternalServices, Keychain, OobNotifier, Storage};
-use merkle_types::UuidV7;
+use merkle_types::{Handle, UuidV7};
 
 /// Shared handles to all driven ports, plus the in-memory sealed-state cache.
 ///
@@ -87,6 +90,20 @@ pub struct AppContext {
     /// Dropping `AppContext` implicitly drops all `Child` handles, which
     /// delivers `SIGKILL` to every still-running tunnel.
     pub active_port_forwards: Arc<RwLock<HashMap<UuidV7, Child>>>,
+
+    /// In-memory registry of issued use-tokens, keyed by their opaque base64url
+    /// string (the value returned to the MCP transport by `UseTokenCommand`).
+    ///
+    /// This is the enforcement point for the single-use + 60-second-TTL
+    /// invariants of [`UseToken`]: `UseTokenCommand` registers a freshly minted
+    /// token here, and the materialization commands (`write_tempfile`,
+    /// `write_fifo`) validate-and-consume it via
+    /// [`AppContext::consume_use_token`] before any plaintext is produced.
+    ///
+    /// Durability is intentionally omitted (ADR-0024): tokens live at most 60
+    /// seconds and are scoped to the daemon process, so a restart simply
+    /// invalidates every outstanding token — the fail-closed default.
+    pub use_tokens: Arc<RwLock<HashMap<String, UseToken>>>,
 }
 
 impl AppContext {
@@ -113,6 +130,7 @@ impl AppContext {
             hmac_key: Arc::new(RwLock::new(None)),
             audit_log: Arc::new(RwLock::new(AuditLog::new())),
             active_port_forwards: Arc::new(RwLock::new(HashMap::new())),
+            use_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -170,6 +188,51 @@ impl AppContext {
     pub async fn require_hmac_key(&self) -> Result<[u8; 32], crate::AppError> {
         let guard = self.hmac_key.read().await;
         guard.ok_or(crate::AppError::VaultSealed)
+    }
+
+    /// Register a freshly issued [`UseToken`] in the in-memory registry.
+    ///
+    /// The token is keyed by its opaque base64url string (its [`Display`]),
+    /// which is the same value returned to the MCP transport. Re-registering a
+    /// token with an identical key overwrites the previous (unconsumed) entry.
+    ///
+    /// [`Display`]: std::fmt::Display
+    pub async fn register_use_token(&self, token: UseToken) {
+        let key = token.to_string();
+        self.use_tokens.write().await.insert(key, token);
+    }
+
+    /// Validate and consume a use-token, enforcing the single-use, TTL, and
+    /// handle-binding invariants before any plaintext is materialized.
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::AppError::InvalidInput`] — the token is unknown (never issued
+    ///   or evicted) or its bound handle does not match `handle`.
+    /// - [`crate::AppError::Domain`] — the token has expired ([`DomainError::TokenExpired`])
+    ///   or was already consumed ([`DomainError::TokenAlreadyConsumed`], i.e. a replay).
+    pub async fn consume_use_token(
+        &self,
+        token_str: &str,
+        handle: &Handle,
+    ) -> Result<(), crate::AppError> {
+        let mut registry = self.use_tokens.write().await;
+        let token = registry
+            .get_mut(token_str)
+            .ok_or_else(|| crate::AppError::InvalidInput("unknown use-token".to_owned()))?;
+        if token.handle != *handle {
+            return Err(crate::AppError::InvalidInput(
+                "use-token handle mismatch".to_owned(),
+            ));
+        }
+        if token.expires_at.inner() <= Utc::now() {
+            return Err(crate::AppError::Domain(
+                DomainError::TokenExpired.to_string(),
+            ));
+        }
+        token
+            .consume()
+            .map_err(|e| crate::AppError::Domain(e.to_string()))
     }
 }
 
