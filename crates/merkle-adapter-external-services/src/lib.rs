@@ -20,10 +20,12 @@
 //! HTTP auth values are applied as `Authorization` headers inside this adapter;
 //! only the auth variant (bearer/basic/none) is recorded in tracing spans.
 
+mod destination_policy;
 mod http;
 mod mock;
 mod ssh;
 
+pub use destination_policy::DestinationPolicy;
 pub use mock::MockExternalServices;
 
 use std::time::Duration;
@@ -38,6 +40,25 @@ use merkle_ports::{
 
 /// Timeout applied to each SSH exec operation when none is configured.
 const SSH_DEFAULT_TIMEOUT: Duration = ssh::DEFAULT_TIMEOUT;
+
+/// Overall per-request timeout for the shared HTTP client.
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Connection-establishment timeout for the shared HTTP client.
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Build the hardened shared HTTP client: rustls, explicit request + connect
+/// timeouts, and redirects disabled (a 3xx must not be auto-followed to an
+/// unvalidated — possibly internal — host with the credential still attached).
+fn build_http_client() -> Client {
+    Client::builder()
+        .use_rustls_tls()
+        .timeout(HTTP_REQUEST_TIMEOUT)
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("reqwest::Client build should never fail under normal conditions")
+}
 
 /// Production implementation of [`ExternalServices`].
 ///
@@ -63,11 +84,13 @@ const SSH_DEFAULT_TIMEOUT: Duration = ssh::DEFAULT_TIMEOUT;
 #[derive(Debug)]
 pub struct ExternalServicesAdapter {
     http_client: Client,
+    http_policy: DestinationPolicy,
     ssh_timeout: Duration,
 }
 
 impl ExternalServicesAdapter {
-    /// Create an adapter with default settings (SSH timeout: 30 s).
+    /// Create an adapter with default settings (SSH timeout: 30 s, strict HTTP
+    /// egress policy).
     ///
     /// # Panics
     ///
@@ -78,19 +101,30 @@ impl ExternalServicesAdapter {
         Self::with_ssh_timeout(SSH_DEFAULT_TIMEOUT)
     }
 
-    /// Create an adapter with a custom SSH exec timeout.
+    /// Create an adapter with a custom SSH exec timeout and the strict HTTP
+    /// egress policy.
     ///
     /// # Panics
     ///
     /// Panics if the underlying `reqwest::Client` cannot be built.
     #[must_use]
     pub fn with_ssh_timeout(ssh_timeout: Duration) -> Self {
-        let http_client = Client::builder()
-            .use_rustls_tls()
-            .build()
-            .expect("reqwest::Client build should never fail under normal conditions");
+        Self::with_config(ssh_timeout, DestinationPolicy::strict())
+    }
+
+    /// Create an adapter with an explicit SSH timeout and HTTP egress policy.
+    ///
+    /// Production callers should use [`DestinationPolicy::strict`]; the
+    /// permissive policy exists only for local mock-server integration tests.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying `reqwest::Client` cannot be built.
+    #[must_use]
+    pub fn with_config(ssh_timeout: Duration, http_policy: DestinationPolicy) -> Self {
         Self {
-            http_client,
+            http_client: build_http_client(),
+            http_policy,
             ssh_timeout,
         }
     }
@@ -120,6 +154,6 @@ impl ExternalServices for ExternalServicesAdapter {
         req: HttpRequestSpec,
         auth: HttpAuth,
     ) -> Result<HttpResponse, ExternalError> {
-        http::http_request(&self.http_client, req, auth).await
+        http::http_request(&self.http_client, &self.http_policy, req, auth).await
     }
 }
