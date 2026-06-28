@@ -113,7 +113,7 @@ keyring          = { version = "3.6", features = ["sync-secret-service"] }
 rpassword        = "7.4"
 
 # MCP adapter
-rmcp             = { version = "0.3", features = ["server", "macros"] }
+rmcp             = { version = "1.7", features = ["server", "macros"] }
 
 # HTTP / IPC
 axum             = { version = "0.8", features = ["macros"] }

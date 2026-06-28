@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use base64::Engine as _;
 use rmcp::{
     ErrorData,
-    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content},
     schemars::{self, JsonSchema},
     tool,
@@ -218,7 +218,7 @@ fn resolve_namespace(session: &crate::session::SessionState) -> Result<Uuid, Err
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-#[expect(
+#[allow(
     missing_docs,
     reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
 )]

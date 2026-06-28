@@ -5,7 +5,7 @@
 
 use rmcp::{
     ErrorData,
-    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content},
     schemars::{self, JsonSchema},
     tool,
@@ -42,7 +42,7 @@ impl DiagnosticsTools {
 // Tool implementation
 // ---------------------------------------------------------------------------
 
-#[expect(
+#[allow(
     missing_docs,
     reason = "rmcp proc-macro generates the associated fn; doc lives on the #[tool] description attribute"
 )]

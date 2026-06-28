@@ -60,7 +60,7 @@ use rmcp::{
     ErrorData, ServerHandler,
     handler::server::router::tool::ToolRouter,
     model::{
-        GetPromptRequestParam, GetPromptResult, ListPromptsResult, PaginatedRequestParam,
+        GetPromptRequestParams, GetPromptResult, ListPromptsResult, PaginatedRequestParams,
         ServerInfo,
     },
     service::RequestContext,
@@ -151,23 +151,20 @@ impl MerkleMcpServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for MerkleMcpServer {
     fn get_info(&self) -> ServerInfo {
-        use rmcp::model::{Implementation, ProtocolVersion, ServerCapabilities};
-        ServerInfo {
-            protocol_version: ProtocolVersion::default(),
-            capabilities: ServerCapabilities::builder()
+        use rmcp::model::{Implementation, ServerCapabilities};
+        // rmcp 1.8: `InitializeResult`/`ServerInfo` is `#[non_exhaustive]` — build
+        // it through the fluent constructor instead of a struct literal.
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_prompts()
                 .build(),
-            server_info: Implementation {
-                name: "merkle".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-            },
-            instructions: Some(
-                "Merkle Vault Agent MCP adapter. \
-                 Call vault.bind to associate a Namespace before using secret tools."
-                    .to_owned(),
-            ),
-        }
+        )
+        .with_server_info(Implementation::new("merkle", env!("CARGO_PKG_VERSION")))
+        .with_instructions(
+            "Merkle Vault Agent MCP adapter. \
+             Call vault.bind to associate a Namespace before using secret tools.",
+        )
     }
 
     async fn on_initialized(&self, _context: rmcp::service::NotificationContext<rmcp::RoleServer>) {
@@ -176,7 +173,7 @@ impl ServerHandler for MerkleMcpServer {
 
     async fn list_prompts(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListPromptsResult, ErrorData> {
         Ok(MerklePrompts::list(request))
@@ -184,7 +181,7 @@ impl ServerHandler for MerkleMcpServer {
 
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<GetPromptResult, ErrorData> {
         MerklePrompts::get(request)

@@ -17,7 +17,7 @@
 use rmcp::{
     ErrorData,
     model::{
-        GetPromptRequestParam, GetPromptResult, ListPromptsResult, PaginatedRequestParam, Prompt,
+        GetPromptRequestParams, GetPromptResult, ListPromptsResult, PaginatedRequestParams, Prompt,
         PromptArgument, PromptMessage, PromptMessageRole,
     },
 };
@@ -33,16 +33,15 @@ impl MerklePrompts {
     /// Build the `ListPromptsResult` returned for every `prompts/list`
     /// request. The catalog is static — pagination is a no-op (no cursor).
     #[must_use]
-    pub fn list(_request: Option<PaginatedRequestParam>) -> ListPromptsResult {
-        ListPromptsResult {
-            next_cursor: None,
-            prompts: vec![
-                Self::merkle_doctor_def(),
-                Self::merkle_show_def(),
-                Self::merkle_reveal_def(),
-                Self::merkle_rollback_def(),
-            ],
-        }
+    pub fn list(_request: Option<PaginatedRequestParams>) -> ListPromptsResult {
+        // rmcp 1.8: `ListPromptsResult` is paginated/non-exhaustive — use the
+        // generated `with_all_items` constructor (sets next_cursor + meta).
+        ListPromptsResult::with_all_items(vec![
+            Self::merkle_doctor_def(),
+            Self::merkle_show_def(),
+            Self::merkle_reveal_def(),
+            Self::merkle_rollback_def(),
+        ])
     }
 
     /// Resolve a single `prompts/get` request to a `GetPromptResult`.
@@ -51,7 +50,7 @@ impl MerklePrompts {
     ///
     /// Returns [`ErrorData::invalid_params`] when the prompt name is not
     /// known or a required argument is missing.
-    pub fn get(request: GetPromptRequestParam) -> Result<GetPromptResult, ErrorData> {
+    pub fn get(request: GetPromptRequestParams) -> Result<GetPromptResult, ErrorData> {
         let args = request.arguments.unwrap_or_default();
         match request.name.as_str() {
             "merkle-doctor" => Ok(Self::merkle_doctor_body()),
@@ -88,13 +87,11 @@ impl MerklePrompts {
                 "Show public metadata for a merkle Secret. No plaintext is returned. \
                  Maps to vault.describe.",
             ),
-            Some(vec![PromptArgument {
-                name: "handle".to_owned(),
-                description: Some(
-                    "Secret handle URI (vault://<label>/<category>/<name>).".to_owned(),
-                ),
-                required: Some(true),
-            }]),
+            Some(vec![
+                PromptArgument::new("handle")
+                    .with_description("Secret handle URI (vault://<label>/<category>/<name>).")
+                    .with_required(true),
+            ]),
         )
     }
 
@@ -107,20 +104,12 @@ impl MerklePrompts {
                  sensitivity.",
             ),
             Some(vec![
-                PromptArgument {
-                    name: "handle".to_owned(),
-                    description: Some(
-                        "Secret handle URI (vault://<label>/<category>/<name>).".to_owned(),
-                    ),
-                    required: Some(true),
-                },
-                PromptArgument {
-                    name: "purpose".to_owned(),
-                    description: Some(
-                        "Human-readable reason recorded in the audit log.".to_owned(),
-                    ),
-                    required: Some(false),
-                },
+                PromptArgument::new("handle")
+                    .with_description("Secret handle URI (vault://<label>/<category>/<name>).")
+                    .with_required(true),
+                PromptArgument::new("purpose")
+                    .with_description("Human-readable reason recorded in the audit log.")
+                    .with_required(false),
             ]),
         )
     }
@@ -133,18 +122,12 @@ impl MerklePrompts {
                  Confirmation. Creates a new version containing the old value.",
             ),
             Some(vec![
-                PromptArgument {
-                    name: "handle".to_owned(),
-                    description: Some(
-                        "Secret handle URI (vault://<label>/<category>/<name>).".to_owned(),
-                    ),
-                    required: Some(true),
-                },
-                PromptArgument {
-                    name: "version".to_owned(),
-                    description: Some("Version number to restore (positive integer).".to_owned()),
-                    required: Some(true),
-                },
+                PromptArgument::new("handle")
+                    .with_description("Secret handle URI (vault://<label>/<category>/<name>).")
+                    .with_required(true),
+                PromptArgument::new("version")
+                    .with_description("Version number to restore (positive integer).")
+                    .with_required(true),
             ]),
         )
     }
@@ -219,10 +202,12 @@ impl MerklePrompts {
     }
 
     fn single_user_message(description: &str, body: &str) -> GetPromptResult {
-        GetPromptResult {
-            description: Some(description.to_owned()),
-            messages: vec![PromptMessage::new_text(PromptMessageRole::User, body)],
-        }
+        // rmcp 1.8: `GetPromptResult` is non-exhaustive — construct via `new`
+        // (required `messages`) then set the optional `description` field.
+        let mut result =
+            GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, body)]);
+        result.description = Some(description.to_owned());
+        result
     }
 }
 
@@ -272,11 +257,8 @@ mod tests {
 
     #[test]
     fn doctor_get_has_one_user_message() {
-        let result = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-doctor".to_owned(),
-            arguments: None,
-        })
-        .expect("doctor prompt must resolve");
+        let result = MerklePrompts::get(GetPromptRequestParams::new("merkle-doctor"))
+            .expect("doctor prompt must resolve");
         assert_eq!(result.messages.len(), 1);
         assert!(matches!(result.messages[0].role, PromptMessageRole::User));
     }
@@ -284,11 +266,9 @@ mod tests {
     #[test]
     fn show_get_inlines_handle() {
         let args = args_with(&[("handle", "vault://prod/ssh/bastion")]);
-        let result = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-show".to_owned(),
-            arguments: Some(args),
-        })
-        .expect("show prompt must resolve with handle");
+        let result =
+            MerklePrompts::get(GetPromptRequestParams::new("merkle-show").with_arguments(args))
+                .expect("show prompt must resolve with handle");
         let body = render_user_text(&result);
         assert!(body.contains("vault://prod/ssh/bastion"));
         assert!(body.contains("vault.describe"));
@@ -297,11 +277,9 @@ mod tests {
     #[test]
     fn reveal_get_defaults_purpose_when_absent() {
         let args = args_with(&[("handle", "vault://prod/password/db-root")]);
-        let result = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-reveal".to_owned(),
-            arguments: Some(args),
-        })
-        .expect("reveal prompt must resolve");
+        let result =
+            MerklePrompts::get(GetPromptRequestParams::new("merkle-reveal").with_arguments(args))
+                .expect("reveal prompt must resolve");
         let body = render_user_text(&result);
         assert!(body.contains("slash-invoked reveal"));
         assert!(body.contains("\"operator_confirmation\": true"));
@@ -313,11 +291,9 @@ mod tests {
             ("handle", "vault://prod/password/db-root"),
             ("purpose", "manual admin reset"),
         ]);
-        let result = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-reveal".to_owned(),
-            arguments: Some(args),
-        })
-        .expect("reveal prompt must resolve");
+        let result =
+            MerklePrompts::get(GetPromptRequestParams::new("merkle-reveal").with_arguments(args))
+                .expect("reveal prompt must resolve");
         let body = render_user_text(&result);
         assert!(body.contains("manual admin reset"));
     }
@@ -325,22 +301,18 @@ mod tests {
     #[test]
     fn rollback_get_requires_both_args() {
         let args = args_with(&[("handle", "vault://prod/token/github-ci")]);
-        let err = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-rollback".to_owned(),
-            arguments: Some(args),
-        })
-        .expect_err("rollback must error when version is absent");
+        let err =
+            MerklePrompts::get(GetPromptRequestParams::new("merkle-rollback").with_arguments(args))
+                .expect_err("rollback must error when version is absent");
         assert!(err.message.contains("version"));
     }
 
     #[test]
     fn rollback_get_emits_both_tool_calls() {
         let args = args_with(&[("handle", "vault://prod/token/github-ci"), ("version", "2")]);
-        let result = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-rollback".to_owned(),
-            arguments: Some(args),
-        })
-        .expect("rollback prompt must resolve");
+        let result =
+            MerklePrompts::get(GetPromptRequestParams::new("merkle-rollback").with_arguments(args))
+                .expect("rollback prompt must resolve");
         let body = render_user_text(&result);
         assert!(body.contains("vault.history"));
         assert!(body.contains("vault.rotate"));
@@ -349,21 +321,17 @@ mod tests {
 
     #[test]
     fn show_get_rejects_missing_handle() {
-        let err = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-show".to_owned(),
-            arguments: Some(serde_json::Map::new()),
-        })
+        let err = MerklePrompts::get(
+            GetPromptRequestParams::new("merkle-show").with_arguments(serde_json::Map::new()),
+        )
         .expect_err("show must error when handle missing");
         assert!(err.message.contains("handle"));
     }
 
     #[test]
     fn get_unknown_prompt_returns_invalid_params() {
-        let err = MerklePrompts::get(GetPromptRequestParam {
-            name: "merkle-bogus".to_owned(),
-            arguments: None,
-        })
-        .expect_err("unknown prompt must fail");
+        let err = MerklePrompts::get(GetPromptRequestParams::new("merkle-bogus"))
+            .expect_err("unknown prompt must fail");
         assert!(err.message.contains("unknown prompt"));
     }
 

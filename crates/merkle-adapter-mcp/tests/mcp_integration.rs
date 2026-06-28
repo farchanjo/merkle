@@ -24,7 +24,7 @@ use merkle_adapter_mcp::{
     tools::use_token::VaultUseInput,
 };
 use merkle_companion_client::CompanionSocketClient;
-use rmcp::{ServerHandler as _, handler::server::tool::Parameters};
+use rmcp::{ServerHandler as _, handler::server::wrapper::Parameters};
 
 // ---------------------------------------------------------------------------
 // Test helpers
