@@ -514,6 +514,40 @@ fn verify_full_rewritten_pinned_head_mac_mismatch() {
 }
 
 // ---------------------------------------------------------------------------
+// MERK-003(c): deleting EVERY audit entry while keeping a genuine pinned head
+// (full-log truncation) must NOT verify as Intact — the empty-log branch
+// previously early-returned Intact without consulting the pinned head.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_full_full_log_truncation_keeps_head_is_not_intact() {
+    // Build a real 3-entry chain and capture its authenticated pinned head.
+    let mut full = AuditLog::new();
+    let pinned = fill_log(&mut full, 3);
+    assert_eq!(
+        ChainVerifier::verify_full(&full, &pinned, &HMAC_KEY).outcome,
+        ChainOutcome::Intact,
+        "sanity: the intact chain verifies clean"
+    );
+
+    // Attacker deletes every `audit_entries` row but leaves the `pinned_head`
+    // singleton (still carrying its genuine head MAC). On a full-range pass the
+    // verifier must detect the full truncation rather than reporting Intact.
+    let empty = AuditLog::new();
+    let result = ChainVerifier::verify_full(&empty, &pinned, &HMAC_KEY);
+
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::TruncationDetected {
+            last_pinned_seq: pinned.head_seq,
+            last_actual_seq: 0,
+        },
+        "deleting all entries while keeping the pinned head must be flagged as truncation, not Intact"
+    );
+    assert!(!result.is_intact());
+}
+
+// ---------------------------------------------------------------------------
 // Proptest: N appended entries → verify_full == Intact
 // ---------------------------------------------------------------------------
 

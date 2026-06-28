@@ -424,18 +424,31 @@ impl ChainVerifier {
         let entries = slice_entries(log, from_id.as_ref(), to_id.as_ref());
 
         if entries.is_empty() {
-            return ChainVerifyResult {
-                outcome: ChainOutcome::Intact,
-                head_hash: log.head().copied(),
-                entries_checked: 0,
-                anomalies_detected: 0,
-                // No entry was walked, so no HMAC was actually verified.
-                hmac_checked: false,
-                range_from_id: from_id,
-                range_to_id: to_id,
-                triggered_by: None,
-                verified_at,
-            };
+            // MERK-003: an empty slice on a SUB-RANGE pass is legitimately Intact
+            // — the requested `[from_id, to_id]` window simply matched no entries.
+            // But a FULL-RANGE pass that finds an empty log while a pinned head
+            // exists means every `audit_entries` row was deleted (full
+            // truncation). `verify_full` is only ever reached with a present
+            // pinned head, and a pinned head is only written after a real append,
+            // so an empty full-range log is always a truncation. Fall through to
+            // the head-commitment check below (with an empty `WalkState`) so the
+            // surviving pinned head is surfaced as TruncationDetected /
+            // HeadHashMismatch / HeadMacMismatch instead of being reported Intact
+            // (the prior early-return was the delete-all-rows-keep-head bypass).
+            if from_id.is_some() || to_id.is_some() {
+                return ChainVerifyResult {
+                    outcome: ChainOutcome::Intact,
+                    head_hash: log.head().copied(),
+                    entries_checked: 0,
+                    anomalies_detected: 0,
+                    // No entry was walked, so no HMAC was actually verified.
+                    hmac_checked: false,
+                    range_from_id: from_id,
+                    range_to_id: to_id,
+                    triggered_by: None,
+                    verified_at,
+                };
+            }
         }
 
         // Genesis anchor (full-range only): a complete chain MUST begin at the
