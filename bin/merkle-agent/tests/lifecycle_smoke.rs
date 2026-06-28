@@ -41,6 +41,7 @@ mod unix_tests {
         let db_path = dir.path().join("vault.db");
         let audit_log = dir.path().join("audit.jsonl");
         let audit_head = dir.path().join("audit_head.json");
+        let keystore = dir.path().join("keystore.age");
         let cfg_path = dir.path().join("config.toml");
 
         let toml = format!(
@@ -52,6 +53,10 @@ audit_head_path = {audit_head:?}
 
 [companion_socket]
 path = {sock:?}
+
+[keystore]
+backend   = 'file'
+file_path = {keystore:?}
 
 [metrics]
 enabled = false
@@ -66,6 +71,7 @@ format = 'text'
             audit_log = audit_log.display().to_string(),
             audit_head = audit_head.display().to_string(),
             sock = sock_path.display().to_string(),
+            keystore = keystore.display().to_string(),
         );
 
         std::fs::write(&cfg_path, toml).expect("failed to write temp config");
@@ -114,6 +120,14 @@ format = 'text'
         let mut child = Command::new(&bin)
             .arg("--config")
             .arg(&cfg_path)
+            // File keystore needs a passphrase; GAP-003 needs a real recovery
+            // recipient. Both are env-only and let the agent reach a sealed,
+            // socket-listening state in an isolated temp keystore.
+            .env("MERKLE_KEYSTORE_PASSPHRASE", "lifecycle-test-pass")
+            .env(
+                "MERKLE_RECOVERY_RECIPIENT",
+                "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
+            )
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

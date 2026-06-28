@@ -176,6 +176,9 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
                 "high",
                 "--category",
                 "password",
+                // High sensitivity requires an `env`-keyed tag (domain invariant).
+                "--tag",
+                "env:prod",
             ],
             Some(SECRET_PAYLOAD),
         )

@@ -100,11 +100,27 @@ impl AgentProcessHandle {
 
         let database_url = format!("sqlite://{}", db_path.display());
 
+        // Isolate the keystore in the temp dir: force the file backend (the OS
+        // keychain probe is unavailable/flaky outside a login session) and
+        // supply its passphrase, so the agent never touches the real
+        // `~/.local/share/merkle/keystore.age`.
+        let keystore_path = tempdir.path().join("keystore.age");
+
         let mut cmd = Command::new(&agent_bin);
         cmd.env("MERKLE__STORAGE__DATABASE_URL", &database_url)
             .env("MERKLE__STORAGE__AUDIT_LOG_PATH", &audit_log_path)
             .env("MERKLE__STORAGE__AUDIT_HEAD_PATH", &audit_head_path)
             .env("MERKLE__COMPANION_SOCKET__PATH", &socket_path)
+            .env("MERKLE__KEYSTORE__BACKEND", "file")
+            .env("MERKLE_KEYSTORE_PATH", &keystore_path)
+            .env("MERKLE_KEYSTORE_PASSPHRASE", "e2e-test-passphrase")
+            // GAP-003: the agent refuses to seed a placeholder recovery
+            // recipient; supply a real (test) age recipient so it can build the
+            // initial identity.
+            .env(
+                "MERKLE_RECOVERY_RECIPIENT",
+                "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
+            )
             .env("MERKLE__METRICS__ENABLED", "false")
             .env("MERKLE__LOGGING__LEVEL", "warn")
             .env("MERKLE__MCP__TRANSPORT", "stdio")
