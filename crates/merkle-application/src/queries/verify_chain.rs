@@ -57,7 +57,15 @@ impl VerifyChainQuery {
             AppError::Domain("no pinned head found — vault may be uninitialized".into())
         })?;
 
-        let result = ChainVerifier::verify_full(&log, &pinned_head, &hmac_key);
+        // When an operator has pinned a trusted baseline (ADR-0029), verify
+        // anchored to it: structural integrity across the whole log, HMAC
+        // authenticity from the anchor forward. Otherwise run a full pass.
+        let result = match ctx.storage.audit_baseline().await? {
+            Some(baseline) => {
+                ChainVerifier::verify_from_baseline(&log, &pinned_head, &baseline, &hmac_key)
+            }
+            None => ChainVerifier::verify_full(&log, &pinned_head, &hmac_key),
+        };
 
         info!(outcome = ?result.outcome, entries = result.entries_checked, "verify_chain: complete");
         Ok(VerifyChainOutput { result })

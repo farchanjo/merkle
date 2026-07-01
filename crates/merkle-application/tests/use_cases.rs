@@ -126,6 +126,54 @@ async fn unseal(ctx: &AppContext) -> bool {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// ADR-0029 — re-baseline pins a trusted baseline, requires confirmation, and
+/// keeps the chain verifying via the baseline-anchored path.
+#[tokio::test]
+async fn test_set_audit_baseline_pins_and_verifies() {
+    use merkle_application::commands::set_audit_baseline::SetAuditBaselineCommand;
+    use merkle_application::queries::verify_chain::VerifyChainQuery;
+    use merkle_domain_audit_compliance::ChainOutcome;
+
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await, "vault must unseal");
+
+    // No baseline pinned yet.
+    assert!(
+        ctx.storage.audit_baseline().await.expect("query").is_none(),
+        "a fresh vault has no baseline"
+    );
+
+    // An unconfirmed request must be rejected.
+    let unconfirmed = SetAuditBaselineCommand {
+        reason: "no confirmation".into(),
+        confirmed: false,
+    };
+    assert!(
+        unconfirmed.execute(&ctx).await.is_err(),
+        "re-baseline must require explicit operator confirmation"
+    );
+
+    // A confirmed re-baseline pins a baseline anchored on a fresh marker.
+    let cmd = SetAuditBaselineCommand {
+        reason: "recovery: quarantine pre-rotation prefix".into(),
+        confirmed: true,
+    };
+    let out = cmd.execute(&ctx).await.expect("rebaseline must succeed");
+    assert!(
+        ctx.storage.audit_baseline().await.expect("query").is_some(),
+        "a baseline must be pinned after re-baseline"
+    );
+
+    // Verification now runs the baseline-anchored path and stays Intact.
+    let verify = VerifyChainQuery.execute(&ctx).await.expect("verify");
+    assert_eq!(verify.result.outcome, ChainOutcome::Intact);
+    assert_eq!(
+        verify.result.baseline_seq,
+        Some(out.baseline_seq),
+        "verification must be anchored to the pinned baseline"
+    );
+}
+
 /// T01 — put_secret + list_secrets round-trip.
 #[tokio::test]
 async fn test_put_and_list_secrets_round_trip() {

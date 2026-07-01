@@ -26,6 +26,7 @@ pub mod revoke_tempfile;
 pub mod rotate_secret;
 pub mod seal_vault;
 pub mod search_secrets;
+pub mod set_audit_baseline;
 pub mod spawn_command;
 pub mod ssh_copy;
 pub mod ssh_exec;
