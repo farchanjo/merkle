@@ -34,6 +34,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
 
+pub mod audit_baseline;
 pub mod audit_entry;
 pub mod audit_log;
 pub mod audit_query;
@@ -44,6 +45,7 @@ pub mod query_model;
 pub mod verifier;
 pub mod writer;
 
+pub use audit_baseline::AuditBaseline;
 pub use audit_entry::AuditEntry;
 pub use audit_log::AuditLog;
 pub use audit_query::AuditQuery;

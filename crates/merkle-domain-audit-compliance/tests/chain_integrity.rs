@@ -14,8 +14,8 @@
 //! 10. Proptest: N appended entries → `verify_full == Intact`.
 
 use merkle_domain_audit_compliance::{
-    AppendParams, AuditLog, AuditQuery, AuditQueryModel, AuditWriter, ChainOutcome, ChainVerifier,
-    PinnedHead, audit_entry::AuditEntry,
+    AppendParams, AuditBaseline, AuditLog, AuditQuery, AuditQueryModel, AuditWriter, ChainOutcome,
+    ChainVerifier, PinnedHead, audit_entry::AuditEntry,
 };
 use merkle_types::{
     AuditEntryId, AuditOp, AuditOutcome, Blake3Hash, NamespaceId, Rfc3339Timestamp, hash::GENESIS,
@@ -545,6 +545,196 @@ fn verify_full_full_log_truncation_keeps_head_is_not_intact() {
         "deleting all entries while keeping the pinned head must be flagged as truncation, not Intact"
     );
     assert!(!result.is_intact());
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0029: trusted audit baseline (key-provenance recovery)
+// ---------------------------------------------------------------------------
+
+/// A key that differs from `HMAC_KEY`, modelling the since-rotated VRK whose
+/// derived audit key signed the poisoned prefix.
+const WRONG_KEY: [u8; 32] = [0x11; 32];
+
+/// Append `poisoned` entries under `WRONG_KEY` then `good` entries under
+/// `HMAC_KEY` into one log — the exact shape of the real incident: a prefix
+/// whose HMAC tags were written under a VRK the vault no longer holds, followed
+/// by a tail written under the current key. The hash chain links across the
+/// boundary because the chain hash is key-independent. Returns the entries, the
+/// final pinned head (authenticated under `HMAC_KEY`), and the first good entry
+/// (the intended baseline anchor).
+fn append_mixed(poisoned: usize, good: usize) -> (Vec<AuditEntry>, PinnedHead, AuditEntry) {
+    let mut log = AuditLog::new();
+    let ns = test_namespace();
+    let mut entries = Vec::with_capacity(poisoned + good);
+    let mut head = PinnedHead::new(GENESIS, 0, AuditEntryId::new(), Rfc3339Timestamp::now());
+    for i in 0..(poisoned + good) {
+        let key: &[u8; 32] = if i < poisoned { &WRONG_KEY } else { &HMAC_KEY };
+        let (entry, pinned) = AuditWriter::append(
+            &mut log,
+            AppendParams::new(AuditOp::Put, AuditOutcome::Allow, ns),
+            key,
+        )
+        .expect("append must succeed");
+        entries.push(entry);
+        head = pinned;
+    }
+    let first_good = entries[poisoned].clone();
+    (entries, head, first_good)
+}
+
+/// Build an authenticated baseline anchored at `anchor`, committing to
+/// `entry_count`, signed under `HMAC_KEY`.
+fn baseline_at(anchor: &AuditEntry, entry_count: u64) -> AuditBaseline {
+    AuditBaseline::new(
+        anchor.seq,
+        anchor.id,
+        anchor.current_hash,
+        entry_count,
+        "recovery: quarantine pre-rotation prefix (ADR-0029)".to_owned(),
+        Rfc3339Timestamp::now(),
+    )
+    .with_mac(&HMAC_KEY)
+}
+
+#[test]
+fn verify_from_baseline_intact_over_poisoned_prefix() {
+    let (entries, pinned, first_good) = append_mixed(3, 7);
+
+    // Sanity: a plain full pass fails at the first poisoned entry (genesis here).
+    let log = AuditLog::from_persisted(entries.clone());
+    assert_eq!(
+        ChainVerifier::verify_full(&log, &pinned, &HMAC_KEY).outcome,
+        ChainOutcome::HmacMismatch {
+            entry_id: entries[0].id
+        },
+        "the poisoned prefix must break a plain verify_full"
+    );
+
+    // A baseline anchored at the first good entry restores a green chain.
+    let baseline = baseline_at(&first_good, 10);
+    let result = ChainVerifier::verify_from_baseline(&log, &pinned, &baseline, &HMAC_KEY);
+
+    assert_eq!(result.outcome, ChainOutcome::Intact, "got {:?}", result.outcome);
+    assert_eq!(result.baseline_seq, Some(first_good.seq));
+    assert_eq!(result.quarantined_below, 3, "the 3 poisoned entries are quarantined");
+    assert_eq!(result.entries_checked, 10);
+    assert!(result.hmac_checked, "the tail is HMAC-authenticated");
+}
+
+#[test]
+fn verify_from_baseline_rejects_unauthenticated_baseline() {
+    let (entries, pinned, first_good) = append_mixed(3, 7);
+    let log = AuditLog::from_persisted(entries);
+
+    // A baseline signed under the wrong key must not be trusted.
+    let forged = AuditBaseline::new(
+        first_good.seq,
+        first_good.id,
+        first_good.current_hash,
+        10,
+        "forged".to_owned(),
+        Rfc3339Timestamp::now(),
+    )
+    .with_mac(&WRONG_KEY);
+
+    let result = ChainVerifier::verify_from_baseline(&log, &pinned, &forged, &HMAC_KEY);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::BaselineMacMismatch {
+            baseline_id: first_good.id
+        },
+        "an unauthenticated baseline must fail closed"
+    );
+    assert!(!result.is_intact());
+}
+
+#[test]
+fn verify_from_baseline_still_authenticates_the_tail() {
+    let (mut entries, pinned, first_good) = append_mixed(3, 7);
+
+    // Strip the HMAC on an entry ABOVE the baseline; it must still be caught,
+    // because the tail is authenticated even in a baseline pass.
+    let victim_id = entries[6].id;
+    entries[6] = AuditEntry {
+        hmac: None,
+        ..entries[6].clone()
+    };
+    let log = AuditLog::from_persisted(entries);
+    let baseline = baseline_at(&first_good, 10);
+
+    let result = ChainVerifier::verify_from_baseline(&log, &pinned, &baseline, &HMAC_KEY);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::MissingHmac {
+            entry_id: victim_id
+        },
+        "tampering above the baseline must still be rejected"
+    );
+}
+
+#[test]
+fn verify_from_baseline_still_catches_structural_tamper_below_baseline() {
+    let (mut entries, pinned, first_good) = append_mixed(3, 7);
+
+    // Mutate the CONTENT of a quarantined (below-baseline) entry without fixing
+    // its stored hash. HMAC is not checked there, but the structural hash walk
+    // still runs over the whole log and must catch it.
+    entries[1] = AuditEntry {
+        op: AuditOp::Delete,
+        ..entries[1].clone()
+    };
+    let log = AuditLog::from_persisted(entries);
+    let baseline = baseline_at(&first_good, 10);
+
+    let result = ChainVerifier::verify_from_baseline(&log, &pinned, &baseline, &HMAC_KEY);
+    assert!(
+        matches!(result.outcome, ChainOutcome::BrokenAtEntry { .. }),
+        "content tamper below the baseline must still break the hash chain, got {:?}",
+        result.outcome
+    );
+}
+
+#[test]
+fn verify_from_baseline_missing_anchor_is_rejected() {
+    let (entries, pinned, first_good) = append_mixed(3, 7);
+    let log = AuditLog::from_persisted(entries);
+
+    // Authenticated baseline (correct seq) but committing to the wrong hash: the
+    // anchor entry present at that seq will not match, so the pin no longer
+    // anchors this log.
+    let mismatched = AuditBaseline::new(
+        first_good.seq,
+        first_good.id,
+        GENESIS,
+        10,
+        "stale anchor".to_owned(),
+        Rfc3339Timestamp::now(),
+    )
+    .with_mac(&HMAC_KEY);
+
+    let result = ChainVerifier::verify_from_baseline(&log, &pinned, &mismatched, &HMAC_KEY);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::BaselineEntryMissing {
+            baseline_seq: first_good.seq
+        },
+        "a baseline whose anchor hash no longer matches must be rejected"
+    );
+}
+
+#[test]
+fn verify_from_baseline_requires_a_key() {
+    let (entries, pinned, first_good) = append_mixed(3, 7);
+    let log = AuditLog::from_persisted(entries);
+    let baseline = baseline_at(&first_good, 10);
+
+    let result = ChainVerifier::verify_from_baseline(&log, &pinned, &baseline, &[]);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::HmacKeyUnavailable,
+        "a baseline pass is keyed-only; an empty key must fail"
+    );
+    assert!(!result.hmac_checked);
 }
 
 // ---------------------------------------------------------------------------

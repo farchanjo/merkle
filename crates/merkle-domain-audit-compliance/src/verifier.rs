@@ -15,6 +15,7 @@
 use merkle_types::{AuditEntryId, Blake3Hash, HmacSignature, Rfc3339Timestamp, hash::GENESIS};
 
 use crate::{
+    audit_baseline::AuditBaseline,
     audit_entry::AuditEntry,
     audit_log::AuditLog,
     chain_verify_result::{ChainOutcome, ChainVerifyResult},
@@ -68,6 +69,8 @@ fn broken_at(
         hmac_checked: false,
         range_from_id: from_id,
         range_to_id: to_id,
+        baseline_seq: None,
+        quarantined_below: 0,
         triggered_by: None,
         verified_at,
     }
@@ -132,6 +135,8 @@ fn check_hash(
             hmac_checked: false,
             range_from_id: from_id,
             range_to_id: to_id,
+            baseline_seq: None,
+            quarantined_below: 0,
             triggered_by: None,
             verified_at,
         }));
@@ -178,6 +183,8 @@ fn check_hmac(
             hmac_checked: false,
             range_from_id: from_id,
             range_to_id: to_id,
+            baseline_seq: None,
+            quarantined_below: 0,
             triggered_by: None,
             verified_at,
         }));
@@ -198,6 +205,8 @@ fn check_hmac(
             hmac_checked: false,
             range_from_id: from_id,
             range_to_id: to_id,
+            baseline_seq: None,
+            quarantined_below: 0,
             triggered_by: None,
             verified_at,
         }));
@@ -260,6 +269,8 @@ fn check_genesis_anchor(
         hmac_checked: false,
         range_from_id: None,
         range_to_id: None,
+        baseline_seq: None,
+        quarantined_below: 0,
         triggered_by: None,
         verified_at,
     })
@@ -306,6 +317,8 @@ fn check_head_commitment(
                 hmac_checked: false,
                 range_from_id: None,
                 range_to_id: None,
+                baseline_seq: None,
+                quarantined_below: 0,
                 triggered_by: None,
                 verified_at,
             });
@@ -325,6 +338,8 @@ fn check_head_commitment(
             hmac_checked: false,
             range_from_id: None,
             range_to_id: None,
+            baseline_seq: None,
+            quarantined_below: 0,
             triggered_by: None,
             verified_at,
         });
@@ -345,12 +360,135 @@ fn check_head_commitment(
             hmac_checked: false,
             range_from_id: None,
             range_to_id: None,
+            baseline_seq: None,
+            quarantined_below: 0,
             triggered_by: None,
             verified_at,
         });
     }
 
     None
+}
+
+/// Build an early-return result for a baseline pass that fails before the walk
+/// begins (a missing/short key or an unauthenticated baseline). ADR-0029.
+fn baseline_early_reject(
+    outcome: ChainOutcome,
+    log: &AuditLog,
+    baseline: &AuditBaseline,
+    verified_at: Rfc3339Timestamp,
+) -> ChainVerifyResult {
+    ChainVerifyResult {
+        outcome,
+        head_hash: log.head().copied(),
+        entries_checked: 0,
+        anomalies_detected: 1,
+        hmac_checked: false,
+        range_from_id: None,
+        range_to_id: None,
+        baseline_seq: Some(baseline.baseline_seq),
+        quarantined_below: 0,
+        triggered_by: None,
+        verified_at,
+    }
+}
+
+/// Walk the full log for a baseline-anchored pass: structural (hash-link)
+/// verification for every entry, HMAC authentication only at/after
+/// `baseline.baseline_seq`, then anchor + head-commitment checks. ADR-0029.
+fn walk_from_baseline(
+    log: &AuditLog,
+    pinned_head: &PinnedHead,
+    baseline: &AuditBaseline,
+    key: &[u8; 32],
+    verified_at: Rfc3339Timestamp,
+) -> ChainVerifyResult {
+    let entries = slice_entries(log, None, None);
+
+    // A baseline pass still verifies the whole structural chain from genesis,
+    // so a removed genesis prefix is caught even below the trust anchor.
+    if let Some(result) = check_genesis_anchor(&entries, log, verified_at) {
+        return result;
+    }
+
+    let mut state = WalkState::new();
+    let mut quarantined_below: u64 = 0;
+    let mut anchor_ok = false;
+
+    for entry in &entries {
+        state.entries_checked += 1;
+
+        let prev_for_hashing = if state.first_entry {
+            entry.prev_hash.unwrap_or(GENESIS)
+        } else {
+            state.last_hash
+        };
+
+        if !state.first_entry {
+            if let Err(r) = check_link(entry, &state, None, None, verified_at) {
+                return *r;
+            }
+        }
+
+        if let Err(r) = check_hash(entry, &prev_for_hashing, &state, None, None, verified_at) {
+            return *r;
+        }
+
+        // HMAC authenticity is required only at/after the baseline; the
+        // quarantined prefix is structurally verified but not authenticated.
+        if entry.seq >= baseline.baseline_seq {
+            if let Err(r) = check_hmac(entry, Some(key), &state, None, None, verified_at) {
+                return *r;
+            }
+        } else {
+            quarantined_below += 1;
+        }
+
+        if entry.seq == baseline.baseline_seq {
+            anchor_ok = entry.current_hash == baseline.baseline_hash;
+        }
+
+        state.last_hash = entry.current_hash;
+        state.last_seq = Some(entry.seq);
+        state.first_entry = false;
+    }
+
+    // The anchor entry must exist at baseline_seq and commit to the pinned hash.
+    if !anchor_ok {
+        return ChainVerifyResult {
+            outcome: ChainOutcome::BaselineEntryMissing {
+                baseline_seq: baseline.baseline_seq,
+            },
+            head_hash: Some(state.last_hash),
+            entries_checked: state.entries_checked,
+            anomalies_detected: state.anomalies_detected + 1,
+            hmac_checked: false,
+            range_from_id: None,
+            range_to_id: None,
+            baseline_seq: Some(baseline.baseline_seq),
+            quarantined_below,
+            triggered_by: None,
+            verified_at,
+        };
+    }
+
+    if let Some(result) = check_head_commitment(&state, pinned_head, Some(key), verified_at) {
+        return result;
+    }
+
+    ChainVerifyResult {
+        outcome: ChainOutcome::Intact,
+        head_hash: Some(state.last_hash),
+        entries_checked: state.entries_checked,
+        anomalies_detected: state.anomalies_detected,
+        hmac_checked: true,
+        range_from_id: None,
+        range_to_id: None,
+        baseline_seq: Some(baseline.baseline_seq),
+        quarantined_below,
+        triggered_by: None,
+        verified_at,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +551,8 @@ impl ChainVerifier {
                         hmac_checked: false,
                         range_from_id: from_id,
                         range_to_id: to_id,
+                        baseline_seq: None,
+                        quarantined_below: 0,
                         triggered_by: None,
                         verified_at,
                     };
@@ -445,6 +585,8 @@ impl ChainVerifier {
                     hmac_checked: false,
                     range_from_id: from_id,
                     range_to_id: to_id,
+                    baseline_seq: None,
+                    quarantined_below: 0,
                     triggered_by: None,
                     verified_at,
                 };
@@ -513,8 +655,60 @@ impl ChainVerifier {
             hmac_checked,
             range_from_id: from_id,
             range_to_id: to_id,
+            baseline_seq: None,
+            quarantined_below: 0,
             triggered_by: None,
             verified_at,
         }
+    }
+
+    /// Verify the chain anchored to a trusted [`AuditBaseline`] (ADR-0029).
+    ///
+    /// Structural (hash-link + `current_hash`) integrity is verified across the
+    /// **whole** log — so content tampering, reordering, insertion, or
+    /// truncation is still caught anywhere, including below the anchor. HMAC
+    /// authenticity is required only for entries at or after
+    /// `baseline.baseline_seq`; entries below it are counted in
+    /// `quarantined_below` and their tags are not examined.
+    ///
+    /// The baseline itself is authenticated under `hmac_key` before it is
+    /// trusted (`BaselineMacMismatch` on failure), the anchor entry must exist
+    /// and commit to `baseline_hash` (`BaselineEntryMissing` otherwise), and the
+    /// usual head-commitment check runs against `pinned_head`.
+    ///
+    /// This pass is keyed-only: an empty or wrong-length `hmac_key` yields
+    /// [`ChainOutcome::HmacKeyUnavailable`].
+    #[must_use]
+    pub fn verify_from_baseline(
+        log: &AuditLog,
+        pinned_head: &PinnedHead,
+        baseline: &AuditBaseline,
+        hmac_key: &[u8],
+    ) -> ChainVerifyResult {
+        let verified_at = Rfc3339Timestamp::now();
+
+        // Keyed-only: a baseline pass must authenticate the anchor and the tail.
+        let Ok(key) = <&[u8; 32]>::try_from(hmac_key) else {
+            return baseline_early_reject(
+                ChainOutcome::HmacKeyUnavailable,
+                log,
+                baseline,
+                verified_at,
+            );
+        };
+
+        // Authenticate the operator-pinned baseline BEFORE trusting its fields.
+        if !baseline.verify_mac(key) {
+            return baseline_early_reject(
+                ChainOutcome::BaselineMacMismatch {
+                    baseline_id: baseline.baseline_id,
+                },
+                log,
+                baseline,
+                verified_at,
+            );
+        }
+
+        walk_from_baseline(log, pinned_head, baseline, key, verified_at)
     }
 }

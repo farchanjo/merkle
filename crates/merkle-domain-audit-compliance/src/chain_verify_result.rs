@@ -111,6 +111,30 @@ pub enum ChainOutcome {
         /// The entry that failed canonical serialization.
         entry_id: AuditEntryId,
     },
+
+    /// The trusted [`crate::AuditBaseline`]'s authentication tag does not match
+    /// the recomputed MAC under the supplied key (ADR-0029).
+    ///
+    /// A baseline-anchored pass authenticates the operator-pinned checkpoint
+    /// **before** trusting `baseline_seq` / `baseline_hash`. A missing or
+    /// mismatching tag fails closed: the baseline cannot be used as a trust
+    /// anchor unless it was pinned under the current audit HMAC key.
+    BaselineMacMismatch {
+        /// The anchor entry id claimed by the baseline.
+        baseline_id: AuditEntryId,
+    },
+
+    /// A baseline-anchored pass could not find the anchor entry, or the anchor
+    /// entry's `current_hash` did not match the baseline's committed hash
+    /// (ADR-0029).
+    ///
+    /// Either the log does not contain an entry at `baseline_seq`, or the entry
+    /// present there commits to a different hash than the authenticated
+    /// baseline — both mean the baseline no longer anchors this log.
+    BaselineEntryMissing {
+        /// The `seq` the baseline anchors to.
+        baseline_seq: u64,
+    },
 }
 
 /// Full result of a [`crate::ChainVerifier`] pass.
@@ -136,6 +160,13 @@ pub struct ChainVerifyResult {
     pub range_from_id: Option<AuditEntryId>,
     /// Last entry in the verified range (`None` for a full-log pass).
     pub range_to_id: Option<AuditEntryId>,
+    /// When this pass was anchored to a trusted [`crate::AuditBaseline`]
+    /// (ADR-0029), the `seq` of that anchor; `None` for a plain full/range pass.
+    pub baseline_seq: Option<u64>,
+    /// Number of entries below `baseline_seq` that were structurally
+    /// (hash-chain) verified but whose HMAC tags were intentionally not
+    /// authenticated (quarantined prefix). Always `0` for a non-baseline pass.
+    pub quarantined_below: u64,
     /// Identifier of the subsystem that initiated this verification run.
     ///
     /// Well-known values: `"doctor"`, `"remote_sync"`, `"boot"`, `"restore"`.

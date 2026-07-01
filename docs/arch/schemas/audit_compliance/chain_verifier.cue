@@ -3,7 +3,9 @@
 package audit_compliance
 
 // #VerifyOutcome is the closed result enum returned by any verification operation.
-#VerifyOutcome: "intact" | "broken_at_entry" | "hmac_mismatch"
+// "baseline_mac_mismatch" / "baseline_entry_missing" belong to the trusted
+// baseline pass (ADR-0029).
+#VerifyOutcome: "intact" | "broken_at_entry" | "hmac_mismatch" | "baseline_mac_mismatch" | "baseline_entry_missing"
 
 // #VerifyRangeInput specifies the inclusive entry range for a partial chain verification.
 #VerifyRangeInput: {
@@ -35,6 +37,12 @@ package audit_compliance
 	range_from_id?:      #UuidV7
 	// range_to_id is the last entry UUIDv7 in the verified range (inclusive, for partial checks).
 	range_to_id?:        #UuidV7
+	// baseline_seq is set when the pass was anchored to a trusted AuditBaseline
+	// (ADR-0029); it is the seq of the trust anchor.
+	baseline_seq?:       int & >=0
+	// quarantined_below counts entries below baseline_seq that were structurally
+	// verified but whose HMAC tags were intentionally not authenticated.
+	quarantined_below?:  int & >=0
 }
 
 // #ChainVerifier is the DomainService that validates the Hash Chain of AuditEntries.
