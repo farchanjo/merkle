@@ -38,6 +38,7 @@ merkle-domain-access-mediation = { workspace = true }
 merkle-domain-audit-compliance = { workspace = true }
 merkle-domain-backup-recovery   = { workspace = true }
 merkle-domain-secret-storage    = { workspace = true }
+merkle-domain-policy-permissions = { workspace = true }
 axum               = { workspace = true }
 hyper              = { workspace = true }
 hyper-util         = { version = "0.1", features = ["service", "tokio"] }
