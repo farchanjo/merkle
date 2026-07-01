@@ -114,13 +114,15 @@ fn extract_impl(stream: &tokio::net::UnixStream) -> io::Result<PeerCredentials> 
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn extract_impl(_stream: &tokio::net::UnixStream) -> io::Result<PeerCredentials> {
-    // Windows named-pipe PID check is not yet implemented.
-    // Return a stub that passes the UID check by pretending to be current uid.
-    Ok(PeerCredentials {
-        uid: current_uid(),
-        pid: None,
-        program_path: None,
-    })
+    // No verified peer-credential source is implemented for this platform.
+    // Fail CLOSED — never fabricate `current_uid()` here: doing so would make
+    // `verify()` trivially pass for *any* connecting process, a complete
+    // authentication bypass of the same-UID invariant. Denying is the only
+    // safe default until a kernel-backed credential source is wired.
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "peer-credential authentication is not supported on this platform",
+    ))
 }
 
 // ---------------------------------------------------------------------------

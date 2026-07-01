@@ -31,6 +31,7 @@ use merkle_domain_identity::{KEYCHAIN_SERVICE, SealedState, VaultRootKey};
 use merkle_ports::Crypto;
 use merkle_types::{AuditOp, AuditOutcome, Blake3Hash, NamespaceId};
 use tracing::info;
+use zeroize::Zeroizing;
 
 use crate::commands::init_vault::{KEYCHAIN_ACCOUNT_VRK_MASTER, VRK_MASTER_AAD};
 use crate::{AppContext, AppError};
@@ -153,9 +154,11 @@ impl UnsealVaultCommand {
             .await
             .map_err(AppError::Keychain)?;
 
-        let master_key_arr: [u8; 32] = master_key_bytes
-            .try_into()
-            .map_err(|_| AppError::InvalidInput("master key has wrong length".into()))?;
+        // Zeroizing so the plaintext master key is wiped when this frame drops.
+        let master_key_arr = Zeroizing::new(
+            <[u8; 32]>::try_from(master_key_bytes)
+                .map_err(|_| AppError::InvalidInput("master key has wrong length".into()))?,
+        );
 
         // BUG-005: reproduce the EXACT Vault Root Key by AEAD-decrypting the
         // master-wrapped blob `init_vault` persisted. The previous placeholder
@@ -185,11 +188,14 @@ impl UnsealVaultCommand {
             .crypto
             .aead_decrypt(&master_key_arr, &nonce, ciphertext, VRK_MASTER_AAD)
             .map_err(|e| AppError::Domain(format!("failed to unwrap vault root key: {e}")))?;
-        let vrk_bytes: [u8; 32] = vrk_vec
-            .try_into()
-            .map_err(|_| AppError::InvalidInput("unwrapped VRK has wrong length".into()))?;
+        // Zeroizing so the plaintext VRK is wiped when this frame drops; the copy
+        // handed to VaultRootKey has its own zeroize-on-drop.
+        let vrk_bytes = Zeroizing::new(
+            <[u8; 32]>::try_from(vrk_vec)
+                .map_err(|_| AppError::InvalidInput("unwrapped VRK has wrong length".into()))?,
+        );
         let hmac_key = derive_audit_hmac_key(ctx.crypto.as_ref(), &vrk_bytes);
-        Ok((VaultRootKey::from_bytes(vrk_bytes), hmac_key))
+        Ok((VaultRootKey::from_bytes(*vrk_bytes), hmac_key))
     }
 }
 
@@ -287,14 +293,18 @@ pub(crate) async fn audit_commit(
     Ok(())
 }
 
-/// Persist an audit entry followed by its pinned head.
+/// Persist an audit entry and its MAC-authenticated pinned head atomically.
+///
+/// Uses the single-transaction `commit_audit_entry` so a crash can never leave
+/// the pinned head un-authenticated (`hmac_head` NULL) between the entry insert
+/// and the head MAC write — which would fail verification closed until the next
+/// successful append.
 async fn persist_audit(
     ctx: &AppContext,
     entry: &AuditEntry,
     pinned: &PinnedHead,
 ) -> Result<(), AppError> {
-    ctx.storage.append_audit_entry(entry).await?;
-    ctx.storage.update_pinned_head(pinned).await?;
+    ctx.storage.commit_audit_entry(entry, pinned).await?;
     Ok(())
 }
 

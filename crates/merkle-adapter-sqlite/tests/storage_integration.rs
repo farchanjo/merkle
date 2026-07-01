@@ -428,6 +428,35 @@ async fn pinned_head_updated_after_append() {
 }
 
 #[tokio::test]
+async fn commit_audit_entry_pins_head_with_mac_atomically() {
+    let db = open_memory().await;
+    let ns_id = NamespaceId::new();
+    let entry = make_audit_entry(0, ns_id, None);
+
+    // A head carrying a real MAC, as AuditWriter::append produces.
+    let mut head = PinnedHead::new(entry.current_hash, 0, entry.id, Rfc3339Timestamp::now());
+    head.hmac_head = Some(dummy_hmac());
+
+    db.commit_audit_entry(&entry, &head).await.expect("commit");
+
+    // Entry persisted AND the head carries its MAC in the same commit — never a
+    // NULL-mac window that would fail verification closed.
+    let entries = db.read_audit(&AuditQuery::default()).await.expect("read");
+    assert_eq!(entries.len(), 1);
+    let fetched = db
+        .pinned_head()
+        .await
+        .expect("pinned_head")
+        .expect("head present after commit");
+    assert_eq!(fetched.head_seq, 0);
+    assert_eq!(
+        fetched.hmac_head,
+        Some(dummy_hmac()),
+        "commit_audit_entry must persist the head MAC atomically, not NULL"
+    );
+}
+
+#[tokio::test]
 async fn update_pinned_head_overwrites() {
     let db = open_memory().await;
     let ns_id = NamespaceId::new();

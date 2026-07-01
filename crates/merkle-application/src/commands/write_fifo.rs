@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use merkle_domain_access_mediation::fifo::Fifo;
 use merkle_types::{AuditOp, AuditOutcome, Handle, NamespaceId, Rfc3339Timestamp};
 use tracing::info;
+use zeroize::Zeroizing;
 
 use crate::{AppContext, AppError};
 
@@ -83,12 +84,14 @@ impl WriteFifoCommand {
 
         let mut cipher_with_tag = blob.ciphertext.clone();
         cipher_with_tag.extend_from_slice(&blob.aead_tag);
-        let plaintext = ctx.crypto.aead_decrypt(
+        // Zeroizing so the plaintext is wiped once the writer task drops it (or
+        // on any early return before the task is spawned).
+        let plaintext = Zeroizing::new(ctx.crypto.aead_decrypt(
             &self.dek_bytes,
             &blob.nonce,
             &cipher_with_tag,
             &blob.associated_data,
-        )?;
+        )?);
 
         // Generate opaque token and build FIFO path.
         let token_bytes = ctx.crypto.random_bytes_32();
@@ -137,7 +140,7 @@ impl WriteFifoCommand {
                     .write(true)
                     .open(&fifo_path_clone)
                 {
-                    let _ = f.write_all(&plaintext);
+                    let _ = f.write_all(plaintext.as_slice());
                 }
                 let _ = std::fs::remove_file(&fifo_path_clone);
             });

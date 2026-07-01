@@ -144,9 +144,22 @@ async fn resolve(host: &str, port: u16) -> Result<Vec<IpAddr>, ExternalError> {
 pub(crate) fn is_forbidden_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_forbidden_v4(v4),
-        IpAddr::V6(v6) => v6
-            .to_ipv4_mapped()
-            .map_or_else(|| is_forbidden_v6(v6), is_forbidden_v4),
+        IpAddr::V6(v6) => {
+            // RFC 4291 IPv4-mapped (`::ffff:0:0/96`) — unwrap and screen the v4.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_forbidden_v4(v4);
+            }
+            // RFC 6052 NAT64 well-known prefix (`64:ff9b::/96`) also embeds a
+            // v4 address in the low 32 bits, but in a non-mapped form that
+            // `to_ipv4_mapped` does not recognize. A NAT64/DNS64 gateway on the
+            // path transparently routes it to the embedded v4 target, so an
+            // address such as `64:ff9b::a9fe:a9fe` (169.254.169.254) would
+            // otherwise reach the cloud metadata service. Screen the embedded v4.
+            if let Some(v4) = nat64_embedded_v4(v6) {
+                return is_forbidden_v4(v4);
+            }
+            is_forbidden_v6(v6)
+        }
     }
 }
 
@@ -158,13 +171,56 @@ fn is_forbidden_v4(ip: Ipv4Addr) -> bool {
         || ip.is_broadcast()    // 255.255.255.255
         || ip.is_unspecified()  // 0.0.0.0
         || ip.is_documentation()
-        || is_shared_v4(ip) // 100.64.0.0/10 CGNAT
+        || is_shared_v4(ip)         // 100.64.0.0/10 CGNAT
+        || is_this_network_v4(ip)   // 0.0.0.0/8  RFC 791 §3.2 "this network"
+        || is_ietf_protocol_v4(ip)  // 192.0.0.0/24 RFC 6890 IETF Protocol Assignments
+        || is_benchmarking_v4(ip)   // 198.18.0.0/15 RFC 2544 benchmarking
+        || is_reserved_class_e(ip) // 240.0.0.0/4 RFC 1112 reserved (Class E)
 }
 
 /// 100.64.0.0/10 — RFC 6598 shared address space (carrier-grade NAT).
 fn is_shared_v4(ip: Ipv4Addr) -> bool {
     let [a, b, ..] = ip.octets();
     a == 100 && (64..=127).contains(&b)
+}
+
+/// 0.0.0.0/8 — RFC 791 §3.2 "this network". `Ipv4Addr::is_unspecified` only
+/// matches the single literal `0.0.0.0`; the rest of the block is still
+/// special-use and must not be a routable egress target.
+fn is_this_network_v4(ip: Ipv4Addr) -> bool {
+    ip.octets()[0] == 0
+}
+
+/// 192.0.0.0/24 — RFC 6890 IETF Protocol Assignments (distinct from the
+/// 192.0.2.0/24 TEST-NET-1 block already caught by `is_documentation`).
+fn is_ietf_protocol_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    a == 192 && b == 0 && c == 0
+}
+
+/// 198.18.0.0/15 — RFC 2544 benchmarking range.
+fn is_benchmarking_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 198 && (b == 18 || b == 19)
+}
+
+/// 240.0.0.0/4 — RFC 1112 reserved (former Class E). The broadcast literal
+/// 255.255.255.255 is already caught by `is_broadcast`.
+fn is_reserved_class_e(ip: Ipv4Addr) -> bool {
+    ip.octets()[0] >= 240
+}
+
+/// RFC 6052 NAT64 well-known prefix `64:ff9b::/96`. Returns the embedded IPv4
+/// address (low 32 bits) when `ip` falls in the prefix, else `None`.
+fn nat64_embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let s = ip.segments();
+    if s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0 {
+        let [a, b] = s[6].to_be_bytes();
+        let [c, d] = s[7].to_be_bytes();
+        Some(Ipv4Addr::new(a, b, c, d))
+    } else {
+        None
+    }
 }
 
 fn is_forbidden_v6(ip: Ipv6Addr) -> bool {
@@ -234,6 +290,40 @@ mod tests {
         assert!(!is_forbidden_ip("8.8.8.8".parse().unwrap()));
         assert!(!is_forbidden_ip("93.184.216.34".parse().unwrap()));
         assert!(!is_forbidden_ip("2606:2800:220:1::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn rejects_nat64_embedded_metadata_ip() {
+        // 64:ff9b::a9fe:a9fe embeds 169.254.169.254 (a9fe:a9fe) — must be
+        // screened via the NAT64 embedded-v4 path, not treated as public v6.
+        assert!(is_forbidden_ip("64:ff9b::a9fe:a9fe".parse().unwrap()));
+        // 64:ff9b::0a00:0001 embeds 10.0.0.1 (private).
+        assert!(is_forbidden_ip("64:ff9b::a00:1".parse().unwrap()));
+        // A genuinely public v4 embedded in NAT64 stays allowed (8.8.8.8).
+        assert!(!is_forbidden_ip("64:ff9b::808:808".parse().unwrap()));
+    }
+
+    #[test]
+    fn rejects_this_network_block() {
+        // 0.0.0.0/8 beyond the 0.0.0.0 literal.
+        assert!(is_forbidden_ip("0.1.2.3".parse().unwrap()));
+        assert!(is_forbidden_ip("0.0.0.0".parse().unwrap()));
+    }
+
+    #[test]
+    fn rejects_ietf_protocol_and_benchmarking() {
+        assert!(is_forbidden_ip("192.0.0.1".parse().unwrap())); // 192.0.0.0/24
+        assert!(!is_forbidden_ip("192.0.1.1".parse().unwrap())); // just outside /24
+        assert!(is_forbidden_ip("198.18.0.1".parse().unwrap())); // 198.18.0.0/15
+        assert!(is_forbidden_ip("198.19.255.255".parse().unwrap()));
+        assert!(!is_forbidden_ip("198.20.0.1".parse().unwrap())); // just outside /15
+    }
+
+    #[test]
+    fn rejects_reserved_class_e() {
+        assert!(is_forbidden_ip("240.0.0.1".parse().unwrap()));
+        assert!(is_forbidden_ip("250.1.2.3".parse().unwrap()));
+        assert!(is_forbidden_ip("255.255.255.255".parse().unwrap())); // broadcast
     }
 
     #[tokio::test]

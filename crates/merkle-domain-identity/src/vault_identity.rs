@@ -185,30 +185,37 @@ impl VaultIdentity {
 
     /// Seal the vault, zeroing the Vault Root Key from memory.
     ///
-    /// Valid from `Unsealed` (via `ShuttingDown`) and from `Unsealing`
-    /// (rollback on failed unseal).
+    /// Valid only from `Unsealed` (via `ShuttingDown`) or from `ShuttingDown`
+    /// directly. The `Unsealing → Sealed` edge is the rollback path and belongs
+    /// exclusively to [`revert_to_sealed`](Self::revert_to_sealed); `seal` must
+    /// NOT take it, otherwise a concurrent operator seal racing into an
+    /// in-flight unseal's no-lock window would abort that unseal and corrupt the
+    /// audit trail.
     ///
     /// # Errors
     ///
-    /// - [`DomainError::InvalidStateTransition`] — state does not permit sealing.
+    /// - [`DomainError::InvalidStateTransition`] — state is not `Unsealed` or
+    ///   `ShuttingDown` (in particular `Unsealing` and `Sealed` are rejected).
     pub fn seal(&mut self) -> Result<(), DomainError> {
-        // From Unsealed we must go through ShuttingDown.
-        if self.state == SealedState::Unsealed {
-            if !self.state.can_transition_to(SealedState::ShuttingDown) {
-                return Err(DomainError::InvalidStateTransition {
-                    from: self.state,
-                    to: SealedState::ShuttingDown,
-                });
-            }
-            self.state = SealedState::ShuttingDown;
-        }
-
-        if !self.state.can_transition_to(SealedState::Sealed) {
+        // Reject anything that is not a legitimate operator-seal origin. This is
+        // what stops `seal` from consuming the `Unsealing → Sealed` rollback
+        // edge that `can_transition_to` also permits.
+        if !matches!(
+            self.state,
+            SealedState::Unsealed | SealedState::ShuttingDown
+        ) {
             return Err(DomainError::InvalidStateTransition {
                 from: self.state,
                 to: SealedState::Sealed,
             });
         }
+
+        // From Unsealed we must go through ShuttingDown.
+        if self.state == SealedState::Unsealed {
+            self.state = SealedState::ShuttingDown;
+        }
+
+        debug_assert!(self.state.can_transition_to(SealedState::Sealed));
 
         // Zeroize key material — Drop on VaultRootKey handles the actual zeroize.
         self.vault_root_key = None;
@@ -538,6 +545,37 @@ mod tests {
         id.seal().unwrap();
         assert_eq!(id.state(), SealedState::Sealed);
         assert!(id.vault_root_key().is_none());
+    }
+
+    /// `seal()` must NOT consume the `Unsealing → Sealed` rollback edge — that
+    /// belongs to `revert_to_sealed`. A concurrent operator seal reaching an
+    /// in-flight unseal (state `Unsealing`) must be rejected so it cannot hijack
+    /// the unseal and corrupt the audit trail.
+    #[test]
+    fn seal_from_unsealing_is_rejected() {
+        let mut id = make_identity();
+        id.begin_unseal(ok_preconditions()).unwrap();
+        assert_eq!(id.state(), SealedState::Unsealing);
+
+        let err = id.seal().unwrap_err();
+        assert!(
+            matches!(err, DomainError::InvalidStateTransition { .. }),
+            "seal() from Unsealing must be rejected, got {err:?}"
+        );
+        // The unseal is untouched — still Unsealing — and the dedicated rollback
+        // path still works.
+        assert_eq!(id.state(), SealedState::Unsealing);
+        id.revert_to_sealed().unwrap();
+        assert_eq!(id.state(), SealedState::Sealed);
+    }
+
+    /// `seal()` on an already-`Sealed` vault is rejected (not a silent no-op).
+    #[test]
+    fn seal_from_sealed_is_rejected() {
+        let mut id = make_identity();
+        assert_eq!(id.state(), SealedState::Sealed);
+        let err = id.seal().unwrap_err();
+        assert!(matches!(err, DomainError::InvalidStateTransition { .. }));
     }
 
     // -----------------------------------------------------------------------

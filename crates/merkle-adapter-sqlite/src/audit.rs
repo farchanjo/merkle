@@ -1,8 +1,11 @@
 //! `append_audit_entry` / `read_audit` / `pinned_head` / `update_pinned_head`.
 //!
 //! ADR-0009 requirements enforced here:
-//! - `append_audit_entry` + `update_pinned_head` share a single `BEGIN IMMEDIATE`
-//!   transaction to guarantee atomicity.
+//! - `commit_audit_entry` writes the entry AND the MAC-authenticated pinned head
+//!   in a single `BEGIN IMMEDIATE` transaction — the atomic hot path. A crash
+//!   can never leave the head un-authenticated (`hmac_head` NULL).
+//! - `append_audit_entry` (entry + NULL-MAC head) remains for callers that pin
+//!   the head MAC separately via `update_pinned_head`.
 //! - Append-only discipline is additionally enforced at the SQL trigger level
 //!   (see `001_initial.sql`).
 
@@ -14,12 +17,9 @@ use crate::error::AdapterError;
 use crate::mappers::{blob_to_audit_entry_id, row_to_audit_entry, uuid_to_blob};
 use merkle_types::{Blake3Hash, HmacSignature, Rfc3339Timestamp};
 
-/// Append one [`AuditEntry`] and atomically update the pinned head.
-///
-/// Uses `BEGIN IMMEDIATE` to prevent concurrent writers racing on the
-/// `pinned_head` singleton row (ADR-0009 Amendment — chain-head pinning).
-pub(crate) async fn append_audit_entry(
-    pool: &SqlitePool,
+/// Insert a single [`AuditEntry`] row inside an open transaction.
+async fn insert_entry_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     entry: &AuditEntry,
 ) -> Result<(), StorageError> {
     let id_blob = uuid_to_blob(entry.id.inner());
@@ -34,20 +34,6 @@ pub(crate) async fn append_audit_entry(
     let prev_hash = entry.prev_hash.map(|h| h.to_string());
     let current_hash = entry.current_hash.to_string();
     let hmac = entry.hmac.map(|h| h.to_string());
-
-    // Pinned head values for the atomic update.
-    let head_hash = current_hash.clone();
-    let head_seq = seq;
-    let head_id_blob = id_blob.clone();
-    let updated_at = Rfc3339Timestamp::now().to_string();
-
-    // BEGIN IMMEDIATE locks the database for writing immediately, preventing
-    // a concurrent writer from interleaving between entry insert and head update.
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
 
     sqlx::query(
         r"INSERT INTO audit_entries
@@ -68,35 +54,114 @@ pub(crate) async fn append_audit_entry(
     .bind(&prev_hash)
     .bind(&current_hash)
     .bind(&hmac)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(AdapterError::Sqlx)
     .map_err(StorageError::from)?;
+    Ok(())
+}
 
-    // Atomically upsert the pinned_head singleton row. The entry alone does not
-    // carry the head-commitment MAC (that needs the key), so hmac_head is reset
-    // to NULL here and authenticated immediately afterwards by the application
-    // layer's update_pinned_head call. Leaving a stale MAC from the prior head
-    // would be a valid-looking tag for the wrong head, so we fail closed.
+/// Upsert the `pinned_head` singleton row inside an open transaction.
+///
+/// `hmac_head` is written verbatim from `head` — `None` resets it to NULL,
+/// `Some` writes the real head-commitment MAC.
+async fn upsert_pinned_head_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    head_hash: &str,
+    head_seq: i64,
+    head_id_blob: &[u8],
+    updated_at: &str,
+    hmac_head: Option<&str>,
+) -> Result<(), StorageError> {
     sqlx::query(
         r"INSERT INTO pinned_head (singleton, head_hash, head_seq, head_id, updated_at, hmac_head)
-          VALUES (1, ?1, ?2, ?3, ?4, NULL)
+          VALUES (1, ?1, ?2, ?3, ?4, ?5)
           ON CONFLICT(singleton) DO UPDATE SET
               head_hash  = excluded.head_hash,
               head_seq   = excluded.head_seq,
               head_id    = excluded.head_id,
               updated_at = excluded.updated_at,
-              hmac_head  = NULL",
+              hmac_head  = excluded.hmac_head",
     )
-    .bind(&head_hash)
+    .bind(head_hash)
     .bind(head_seq)
-    .bind(&head_id_blob)
-    .bind(&updated_at)
-    .execute(&mut *tx)
+    .bind(head_id_blob)
+    .bind(updated_at)
+    .bind(hmac_head)
+    .execute(&mut **tx)
     .await
     .map_err(AdapterError::Sqlx)
     .map_err(StorageError::from)?;
+    Ok(())
+}
 
+/// Append one [`AuditEntry`] and reset the pinned head, leaving `hmac_head`
+/// NULL (the entry alone cannot carry the keyed head MAC).
+///
+/// Prefer [`commit_audit_entry`] on the hot path: this variant leaves the head
+/// un-authenticated until a later `update_pinned_head`, which fails closed if a
+/// crash lands in between. It remains for callers (tests) that pin the MAC
+/// separately.
+///
+/// Uses `BEGIN IMMEDIATE` to prevent concurrent writers racing on the
+/// `pinned_head` singleton row (ADR-0009 Amendment — chain-head pinning).
+pub(crate) async fn append_audit_entry(
+    pool: &SqlitePool,
+    entry: &AuditEntry,
+) -> Result<(), StorageError> {
+    let head_hash = entry.current_hash.to_string();
+    let head_seq = i64::try_from(entry.seq).unwrap_or(i64::MAX);
+    let head_id_blob = uuid_to_blob(entry.id.inner());
+    let updated_at = Rfc3339Timestamp::now().to_string();
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    insert_entry_tx(&mut tx, entry).await?;
+    upsert_pinned_head_tx(&mut tx, &head_hash, head_seq, &head_id_blob, &updated_at, None).await?;
+    tx.commit()
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    Ok(())
+}
+
+/// Append one [`AuditEntry`] and pin its already-MAC'd `head` in a SINGLE
+/// transaction.
+///
+/// This closes the crash-consistency window of the append-then-update pattern:
+/// `hmac_head` is written with its real MAC in the same commit as the entry, so
+/// a crash can never leave the pinned head un-authenticated (`hmac_head` NULL),
+/// which would otherwise fail verification closed (`HeadMacMismatch`) until the
+/// next successful write. `BEGIN IMMEDIATE` serializes concurrent writers.
+pub(crate) async fn commit_audit_entry(
+    pool: &SqlitePool,
+    entry: &AuditEntry,
+    head: &PinnedHead,
+) -> Result<(), StorageError> {
+    let head_hash = head.head_hash.to_string();
+    let head_seq = i64::try_from(head.head_seq).unwrap_or(i64::MAX);
+    let head_id_blob = uuid_to_blob(head.head_id.inner());
+    let updated_at = head.updated_at.to_string();
+    let hmac_head = head.hmac_head.map(|h| h.to_string());
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    insert_entry_tx(&mut tx, entry).await?;
+    upsert_pinned_head_tx(
+        &mut tx,
+        &head_hash,
+        head_seq,
+        &head_id_blob,
+        &updated_at,
+        hmac_head.as_deref(),
+    )
+    .await?;
     tx.commit()
         .await
         .map_err(AdapterError::Sqlx)

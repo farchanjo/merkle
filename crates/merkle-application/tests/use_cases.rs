@@ -49,7 +49,7 @@ async fn make_ctx() -> AppContext {
     // Build a minimal VaultIdentity.
     let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
     let recovery_pubkey = RecoveryPublicKey::new(
-        "age1test".to_owned(),
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p".to_owned(),
         "SHA256:test=".to_owned(),
         Rfc3339Timestamp::now(),
     );
@@ -878,7 +878,7 @@ async fn test_init_then_unseal_succeeds_keychain_naming_aligned() {
     // VaultIdentity starts Sealed with canonical keychain ref.
     let keychain_ref = KeychainEntry::for_master_key(1, merkle_types::Rfc3339Timestamp::now());
     let recovery_pubkey = RecoveryPublicKey::new(
-        "age1test".to_owned(),
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p".to_owned(),
         "SHA256:test=".to_owned(),
         merkle_types::Rfc3339Timestamp::now(),
     );
@@ -956,7 +956,7 @@ async fn init_then_unseal_audit_chain_verifies_end_to_end() {
     let external = Arc::new(MockExternalServices::new());
     let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
     let recovery_pubkey = RecoveryPublicKey::new(
-        "age1test".to_owned(),
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p".to_owned(),
         "SHA256:test=".to_owned(),
         Rfc3339Timestamp::now(),
     );
@@ -1027,7 +1027,7 @@ async fn make_ctx_with_keychain_persistence_failure() -> AppContext {
 
     let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
     let recovery_pubkey = RecoveryPublicKey::new(
-        "age1test".to_owned(),
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p".to_owned(),
         "SHA256:test=".to_owned(),
         Rfc3339Timestamp::now(),
     );
@@ -1465,4 +1465,68 @@ async fn bind_namespace_second_bind_does_not_emit_audit_entry() {
         "expected exactly 1 Bind audit entry (re-bind must not emit a second entry); got {}",
         bind_entries.len()
     );
+}
+
+/// Regression for the recovery-wrap bug: `init_vault` must wrap the VRK under
+/// the operator's recovery recipient so `vrk-recovery-v1` is genuinely
+/// decryptable with the operator-held age identity — not under an ephemeral
+/// keypair whose private half is discarded (which produced a write-only,
+/// forever-undecryptable blob and a meaningless "recovery key").
+#[tokio::test]
+async fn init_wraps_vrk_recoverably_under_operator_recipient() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use merkle_ports::{AgeIdentity, Crypto};
+    use secrecy::ExposeSecret as _;
+
+    // Operator-held recovery identity — we know the private half, so we can
+    // prove the recovery blob decrypts.
+    let age_id = age::x25519::Identity::generate();
+    let recipient = age_id.to_public().to_string();
+    let identity_str = age_id.to_string().expose_secret().to_owned();
+
+    let storage = SqliteStorage::open("sqlite::memory:")
+        .await
+        .expect("in-memory sqlite");
+    let crypto = Arc::new(RustCryptoAdapter::new());
+    let keychain = Arc::new(MockKeychainAdapter::new());
+    let oob = Arc::new(MockOobNotifier::new());
+    let external = Arc::new(MockExternalServices::new());
+    let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
+    let recovery_pubkey =
+        RecoveryPublicKey::new(recipient.clone(), "SHA256:test=".to_owned(), Rfc3339Timestamp::now());
+    let identity = VaultIdentity::new(keychain_ref, recovery_pubkey);
+    let ctx = AppContext::new(
+        Arc::new(storage),
+        keychain,
+        crypto.clone(),
+        oob,
+        external,
+        identity,
+    );
+
+    let out = InitVaultCommand {
+        interactive: false,
+        security_profile: SecurityProfile::Balanced,
+    }
+    .execute(&ctx)
+    .await
+    .expect("init must succeed");
+
+    // The returned recovery_key echoes the operator recipient (truthful), not a
+    // throwaway public key.
+    assert_eq!(out.recovery_key, recipient);
+
+    // vrk-recovery-v1 must decrypt with the operator's held identity and yield
+    // the 32-byte VRK. Before the fix this blob was wrapped under a discarded
+    // ephemeral key and could never be decrypted by anyone.
+    let blob = ctx
+        .keychain
+        .retrieve(KEYCHAIN_SERVICE, "vrk-recovery-v1")
+        .await
+        .expect("recovery-wrapped VRK must be persisted");
+    let age_ct = BASE64.decode(&blob).expect("recovery payload is base64");
+    let vrk = crypto
+        .age_decrypt(&AgeIdentity(identity_str), &age_ct)
+        .expect("recovery blob must decrypt with the operator's age identity");
+    assert_eq!(vrk.len(), 32, "recovered VRK must be 32 bytes");
 }

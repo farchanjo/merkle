@@ -106,7 +106,7 @@ pub async fn chain_verifier_task(
     );
 
     // Run once at startup.
-    run_chain_verification(&ctx);
+    run_chain_verification(&ctx).await;
 
     loop {
         tokio::select! {
@@ -115,7 +115,7 @@ pub async fn chain_verifier_task(
                 break;
             }
             () = tokio::time::sleep(CHAIN_VERIFY_INTERVAL) => {
-                run_chain_verification(&ctx);
+                run_chain_verification(&ctx).await;
             }
         }
     }
@@ -123,37 +123,56 @@ pub async fn chain_verifier_task(
     Ok(())
 }
 
-fn run_chain_verification(_ctx: &Arc<AppContext>) {
-    // Phase 4 stub: wires to the real ChainVerifier in Phase 5.
-    //
-    // Example (Phase 5 wiring):
-    // ```
-    // use merkle_application::commands::verify_chain::VerifyChainCommand;
-    // match VerifyChainCommand.execute(ctx).await {
-    //     Ok(output) if output.chain_ok => {
-    //         metrics::core().chain_integrity_ok.set(1.0);
-    //         metrics::core().chain_verifications_total.with_label_values(&["ok"]).inc();
-    //         info!(entries = output.entries_verified, "audit chain verified");
-    //     }
-    //     Ok(_) => {
-    //         metrics::core().chain_integrity_ok.set(0.0);
-    //         metrics::core().chain_verifications_total.with_label_values(&["broken"]).inc();
-    //         warn!("audit chain broken");
-    //     }
-    //     Err(e) => {
-    //         error!(error = %e, "chain verification error");
-    //     }
-    // }
-    // ```
-    tracing::trace!("chain verifier tick");
+/// Run the real audit-chain verifier once and reflect the outcome in the
+/// `merkle_chain_integrity_ok` gauge and `merkle_chain_verifications_total`
+/// counter. Previously a stub that hardcoded `ok` — which made continuous
+/// monitoring blind to any tampering (it was only caught by an on-demand
+/// `doctor` run).
+async fn run_chain_verification(ctx: &Arc<AppContext>) {
+    use merkle_application::ChainOutcome;
+    use merkle_application::queries::verify_chain::VerifyChainQuery;
 
-    // Emit metrics stub — mark as ok until the real verifier is wired.
-    if crate::metrics::is_enabled() {
-        crate::metrics::core().chain_integrity_ok.set(1.0);
-        crate::metrics::core()
-            .chain_verifications_total
-            .with_label_values(&["ok"])
-            .inc();
+    let enabled = crate::metrics::is_enabled();
+    match VerifyChainQuery.execute(ctx).await {
+        Ok(output) if output.result.outcome == ChainOutcome::Intact => {
+            info!(
+                entries = output.result.entries_checked,
+                baseline_seq = ?output.result.baseline_seq,
+                "audit chain verified intact"
+            );
+            if enabled {
+                crate::metrics::core().chain_integrity_ok.set(1.0);
+                crate::metrics::core()
+                    .chain_verifications_total
+                    .with_label_values(&["ok"])
+                    .inc();
+            }
+        }
+        Ok(output) => {
+            warn!(
+                outcome = ?output.result.outcome,
+                entries = output.result.entries_checked,
+                "audit chain verification FAILED — possible tampering"
+            );
+            if enabled {
+                crate::metrics::core().chain_integrity_ok.set(0.0);
+                crate::metrics::core()
+                    .chain_verifications_total
+                    .with_label_values(&["broken"])
+                    .inc();
+            }
+        }
+        Err(e) => {
+            error!(error = %e, "audit chain verification errored");
+            if enabled {
+                // Do not assert integrity when the check itself could not run.
+                crate::metrics::core().chain_integrity_ok.set(0.0);
+                crate::metrics::core()
+                    .chain_verifications_total
+                    .with_label_values(&["error"])
+                    .inc();
+            }
+        }
     }
 }
 

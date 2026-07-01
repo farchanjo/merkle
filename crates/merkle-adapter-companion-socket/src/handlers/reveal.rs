@@ -15,6 +15,7 @@ use merkle_application::commands::{
     describe_secret::DescribeSecretCommand, reveal_secret::RevealSecretCommand,
 };
 use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation as DomainOperatorConfirmation;
+use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_types::{Handle, NamespaceId, OobChannel, SecurityProfile, Sensitivity};
 use std::sync::Arc;
 use std::time::Duration;
@@ -180,6 +181,36 @@ async fn execute_reveal(
     dek_bytes: [u8; 32],
     oob_ack: bool,
 ) -> axum::response::Response {
+    // Load the persisted namespace policy so reveal is governed by the
+    // operator's real configuration — security profile, OOB threshold, required
+    // device class, and the reveal kill-switch — instead of a hardcoded Balanced
+    // default that under-enforced Paranoid namespaces and permanently broke
+    // High-sensitivity reveal. Fall back to Balanced defaults only when no
+    // policy row exists yet for the namespace.
+    let policy = match ctx.storage.get_namespace_policy(&namespace_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => NamespacePolicy::defaults_for(SecurityProfile::Balanced),
+        Err(e) => return app_error_to_problem(e.into()).into_response(),
+    };
+
+    // Reveal kill-switch: Paranoid namespaces disable reveal by default.
+    if !policy.reveal.allowed {
+        return app_error_to_problem(merkle_application::AppError::PolicyDenied(
+            "reveal is disabled for this namespace by policy".to_owned(),
+        ))
+        .into_response();
+    }
+
+    // Select an enrolled, non-revoked companion device that satisfies the
+    // required class, for the OOB challenge. When none qualifies and OOB is
+    // required, the command returns a pending/denied outcome mapped to 202.
+    let companion_device = match ctx.storage.list_companion_devices().await {
+        Ok(devices) => devices.into_iter().find(|d| {
+            !d.is_revoked() && d.meets_class_requirement(policy.device_policy.required_class)
+        }),
+        Err(e) => return app_error_to_problem(e.into()).into_response(),
+    };
+
     let domain_confirmation = DomainOperatorConfirmation {
         slash_command: true,
         oob_ack,
@@ -192,13 +223,13 @@ async fn execute_reveal(
         operator_confirmation: domain_confirmation,
         challenge_id: None,
         sensitivity,
-        oob_threshold: Sensitivity::High,
-        security_profile: SecurityProfile::Balanced,
+        oob_threshold: policy.reveal.require_oob_above,
+        security_profile: policy.security_profile,
         dek_bytes,
-        companion_device: None,
+        companion_device,
         oob_channel,
         oob_timeout: Duration::from_secs(120),
-        required_device_class: merkle_types::CompanionDeviceClass::Software,
+        required_device_class: policy.device_policy.required_class,
     };
 
     match cmd.execute(ctx).await {
