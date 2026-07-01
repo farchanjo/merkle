@@ -1245,6 +1245,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
 
+  /v1/audit/rebaseline:
+    post:
+      operationId: audit-compliance--rebaseline
+      summary: Pin a trusted audit baseline (key-provenance recovery)
+      description: >
+        Re-anchors chain verification after a key-provenance incident
+        (ADR-0029). Appends a `rebaseline` marker Audit Entry under the current
+        audit HMAC key, then pins an authenticated Audit Baseline at that
+        marker. Subsequent verification checks structural integrity across the
+        whole log but authenticates entry HMACs only from the anchor forward;
+        the operator-attested prefix is quarantined. Operator-gated:
+        `confirmed` MUST be `true`. Not exposed as an MCP tool (MERK-001).
+      tags:
+        - audit-compliance
+      x-merkle-sensitivity: high
+      x-merkle-oob-required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RebaselineRequest"
+      responses:
+        "200":
+          description: A trusted baseline was pinned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebaselineResponse"
+        "400":
+          description: Operator confirmation missing or malformed request.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Agent is sealed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
   # ---------------------------------------------------------------------------
   # Backup and Recovery
   # ---------------------------------------------------------------------------
@@ -2408,17 +2450,53 @@ components:
           pattern: "^dev\\.fapp\\.merkle/master-v[0-9]+$"
           example: "dev.fapp.merkle/master-v1"
 
+    RebaselineRequest:
+      type: object
+      required:
+        - reason
+        - confirmed
+      properties:
+        reason:
+          type: string
+          description: Operator justification recorded with the pinned baseline.
+        confirmed:
+          type: boolean
+          description: >-
+            Must be `true` — explicit operator confirmation for this
+            integrity-affecting administrative action.
+
+    RebaselineResponse:
+      type: object
+      required:
+        - baseline_seq
+        - quarantined_below
+      properties:
+        baseline_seq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Sequence number of the pinned anchor (the marker entry).
+        quarantined_below:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Count of prior entries quarantined below the baseline.
+
     AuditOp:
       type: string
       description: >-
-        Operation type recorded in an Audit Entry. Closed enum — 31 values.
+        Operation type recorded in an Audit Entry. Closed enum — 33 values.
         Append-only; new operations require an ADR before adding a variant.
         Amendment 2026-05-23: added "init" per ADR-0021.
+        Amendment 2026-06-09: added "seal" (seal ceremony was logging "unseal").
+        Amendment 2026-07-01: added "rebaseline" per ADR-0029.
         Source of truth: docs/arch/schemas/audit_compliance/
         audit_entry.cue #AuditOp.
       enum:
         - init
         - unseal
+        - seal
+        - rebaseline
         - put
         - get
         - use

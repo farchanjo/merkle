@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use merkle_application::commands::set_audit_baseline::SetAuditBaselineCommand;
 use merkle_application::queries::query_audit::QueryAuditQuery;
 use merkle_domain_audit_compliance::AuditQuery as DomainAuditQuery;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use tracing::instrument;
 
 use crate::{
     AppContext,
-    dto::{AuditEntryDto, AuditQuery, AuditResponse},
+    dto::{AuditEntryDto, AuditQuery, AuditResponse, RebaselineRequest, RebaselineResponse},
     problem::app_error_to_problem,
 };
 
@@ -97,6 +98,35 @@ pub async fn query_audit(
             )
                 .into_response()
         }
+        Err(err) => app_error_to_problem(err).into_response(),
+    }
+}
+
+/// `POST /v1/audit/rebaseline`
+///
+/// Pins a trusted audit baseline (ADR-0029) to recover a verifiable chain after
+/// a key-provenance incident. Operator-gated: the body MUST carry
+/// `confirmed = true`. This endpoint is reachable only from the operator CLI /
+/// Companion Socket — it is deliberately NOT exposed as an MCP tool (MERK-001).
+#[instrument(skip(ctx))]
+pub async fn rebaseline(
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<RebaselineRequest>,
+) -> impl IntoResponse {
+    let cmd = SetAuditBaselineCommand {
+        reason: body.reason,
+        confirmed: body.confirmed,
+    };
+
+    match cmd.execute(&ctx).await {
+        Ok(out) => (
+            StatusCode::OK,
+            Json(RebaselineResponse {
+                baseline_seq: out.baseline_seq,
+                quarantined_below: out.quarantined_below,
+            }),
+        )
+            .into_response(),
         Err(err) => app_error_to_problem(err).into_response(),
     }
 }

@@ -161,6 +161,22 @@ pub struct SealResponse {
     pub sealed: bool,
 }
 
+/// Request body for `POST /v1/audit/rebaseline` (ADR-0029).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebaselineRequest {
+    /// Operator justification recorded with the pinned baseline.
+    pub reason: String,
+    /// Must be `true`: explicit operator confirmation for this integrity op.
+    pub confirmed: bool,
+}
+
+/// Response body for `POST /v1/audit/rebaseline` (ADR-0029).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebaselineResponse {
+    pub baseline_seq: u64,
+    pub quarantined_below: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Namespaces
 // ---------------------------------------------------------------------------

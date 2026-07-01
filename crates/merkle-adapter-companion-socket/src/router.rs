@@ -85,6 +85,7 @@ pub fn build(ctx: Arc<AppContext>) -> Router {
         .route("/v1/reveal", post(handlers::reveal::reveal))
         // Audit
         .route("/v1/audit", get(handlers::audit::query_audit))
+        .route("/v1/audit/rebaseline", post(handlers::audit::rebaseline))
         // Backup / restore
         .route("/v1/backup", post(handlers::backup::trigger_backup))
         .route(
