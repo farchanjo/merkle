@@ -4,12 +4,13 @@
 //! plaintext to a temporary file with mode 0600, and returns an opaque token
 //! (not the real path). Audited with `op=write_tempfile`.
 
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
 use merkle_domain_access_mediation::tempfile::Tempfile;
 use merkle_types::{AuditOp, AuditOutcome, Handle, NamespaceId, Rfc3339Timestamp};
+use tokio::io::AsyncWriteExt as _;
 use tracing::info;
+use zeroize::Zeroizing;
 
 use crate::{AppContext, AppError};
 
@@ -78,31 +79,41 @@ impl WriteTempfileCommand {
 
         let mut cipher_with_tag = blob.ciphertext.clone();
         cipher_with_tag.extend_from_slice(&blob.aead_tag);
-        let plaintext = ctx.crypto.aead_decrypt(
+        // Zeroizing so the decrypted plaintext is wiped from memory on drop, on
+        // every path (success or early return).
+        let plaintext = Zeroizing::new(ctx.crypto.aead_decrypt(
             &self.dek_bytes,
             &blob.nonce,
             &cipher_with_tag,
             &blob.associated_data,
-        )?;
+        )?);
 
         // Generate an opaque token for the tempfile registry key.
         let token_bytes = ctx.crypto.random_bytes_32();
         let opaque_token = hex::encode(token_bytes);
 
-        // Write to a temporary file with mode 0600.
+        // Create the tempfile atomically at mode 0600 (O_CREAT|O_EXCL + mode) so
+        // there is never a window where the plaintext is world-/group-readable —
+        // a default-mode write followed by a chmod leaves exactly such a TOCTOU
+        // window for other local processes.
         let tmp_path = build_tmp_path(&opaque_token);
-        tokio::fs::write(&tmp_path, &plaintext)
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp_path)
             .await
-            .map_err(|e| AppError::Domain(format!("write_tempfile: I/O error: {e}")))?;
-
-        let perms = std::fs::Permissions::from_mode(0o600);
-        if let Err(e) = std::fs::set_permissions(&tmp_path, perms) {
+            .map_err(|e| AppError::Domain(format!("write_tempfile: create failed: {e}")))?;
+        if let Err(e) = file.write_all(plaintext.as_slice()).await {
             // BUG-09: never leave a plaintext tempfile behind on an early return.
             let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(AppError::Domain(format!(
-                "write_tempfile: chmod failed: {e}"
-            )));
+            return Err(AppError::Domain(format!("write_tempfile: I/O error: {e}")));
         }
+        if let Err(e) = file.flush().await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(AppError::Domain(format!("write_tempfile: flush failed: {e}")));
+        }
+        drop(file);
 
         let expires_at = Rfc3339Timestamp::now();
 
@@ -155,6 +166,7 @@ mod tests {
     use super::*;
     use crate::commands::unseal_vault::test_support;
     use crate::commands::use_token::UseTokenCommand;
+    use std::os::unix::fs::PermissionsExt as _;
 
     use chrono::{Duration, Utc};
     use merkle_domain_access_mediation::use_token::UseToken;
@@ -236,6 +248,15 @@ mod tests {
             .execute(&ctx)
             .await;
         assert!(first.is_ok(), "first use of a valid token must succeed");
+
+        // The tempfile must be created at mode 0600 (atomic O_CREAT|O_EXCL +
+        // mode), never a wider default masked afterwards.
+        let mode = std::fs::metadata(&path)
+            .expect("tempfile exists after materialization")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "tempfile must be 0600, got {mode:o}");
 
         let replay = make_cmd(namespace_id, handle, use_token)
             .execute(&ctx)
