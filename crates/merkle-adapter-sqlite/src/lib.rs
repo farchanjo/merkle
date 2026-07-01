@@ -190,6 +190,15 @@ impl Storage for SqliteStorage {
         audit::append_audit_entry(&self.pool, entry).await
     }
 
+    #[instrument(skip(self, entry, head), fields(seq = entry.seq))]
+    async fn commit_audit_entry(
+        &self,
+        entry: &AuditEntry,
+        head: &PinnedHead,
+    ) -> Result<(), StorageError> {
+        audit::commit_audit_entry(&self.pool, entry, head).await
+    }
+
     #[instrument(skip(self, query))]
     async fn read_audit(&self, query: &AuditQuery) -> Result<Vec<AuditEntry>, StorageError> {
         audit::read_audit(&self.pool, query).await

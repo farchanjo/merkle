@@ -293,14 +293,18 @@ pub(crate) async fn audit_commit(
     Ok(())
 }
 
-/// Persist an audit entry followed by its pinned head.
+/// Persist an audit entry and its MAC-authenticated pinned head atomically.
+///
+/// Uses the single-transaction `commit_audit_entry` so a crash can never leave
+/// the pinned head un-authenticated (`hmac_head` NULL) between the entry insert
+/// and the head MAC write — which would fail verification closed until the next
+/// successful append.
 async fn persist_audit(
     ctx: &AppContext,
     entry: &AuditEntry,
     pinned: &PinnedHead,
 ) -> Result<(), AppError> {
-    ctx.storage.append_audit_entry(entry).await?;
-    ctx.storage.update_pinned_head(pinned).await?;
+    ctx.storage.commit_audit_entry(entry, pinned).await?;
     Ok(())
 }
 

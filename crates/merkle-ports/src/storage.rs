@@ -150,6 +150,24 @@ pub trait Storage: Send + Sync {
     /// Append an immutable [`AuditEntry`](ac::AuditEntry) to the audit log.
     async fn append_audit_entry(&self, entry: &ac::AuditEntry) -> Result<(), StorageError>;
 
+    /// Append an [`AuditEntry`](ac::AuditEntry) and pin its already-MAC'd
+    /// [`PinnedHead`](ac::PinnedHead) in a SINGLE atomic transaction.
+    ///
+    /// This is the hot-path write: it closes the crash-consistency window of
+    /// `append_audit_entry` + `update_pinned_head`, where a crash between the two
+    /// leaves the head un-authenticated (`hmac_head` NULL) and fails verification
+    /// closed until the next write. The default implementation performs the two
+    /// writes sequentially (adequate for in-memory adapters); durable adapters
+    /// SHOULD override it to commit both in one transaction.
+    async fn commit_audit_entry(
+        &self,
+        entry: &ac::AuditEntry,
+        head: &ac::PinnedHead,
+    ) -> Result<(), StorageError> {
+        self.append_audit_entry(entry).await?;
+        self.update_pinned_head(head).await
+    }
+
     /// Query the audit log according to the supplied [`AuditQuery`](ac::AuditQuery).
     async fn read_audit(&self, query: &ac::AuditQuery)
     -> Result<Vec<ac::AuditEntry>, StorageError>;
