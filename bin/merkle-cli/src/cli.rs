@@ -244,6 +244,10 @@ pub struct SearchArgs {
 
 #[derive(Debug, Parser)]
 pub struct AuditArgs {
+    /// Administrative audit action. Omit to query the log (default).
+    #[command(subcommand)]
+    pub action: Option<AuditAction>,
+
     /// Filter by operation type.
     #[arg(long)]
     pub op: Option<String>,
@@ -255,6 +259,28 @@ pub struct AuditArgs {
     /// Maximum number of entries.
     #[arg(long, default_value = "50")]
     pub limit: u32,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuditAction {
+    /// Pin a trusted audit baseline to recover a verifiable chain (ADR-0029).
+    ///
+    /// Use after a key-provenance incident where `doctor` reports the audit
+    /// chain unhealthy (`HmacMismatch`) but the hash chain is intact. Appends a
+    /// `rebaseline` marker and anchors verification to it; the operator-attested
+    /// prefix is quarantined. Back up the vault first.
+    Rebaseline(AuditRebaselineArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct AuditRebaselineArgs {
+    /// Justification recorded with the pinned baseline.
+    #[arg(long)]
+    pub reason: String,
+
+    /// Confirm this integrity-affecting operation (required).
+    #[arg(long)]
+    pub confirm: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -492,5 +518,40 @@ mod tests {
             panic!("expected Doctor");
         };
         assert!(args.all);
+    }
+
+    #[test]
+    fn parse_audit_rebaseline() {
+        let cli = Cli::try_parse_from([
+            "merkle",
+            "audit",
+            "rebaseline",
+            "--reason",
+            "recovery: quarantine pre-rotation prefix",
+            "--confirm",
+        ])
+        .expect("parse audit rebaseline");
+        let Commands::Audit(a) = cli.command else {
+            panic!("expected Audit");
+        };
+        let Some(AuditAction::Rebaseline(rb)) = a.action else {
+            panic!("expected Rebaseline action");
+        };
+        assert_eq!(rb.reason, "recovery: quarantine pre-rotation prefix");
+        assert!(rb.confirm);
+    }
+
+    #[test]
+    fn parse_audit_query_has_no_action() {
+        let cli = Cli::try_parse_from(["merkle", "audit", "--op", "put", "--limit", "10"])
+            .expect("parse audit query");
+        let Commands::Audit(a) = cli.command else {
+            panic!("expected Audit");
+        };
+        assert!(
+            a.action.is_none(),
+            "a bare audit query must carry no subcommand action"
+        );
+        assert_eq!(a.op.as_deref(), Some("put"));
     }
 }
