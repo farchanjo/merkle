@@ -58,23 +58,24 @@ impl QueryAuditQuery {
         let chain_valid = if self.verify_chain {
             let hmac_key = ctx.require_hmac_key().await?;
 
-            // Verify the FULL chain, not the (possibly filtered) view returned
-            // to the caller: load every persisted entry verbatim so the
-            // verifier recomputes hashes against the genuine stored values.
-            let full_entries = ctx
-                .storage
-                .read_audit(&merkle_domain_audit_compliance::AuditQuery::default())
-                .await?;
-            let log = AuditLog::from_persisted(full_entries);
+            // Load the full log, pinned head, and trusted baseline as ONE
+            // consistent snapshot (gap #10 — audit-verify snapshot isolation):
+            // three independent reads could otherwise straddle a concurrent
+            // `commit_audit_entry` and produce a false chain-verification
+            // failure. Verify the FULL chain, not the (possibly filtered) view
+            // returned to the caller, so hashes are recomputed against the
+            // genuine stored values.
+            let snapshot = ctx.storage.audit_snapshot().await?;
+            let log = AuditLog::from_persisted(snapshot.entries);
 
-            let pinned_head = ctx.storage.pinned_head().await?.ok_or_else(|| {
+            let pinned_head = snapshot.pinned_head.ok_or_else(|| {
                 AppError::Domain("no pinned head found — vault may be uninitialized".into())
             })?;
 
             // Honor a pinned trusted baseline (ADR-0029) so this surface agrees
             // with doctor's VerifyChainQuery — otherwise a recovered vault would
             // report chain_valid=false here while doctor reports pass.
-            let result = match ctx.storage.audit_baseline().await? {
+            let result = match snapshot.baseline {
                 Some(baseline) => {
                     ChainVerifier::verify_from_baseline(&log, &pinned_head, &baseline, &hmac_key)
                 }

@@ -33,7 +33,9 @@ use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, AuditQuery, Pinn
 use merkle_domain_backup_recovery::backup::Backup;
 use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::{Namespace, Secret};
-use merkle_ports::{RankedSearchParams, RankedSearchResult, SecretFilter, Storage, StorageError};
+use merkle_ports::{
+    AuditSnapshot, RankedSearchParams, RankedSearchResult, SecretFilter, Storage, StorageError,
+};
 use merkle_types::{Handle, NamespaceId, NamespaceLabel, SecretId};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -220,6 +222,11 @@ impl Storage for SqliteStorage {
 
     async fn set_audit_baseline(&self, baseline: &AuditBaseline) -> Result<(), StorageError> {
         audit::set_audit_baseline(&self.pool, baseline).await
+    }
+
+    #[instrument(skip(self))]
+    async fn audit_snapshot(&self) -> Result<AuditSnapshot, StorageError> {
+        audit::audit_snapshot(&self.pool).await
     }
 
     #[instrument(skip(self, backup), fields(id = %backup.id))]

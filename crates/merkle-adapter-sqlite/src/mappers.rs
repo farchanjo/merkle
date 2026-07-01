@@ -4,7 +4,7 @@
 //! domain types (or `AdapterError` on parse failure).
 
 use merkle_domain_access_mediation::companion_device::CompanionDevice;
-use merkle_domain_audit_compliance::AuditEntry;
+use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, PinnedHead};
 use merkle_domain_backup_recovery::backup::Backup;
 use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::{
@@ -330,6 +330,90 @@ pub(crate) fn row_to_audit_entry(row: &SqliteRow) -> Result<AuditEntry, AdapterE
         current_hash,
         hmac,
     })
+}
+
+// ---------------------------------------------------------------------------
+// PinnedHead / AuditBaseline
+// ---------------------------------------------------------------------------
+
+/// Map a `SqliteRow` from `pinned_head` into a `PinnedHead`.
+///
+/// Shared by the pool-scoped [`crate::audit::pinned_head`] read and the
+/// transaction-scoped snapshot read (gap #10 — audit-verify snapshot
+/// isolation) so both paths parse the exact same columns identically.
+pub(crate) fn row_to_pinned_head(row: &SqliteRow) -> Result<PinnedHead, AdapterError> {
+    let head_hash_str: String = row.try_get("head_hash")?;
+    let head_hash = head_hash_str
+        .parse::<Blake3Hash>()
+        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+
+    let head_seq: i64 = row.try_get("head_seq")?;
+
+    let head_id_bytes: Vec<u8> = row.try_get("head_id")?;
+    let head_id = blob_to_audit_entry_id(&head_id_bytes)?;
+
+    let updated_at_str: String = row.try_get("updated_at")?;
+    let updated_at = updated_at_str
+        .parse::<Rfc3339Timestamp>()
+        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+
+    let hmac_head_str: Option<String> = row.try_get("hmac_head")?;
+    let hmac_head = hmac_head_str
+        .map(|s| s.parse::<HmacSignature>())
+        .transpose()
+        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+
+    let mut head = PinnedHead::new(
+        head_hash,
+        u64::try_from(head_seq).unwrap_or(0),
+        head_id,
+        updated_at,
+    );
+    head.hmac_head = hmac_head;
+    Ok(head)
+}
+
+/// Map a `SqliteRow` from `audit_baseline` into an `AuditBaseline`.
+///
+/// Shared by the pool-scoped [`crate::audit::audit_baseline`] read and the
+/// transaction-scoped snapshot read (gap #10 — audit-verify snapshot
+/// isolation) so both paths parse the exact same columns identically.
+pub(crate) fn row_to_audit_baseline(row: &SqliteRow) -> Result<AuditBaseline, AdapterError> {
+    let baseline_seq: i64 = row.try_get("baseline_seq")?;
+
+    let baseline_id_bytes: Vec<u8> = row.try_get("baseline_id")?;
+    let baseline_id = blob_to_audit_entry_id(&baseline_id_bytes)?;
+
+    let baseline_hash_str: String = row.try_get("baseline_hash")?;
+    let baseline_hash = baseline_hash_str
+        .parse::<Blake3Hash>()
+        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+
+    let entry_count: i64 = row.try_get("entry_count")?;
+
+    let reason: String = row.try_get("reason")?;
+
+    let created_at_str: String = row.try_get("created_at")?;
+    let created_at = created_at_str
+        .parse::<Rfc3339Timestamp>()
+        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+
+    let hmac_str: Option<String> = row.try_get("hmac")?;
+    let hmac = hmac_str
+        .map(|s| s.parse::<HmacSignature>())
+        .transpose()
+        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+
+    let mut baseline = AuditBaseline::new(
+        u64::try_from(baseline_seq).unwrap_or(0),
+        baseline_id,
+        baseline_hash,
+        u64::try_from(entry_count).unwrap_or(0),
+        reason,
+        created_at,
+    );
+    baseline.hmac = hmac;
+    Ok(baseline)
 }
 
 // ---------------------------------------------------------------------------
