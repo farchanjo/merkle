@@ -18,7 +18,7 @@ merkle-application              = { workspace = true }
 merkle-adapter-sqlite           = { workspace = true }
 merkle-adapter-keychain         = { workspace = true }
 merkle-adapter-crypto           = { workspace = true }
-merkle-adapter-oob              = { workspace = true }
+merkle-adapter-oob              = { workspace = true, features = ["all-channels"] }
 merkle-adapter-external-services = { workspace = true }
 merkle-adapter-companion-socket = { workspace = true }
 merkle-companion-client         = { workspace = true }
