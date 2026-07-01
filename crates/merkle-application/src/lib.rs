@@ -37,3 +37,9 @@ pub mod value_format;
 pub use context::AppContext;
 pub use error::AppError;
 pub use value_format::ValueFormat;
+
+/// Re-export of the audit-chain verdict enum, surfaced through
+/// [`queries::verify_chain::VerifyChainOutput`] so downstream consumers (the
+/// daemon's background verifier, diagnostics) can match on the outcome without
+/// depending on the audit-compliance domain crate directly.
+pub use merkle_domain_audit_compliance::ChainOutcome;
