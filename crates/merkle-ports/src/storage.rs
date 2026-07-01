@@ -160,6 +160,18 @@ pub trait Storage: Send + Sync {
     /// Atomically replace the [`PinnedHead`](ac::PinnedHead) record.
     async fn update_pinned_head(&self, head: &ac::PinnedHead) -> Result<(), StorageError>;
 
+    /// Read the trusted [`AuditBaseline`](ac::AuditBaseline) checkpoint, or
+    /// `None` when no baseline has been pinned (ADR-0029).
+    async fn audit_baseline(&self) -> Result<Option<ac::AuditBaseline>, StorageError>;
+
+    /// Upsert the trusted [`AuditBaseline`](ac::AuditBaseline) checkpoint
+    /// (ADR-0029). Adds/updates the checkpoint row; never rewrites the
+    /// append-only `audit_entries` log.
+    async fn set_audit_baseline(
+        &self,
+        baseline: &ac::AuditBaseline,
+    ) -> Result<(), StorageError>;
+
     /// Persist a completed [`Backup`](br::backup::Backup) aggregate.
     async fn put_backup(&self, backup: &br::backup::Backup) -> Result<(), StorageError>;
 

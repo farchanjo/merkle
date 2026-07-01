@@ -29,7 +29,7 @@ mod secrets;
 
 use async_trait::async_trait;
 use merkle_domain_access_mediation::companion_device::CompanionDevice;
-use merkle_domain_audit_compliance::{AuditEntry, AuditQuery, PinnedHead};
+use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, AuditQuery, PinnedHead};
 use merkle_domain_backup_recovery::backup::Backup;
 use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::{Namespace, Secret};
@@ -203,6 +203,14 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self, head), fields(seq = head.head_seq))]
     async fn update_pinned_head(&self, head: &PinnedHead) -> Result<(), StorageError> {
         audit::update_pinned_head(&self.pool, head).await
+    }
+
+    async fn audit_baseline(&self) -> Result<Option<AuditBaseline>, StorageError> {
+        audit::audit_baseline(&self.pool).await
+    }
+
+    async fn set_audit_baseline(&self, baseline: &AuditBaseline) -> Result<(), StorageError> {
+        audit::set_audit_baseline(&self.pool, baseline).await
     }
 
     #[instrument(skip(self, backup), fields(id = %backup.id))]

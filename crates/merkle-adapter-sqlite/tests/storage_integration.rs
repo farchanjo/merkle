@@ -2,7 +2,7 @@
 
 use merkle_adapter_sqlite::SqliteStorage;
 use merkle_domain_access_mediation::companion_device::CompanionDevice;
-use merkle_domain_audit_compliance::{AuditEntry, AuditQuery, PinnedHead};
+use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, AuditQuery, PinnedHead};
 use merkle_domain_backup_recovery::{
     artifact::BackupArtifact, backup::Backup, recipient::BackupRecipient, trigger::BackupTrigger,
 };
@@ -121,6 +121,60 @@ fn make_audit_entry(seq: u64, ns_id: NamespaceId, prev_hash: Option<Blake3Hash>)
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn audit_baseline_round_trips_and_upserts() {
+    let db = open_memory().await;
+
+    // No baseline pinned on a fresh vault.
+    assert!(
+        db.audit_baseline().await.expect("query").is_none(),
+        "a fresh vault has no baseline"
+    );
+
+    let anchor_id = AuditEntryId::new();
+    let baseline = AuditBaseline::new(
+        7,
+        anchor_id,
+        Blake3Hash::hash(b"anchor"),
+        8,
+        "recovery: quarantine pre-rotation prefix".to_owned(),
+        Rfc3339Timestamp::now(),
+    )
+    .with_mac(&[0x42; 32]);
+
+    db.set_audit_baseline(&baseline).await.expect("set");
+
+    let loaded = db.audit_baseline().await.expect("query").expect("present");
+    assert_eq!(loaded.baseline_seq, 7);
+    assert_eq!(loaded.baseline_id, anchor_id);
+    assert_eq!(loaded.baseline_hash, baseline.baseline_hash);
+    assert_eq!(loaded.entry_count, 8);
+    assert_eq!(loaded.reason, "recovery: quarantine pre-rotation prefix");
+    assert!(
+        loaded.verify_mac(&[0x42; 32]),
+        "a round-tripped baseline must still authenticate under its key"
+    );
+
+    // Upsert: pinning again replaces the singleton row rather than duplicating.
+    let updated = AuditBaseline::new(
+        9,
+        AuditEntryId::new(),
+        Blake3Hash::hash(b"anchor2"),
+        10,
+        "second pin".to_owned(),
+        Rfc3339Timestamp::now(),
+    )
+    .with_mac(&[0x42; 32]);
+    db.set_audit_baseline(&updated).await.expect("upsert");
+
+    let reloaded = db.audit_baseline().await.expect("query").expect("present");
+    assert_eq!(
+        reloaded.baseline_seq, 9,
+        "the singleton baseline row must be replaced in place"
+    );
+    assert_eq!(reloaded.entry_count, 10);
+}
 
 #[tokio::test]
 async fn round_trip_put_and_get_secret_by_handle() {

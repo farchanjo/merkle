@@ -6,7 +6,7 @@
 //! - Append-only discipline is additionally enforced at the SQL trigger level
 //!   (see `001_initial.sql`).
 
-use merkle_domain_audit_compliance::{AuditEntry, AuditQuery, PinnedHead};
+use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, AuditQuery, PinnedHead};
 use merkle_ports::StorageError;
 use sqlx::{Row, SqlitePool};
 
@@ -283,6 +283,125 @@ pub(crate) async fn update_pinned_head(
     .bind(&head_id_blob)
     .bind(&updated_at)
     .bind(&hmac_head)
+    .execute(pool)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    Ok(())
+}
+
+/// Fetch the trusted audit baseline singleton, or `None` when none is pinned
+/// (ADR-0029).
+pub(crate) async fn audit_baseline(
+    pool: &SqlitePool,
+) -> Result<Option<AuditBaseline>, StorageError> {
+    let row = sqlx::query(
+        "SELECT baseline_seq, baseline_id, baseline_hash, entry_count, reason, created_at, hmac \
+         FROM audit_baseline WHERE singleton = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    let Some(r) = row else {
+        return Ok(None);
+    };
+
+    let baseline_seq: i64 = r
+        .try_get("baseline_seq")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    let baseline_id_bytes: Vec<u8> = r
+        .try_get("baseline_id")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let baseline_id = blob_to_audit_entry_id(&baseline_id_bytes).map_err(StorageError::from)?;
+
+    let baseline_hash_str: String = r
+        .try_get("baseline_hash")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let baseline_hash = baseline_hash_str
+        .parse::<Blake3Hash>()
+        .map_err(|e| StorageError::Constraint(e.to_string()))?;
+
+    let entry_count: i64 = r
+        .try_get("entry_count")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    let reason: String = r
+        .try_get("reason")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    let created_at_str: String = r
+        .try_get("created_at")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let created_at = created_at_str
+        .parse::<Rfc3339Timestamp>()
+        .map_err(|e| StorageError::Constraint(e.to_string()))?;
+
+    let hmac_str: Option<String> = r
+        .try_get("hmac")
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+    let hmac = hmac_str
+        .map(|s| s.parse::<HmacSignature>())
+        .transpose()
+        .map_err(|e| StorageError::Constraint(e.to_string()))?;
+
+    let mut baseline = AuditBaseline::new(
+        u64::try_from(baseline_seq).unwrap_or(0),
+        baseline_id,
+        baseline_hash,
+        u64::try_from(entry_count).unwrap_or(0),
+        reason,
+        created_at,
+    );
+    baseline.hmac = hmac;
+    Ok(Some(baseline))
+}
+
+/// Upsert the trusted audit baseline singleton (ADR-0029).
+///
+/// Recovery adds/updates this checkpoint row; it never rewrites `audit_entries`,
+/// preserving the append-only discipline.
+pub(crate) async fn set_audit_baseline(
+    pool: &SqlitePool,
+    baseline: &AuditBaseline,
+) -> Result<(), StorageError> {
+    let baseline_seq = i64::try_from(baseline.baseline_seq).unwrap_or(i64::MAX);
+    let baseline_id_blob = uuid_to_blob(baseline.baseline_id.inner());
+    let baseline_hash = baseline.baseline_hash.to_string();
+    let entry_count = i64::try_from(baseline.entry_count).unwrap_or(i64::MAX);
+    let created_at = baseline.created_at.to_string();
+    let hmac = baseline.hmac.map(|h| h.to_string());
+
+    sqlx::query(
+        r"INSERT INTO audit_baseline
+            (singleton, baseline_seq, baseline_id, baseline_hash, entry_count, reason, created_at, hmac)
+          VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+          ON CONFLICT(singleton) DO UPDATE SET
+              baseline_seq  = excluded.baseline_seq,
+              baseline_id   = excluded.baseline_id,
+              baseline_hash = excluded.baseline_hash,
+              entry_count   = excluded.entry_count,
+              reason        = excluded.reason,
+              created_at    = excluded.created_at,
+              hmac          = excluded.hmac",
+    )
+    .bind(baseline_seq)
+    .bind(&baseline_id_blob)
+    .bind(&baseline_hash)
+    .bind(entry_count)
+    .bind(&baseline.reason)
+    .bind(&created_at)
+    .bind(&hmac)
     .execute(pool)
     .await
     .map_err(AdapterError::Sqlx)

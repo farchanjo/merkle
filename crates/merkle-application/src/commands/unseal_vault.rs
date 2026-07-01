@@ -555,6 +555,15 @@ pub(crate) mod test_support {
         async fn update_pinned_head(&self, head: &ac::PinnedHead) -> Result<(), StorageError> {
             self.inner.update_pinned_head(head).await
         }
+        async fn audit_baseline(&self) -> Result<Option<ac::AuditBaseline>, StorageError> {
+            self.inner.audit_baseline().await
+        }
+        async fn set_audit_baseline(
+            &self,
+            baseline: &ac::AuditBaseline,
+        ) -> Result<(), StorageError> {
+            self.inner.set_audit_baseline(baseline).await
+        }
         async fn put_backup(&self, backup: &br::backup::Backup) -> Result<(), StorageError> {
             self.inner.put_backup(backup).await
         }
