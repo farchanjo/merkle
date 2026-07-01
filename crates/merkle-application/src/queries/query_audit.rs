@@ -36,8 +36,9 @@ impl QueryAuditQuery {
     /// 1. Rebuilds an in-memory [`AuditLog`] by re-appending every returned
     ///    entry (matching the pattern from [`crate::queries::verify_chain`]).
     /// 2. Loads the persisted [`PinnedHead`] so truncation detection can run.
-    /// 3. Calls [`ChainVerifier::verify_full`] and maps the outcome to a
-    ///    `bool`.
+    /// 3. Calls [`ChainVerifier::verify_from_baseline`] when a trusted baseline
+    ///    (ADR-0029) is pinned, else [`ChainVerifier::verify_full`], and maps the
+    ///    outcome to a `bool`.
     ///
     /// # Errors
     ///
@@ -70,7 +71,15 @@ impl QueryAuditQuery {
                 AppError::Domain("no pinned head found — vault may be uninitialized".into())
             })?;
 
-            let result = ChainVerifier::verify_full(&log, &pinned_head, &hmac_key);
+            // Honor a pinned trusted baseline (ADR-0029) so this surface agrees
+            // with doctor's VerifyChainQuery — otherwise a recovered vault would
+            // report chain_valid=false here while doctor reports pass.
+            let result = match ctx.storage.audit_baseline().await? {
+                Some(baseline) => {
+                    ChainVerifier::verify_from_baseline(&log, &pinned_head, &baseline, &hmac_key)
+                }
+                None => ChainVerifier::verify_full(&log, &pinned_head, &hmac_key),
+            };
             let intact = matches!(result.outcome, ChainOutcome::Intact);
             info!(
                 outcome = ?result.outcome,

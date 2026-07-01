@@ -131,6 +131,7 @@ async fn unseal(ctx: &AppContext) -> bool {
 #[tokio::test]
 async fn test_set_audit_baseline_pins_and_verifies() {
     use merkle_application::commands::set_audit_baseline::SetAuditBaselineCommand;
+    use merkle_application::queries::query_audit::QueryAuditQuery;
     use merkle_application::queries::verify_chain::VerifyChainQuery;
     use merkle_domain_audit_compliance::ChainOutcome;
 
@@ -171,6 +172,19 @@ async fn test_set_audit_baseline_pins_and_verifies() {
         verify.result.baseline_seq,
         Some(out.baseline_seq),
         "verification must be anchored to the pinned baseline"
+    );
+
+    // The audit-query verify surface must AGREE with doctor once a baseline is
+    // pinned — otherwise a recovered vault gives contradictory chain_valid.
+    let q = QueryAuditQuery {
+        filter: merkle_domain_audit_compliance::AuditQuery::default(),
+        verify_chain: true,
+    };
+    let audit_out = q.execute(&ctx).await.expect("query_audit verify");
+    assert_eq!(
+        audit_out.chain_valid,
+        Some(true),
+        "query_audit verify_chain must honor the baseline and report valid"
     );
 }
 
