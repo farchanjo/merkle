@@ -26,6 +26,13 @@ impl SealVaultCommand {
     pub async fn execute(&self, ctx: &AppContext) -> Result<SealVaultOutput, AppError> {
         info!("seal_vault: initiating seal sequence");
 
+        // Operator seal is only meaningful from a fully Unsealed vault. Reject
+        // early when the vault is Sealed or mid-unseal (Unsealing): sealing must
+        // never race into another client's in-flight unseal window. The domain
+        // `seal()` re-checks this atomically under the identity write lock; this
+        // is the fail-fast app-layer gate.
+        ctx.require_unsealed().await?;
+
         // Attempt to append final audit entry while we still have the HMAC key.
         let hmac_key = ctx.hmac_key.read().await;
         if let Some(key) = *hmac_key {
