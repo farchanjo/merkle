@@ -1,4 +1,4 @@
-//! `AuditOp` — closed enum of all 32 auditable vault operations.
+//! `AuditOp` — closed enum of all 33 auditable vault operations.
 
 use std::fmt;
 use std::str::FromStr;
@@ -11,9 +11,11 @@ use crate::ParseError;
 ///
 /// This enum is **closed** (`#[non_exhaustive]` is intentionally absent) —
 /// new operations require an ADR before adding a variant.
-/// Total variants: 32, matching `#AuditOp` in `audit_entry.cue`.
+/// Total variants: 33, matching `#AuditOp` in `audit_entry.cue`.
 /// Amendment 2026-05-23: added `Init` per ADR-0021.
 /// Amendment 2026-06-09: added `Seal` (seal ceremony was logging `Unseal`).
+/// Amendment 2026-07-01: added `Rebaseline` per ADR-0029 (trusted audit
+/// baseline for key-provenance recovery).
 ///
 /// ```
 /// use merkle_types::AuditOp;
@@ -61,6 +63,9 @@ pub enum AuditOp {
     /// Run the vault doctor diagnostic.
     #[serde(rename = "doctor")]
     Doctor,
+    /// Re-anchor the audit chain to a trusted baseline (ADR-0029).
+    #[serde(rename = "rebaseline")]
+    Rebaseline,
     /// Get a secret (proxy/non-reveal access).
     #[serde(rename = "get")]
     Get,
@@ -138,6 +143,7 @@ impl fmt::Display for AuditOp {
             Self::Describe => "describe",
             Self::DisasterRecovery => "disaster_recovery",
             Self::Doctor => "doctor",
+            Self::Rebaseline => "rebaseline",
             Self::Get => "get",
             Self::HttpDownload => "http_download",
             Self::HttpRequest => "http_request",
@@ -180,6 +186,7 @@ impl FromStr for AuditOp {
             "describe" => Ok(Self::Describe),
             "disaster_recovery" => Ok(Self::DisasterRecovery),
             "doctor" => Ok(Self::Doctor),
+            "rebaseline" => Ok(Self::Rebaseline),
             "get" => Ok(Self::Get),
             "http_download" => Ok(Self::HttpDownload),
             "http_request" => Ok(Self::HttpRequest),
@@ -238,6 +245,7 @@ mod tests {
         ("describe", AuditOp::Describe),
         ("disaster_recovery", AuditOp::DisasterRecovery),
         ("doctor", AuditOp::Doctor),
+        ("rebaseline", AuditOp::Rebaseline),
         ("get", AuditOp::Get),
         ("http_download", AuditOp::HttpDownload),
         ("http_request", AuditOp::HttpRequest),
@@ -261,8 +269,8 @@ mod tests {
     ];
 
     #[test]
-    fn exactly_32_variants() {
-        assert_eq!(ALL_OPS.len(), 32, "AuditOp must have exactly 32 variants");
+    fn exactly_33_variants() {
+        assert_eq!(ALL_OPS.len(), 33, "AuditOp must have exactly 33 variants");
     }
 
     #[test]

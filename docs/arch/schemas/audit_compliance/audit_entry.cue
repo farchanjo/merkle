@@ -12,14 +12,17 @@ package audit_compliance
 
 // #AuditOp is the closed enum of all auditable vault operations.
 // Append-only; new operations require an ADR before adding a variant.
-// Total: 32 values.
+// Total: 33 values.
 // Amendment 2026-05-23: added "init" per ADR-0021 (init vault bootstrap ceremony).
 // Amendment 2026-06-09: added "seal" — the seal ceremony was mislabelling its
 // audit entry as "unseal".
+// Amendment 2026-07-01: added "rebaseline" per ADR-0029 (trusted audit baseline
+// for key-provenance recovery).
 #AuditOp:
 	"init" |
 	"unseal" |
 	"seal" |
+	"rebaseline" |
 	"put" |
 	"get" |
 	"use" |
