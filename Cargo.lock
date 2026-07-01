@@ -2310,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-companion-socket"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2346,7 +2346,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-crypto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "age",
  "argon2",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-external-services"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-keychain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "age",
  "async-trait",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-oob"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2445,7 +2445,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-adapter-sqlite"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2469,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-agent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2504,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2533,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-bdd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2586,7 +2586,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-companion-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "http-body-util",
@@ -2605,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-domain-access-mediation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-domain-audit-compliance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -2633,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-domain-backup-recovery"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "merkle-types",
@@ -2645,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-domain-identity"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -2661,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-domain-policy-permissions"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "merkle-types",
@@ -2673,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-domain-secret-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "merkle-types",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-e2e"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2703,7 +2703,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-ports"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "merkle-domain-access-mediation",
@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "merkle-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
