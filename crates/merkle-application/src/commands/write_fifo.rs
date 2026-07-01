@@ -176,7 +176,8 @@ fn create_fifo(path: &PathBuf) -> Result<(), AppError> {
         // direct dependency while remaining SAFETY-comment-free in the application
         // layer. The path is known-safe (temp dir + hex token).
         let status = std::process::Command::new("mkfifo")
-            .arg("--mode=0600")
+            .arg("-m")
+            .arg("600")
             .arg(path)
             .status()
             .map_err(|e| AppError::Domain(format!("write_fifo: mkfifo exec failed: {e}")))?;
@@ -201,6 +202,8 @@ mod tests {
     use super::*;
     use crate::commands::unseal_vault::test_support;
     use crate::commands::use_token::UseTokenCommand;
+
+    use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
 
     use merkle_types::UuidV7;
 
@@ -286,5 +289,33 @@ mod tests {
             !path.exists(),
             "BUG-01: a rejected token must not create a FIFO"
         );
+    }
+
+    /// Portability regression: `mkfifo` must be invoked with the POSIX-portable
+    /// short-flag form `-m 600` (works on both BSD/macOS and GNU/Linux), not the
+    /// GNU-only long flag `--mode=0600` which BSD/macOS `mkfifo` rejects with
+    /// `illegal option -- -`. Asserts `create_fifo` succeeds here and leaves a
+    /// real FIFO at mode 0600.
+    #[test]
+    fn create_fifo_succeeds_with_portable_mode_flag() {
+        let path = std::env::temp_dir().join("merkle_test_create_fifo_portable_mode.fifo");
+        let _ = std::fs::remove_file(&path);
+
+        let result = create_fifo(&path);
+
+        assert!(result.is_ok(), "create_fifo must succeed, got: {result:?}");
+
+        let metadata = std::fs::metadata(&path).expect("fifo path must exist");
+        assert!(
+            metadata.file_type().is_fifo(),
+            "created path must be a FIFO"
+        );
+        assert_eq!(
+            metadata.permissions().mode() & 0o777,
+            0o600,
+            "FIFO must be created at mode 0600"
+        );
+
+        std::fs::remove_file(&path).expect("cleanup: remove test fifo");
     }
 }
