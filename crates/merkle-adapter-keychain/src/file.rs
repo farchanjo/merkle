@@ -221,6 +221,10 @@ impl FileKeystoreAdapter {
 
 #[async_trait]
 impl Keychain for FileKeystoreAdapter {
+    fn backend_name(&self) -> &'static str {
+        "file"
+    }
+
     /// Store `secret` under `(service, account)` and persist to disk.
     ///
     /// Also updates the sentinel account-index entry so that [`Self::list`]

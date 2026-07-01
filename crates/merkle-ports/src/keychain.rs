@@ -32,4 +32,15 @@ pub trait Keychain: Send + Sync {
 
     /// List all account names stored under `service`.
     async fn list(&self, service: &str) -> Result<Vec<String>, KeychainError>;
+
+    /// Human-readable name of the concrete backend (`"os"`, `"file"`, `"mock"`).
+    ///
+    /// Surfaced by diagnostics (`doctor`) so the operator can see which backend
+    /// actually resolved — the `auto` policy silently falls back from the OS
+    /// keychain to the file keystore under a headless/unapproved process
+    /// (ADR-0015), and that resolved choice determines VRK provenance. Defaults
+    /// to `"unknown"`; each adapter overrides it.
+    fn backend_name(&self) -> &'static str {
+        "unknown"
+    }
 }

@@ -113,6 +113,10 @@ impl MockKeychainAdapter {
 
 #[async_trait]
 impl Keychain for MockKeychainAdapter {
+    fn backend_name(&self) -> &'static str {
+        "mock"
+    }
+
     /// Store `secret` under `(service, account)`.
     ///
     /// Also updates the sentinel index for `service` so that [`Self::list`]

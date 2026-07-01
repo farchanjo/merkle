@@ -168,6 +168,10 @@ impl Keychain for OsKeychainAdapter {
         .map_err(|e| KeychainError::Backend(format!("spawn_blocking join: {e}")))?
     }
 
+    fn backend_name(&self) -> &'static str {
+        "os"
+    }
+
     /// List all accounts stored under `service` by reading the sentinel index.
     async fn list(&self, service: &str) -> Result<Vec<String>, KeychainError> {
         debug!(service, "os keychain list");

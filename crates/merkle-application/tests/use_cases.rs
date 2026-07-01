@@ -712,6 +712,19 @@ async fn test_doctor_reports_chain_integrity_ok() {
         .find(|c| c.name == "audit_chain_integrity")
         .expect("audit_chain_integrity check must be present");
     assert!(chain_check.ok, "audit chain integrity check must pass");
+
+    // ADR-0015 hardening: doctor surfaces the resolved keystore backend.
+    let backend_check = doctor_out
+        .checks
+        .iter()
+        .find(|c| c.name == "keystore_backend")
+        .expect("keystore_backend check must be present");
+    assert!(backend_check.ok, "keystore_backend check is informational (ok)");
+    assert_eq!(
+        backend_check.detail.as_deref(),
+        Some("mock"),
+        "test context uses the mock keychain backend"
+    );
 }
 
 /// T11 — write_tempfile returns opaque token and file exists on disk.

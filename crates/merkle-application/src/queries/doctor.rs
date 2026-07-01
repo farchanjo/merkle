@@ -78,7 +78,17 @@ impl DoctorQuery {
             .is_ok_and(|r| r.result.outcome == ChainOutcome::Intact);
         let chain_detail = chain_result.as_ref().map_or_else(
             |e| format!("error: {e}"),
-            |r| format!("entries_checked={}", r.result.entries_checked),
+            |r| match r.result.baseline_seq {
+                // Loud diagnostics: when a trusted baseline (ADR-0029) is
+                // anchoring verification, surface it so a green chain that is
+                // running on a quarantined prefix is never mistaken for a
+                // fully-authenticated one.
+                Some(seq) => format!(
+                    "entries_checked={}; baseline_seq={seq}; quarantined_below={}",
+                    r.result.entries_checked, r.result.quarantined_below
+                ),
+                None => format!("entries_checked={}", r.result.entries_checked),
+            },
         );
         checks.push(DoctorCheckResult {
             name: "audit_chain_integrity".into(),
@@ -112,6 +122,16 @@ impl DoctorQuery {
             detail: fts5_detail.or_else(|| {
                 Some("columns: name, tags, description, category, namespace_label; weights: 10.0, 5.0, 3.0, 2.0, 1.0".into())
             }),
+        });
+
+        // Check 6: keystore backend actually in use (ADR-0015 auto-fallback
+        // visibility). Informational — always `ok` — so the operator can see
+        // whether the OS keychain resolved or the `auto` policy fell back to the
+        // file keystore, which is the VRK-provenance surface behind ADR-0029.
+        checks.push(DoctorCheckResult {
+            name: "keystore_backend".into(),
+            ok: true,
+            detail: Some(ctx.keychain.backend_name().to_owned()),
         });
 
         let all_ok = checks.iter().all(|c| c.ok);
