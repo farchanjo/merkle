@@ -2330,6 +2330,7 @@ dependencies = [
  "merkle-domain-audit-compliance",
  "merkle-domain-backup-recovery",
  "merkle-domain-identity",
+ "merkle-domain-policy-permissions",
  "merkle-domain-secret-storage",
  "merkle-ports",
  "merkle-types",
@@ -2506,6 +2507,7 @@ dependencies = [
 name = "merkle-application"
 version = "0.2.0"
 dependencies = [
+ "age",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -2524,11 +2526,13 @@ dependencies = [
  "merkle-domain-secret-storage",
  "merkle-ports",
  "merkle-types",
+ "secrecy",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
