@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::process::Child;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use merkle_domain_access_mediation::error::DomainError;
 use merkle_domain_access_mediation::use_token::UseToken;
@@ -104,6 +104,16 @@ pub struct AppContext {
     /// seconds and are scoped to the daemon process, so a restart simply
     /// invalidates every outstanding token — the fail-closed default.
     pub use_tokens: Arc<RwLock<HashMap<String, UseToken>>>,
+
+    /// Serializes the one-time init ceremony (`InitVaultCommand`).
+    ///
+    /// The ceremony is a check-then-write sequence across several independent
+    /// keychain round-trips; two overlapping inits could interleave and persist
+    /// a master key paired with a VRK wrapped under a *different* master key,
+    /// bricking the vault permanently. Holding this mutex for the whole ceremony
+    /// makes concurrent inits mutually exclusive. Shared across all `AppContext`
+    /// clones because it is an `Arc`.
+    pub init_lock: Arc<Mutex<()>>,
 }
 
 impl AppContext {
@@ -131,6 +141,7 @@ impl AppContext {
             audit_log: Arc::new(RwLock::new(AuditLog::new())),
             active_port_forwards: Arc::new(RwLock::new(HashMap::new())),
             use_tokens: Arc::new(RwLock::new(HashMap::new())),
+            init_lock: Arc::new(Mutex::new(())),
         }
     }
 

@@ -75,16 +75,20 @@ pub async fn run(
         cli_err
     })?;
 
-    // ── Recovery Key display (REQUIRED — always before any other output) ──
+    // ── Recovery recipient display (REQUIRED — always before any other output) ──
     println!();
     println!("===================================================================");
-    println!("  RECOVERY KEY — RECORD THIS OFFLINE BEFORE CONTINUING");
+    println!("  RECOVERY RECIPIENT — CONFIRM YOU HOLD THE MATCHING PRIVATE KEY");
     println!("===================================================================");
     println!();
     println!("  {}", resp.recovery_key);
     println!();
-    println!("  This is the ONLY time this key is shown.");
-    println!("  If you lose it, encrypted backups cannot be decrypted.");
+    println!("  The Vault Root Key (and encrypted backups) are wrapped under this");
+    println!("  age recipient. Disaster recovery REQUIRES the matching private age");
+    println!("  identity (AGE-SECRET-KEY-1...) that you configured via");
+    println!("  MERKLE_RECOVERY_RECIPIENT. Keep that private identity safe and");
+    println!("  offline — if you lose it and the OS keychain, the vault and");
+    println!("  backups cannot be decrypted.");
     println!("===================================================================");
     println!();
 

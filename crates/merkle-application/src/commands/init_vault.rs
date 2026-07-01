@@ -1,25 +1,32 @@
 //! `InitVaultCommand` — init vault bootstrap ceremony (ADR-0021).
 //!
-//! Executes the 8-step ceremony:
+//! Executes the ceremony (serialized by `AppContext::init_lock`):
 //!
 //! 1. Check idempotency — keychain entry `dev.fapp.merkle / master-v1`.
 //! 2. Generate Master Key (32 bytes, OsRng).
 //! 3. Persist Master Key in OS Keychain under `dev.fapp.merkle / master-v1`.
-//! 4. Generate Recovery Key (age X25519 identity).
+//! 4. Resolve the operator's Recovery recipient (`MERKLE_RECOVERY_RECIPIENT`).
 //! 5. Generate Vault Root Key (32 bytes, OsRng).
-//! 6. Dual-wrap VRK: AEAD(VRK, master_key) + ECIES(VRK, recovery_pubkey).
+//! 6. Dual-wrap VRK: AEAD(VRK, master_key) + age-encrypt(VRK, recovery recipient).
 //! 7. Persist wrapped copies — master-wrapped in keychain under `vrk-master-v1`,
 //!    recovery-wrapped under `vrk-recovery-v1`, using base64 encoding.
 //! 8. Emit audit entry op=init, outcome=allow.
-//! 9. Return vault_id, recovery_key (age public key string), master_key_keychain_ref.
+//! 9. Return vault_id, recovery_key (the recovery recipient), master_key_keychain_ref.
 //!
-//! The `recovery_key` in the response is the **only** transmission of the
-//! age X25519 public key. The private identity is never stored.
+//! **Disaster recovery (ADR-0021).** The VRK is wrapped a second time under the
+//! operator's recovery recipient — the age public key the operator supplied via
+//! `MERKLE_RECOVERY_RECIPIENT` and whose PRIVATE identity they hold out-of-band.
+//! This is what makes `vrk-recovery-v1` decryptable if the OS keychain (and thus
+//! the master key) is lost. The ceremony MUST NOT mint an ephemeral recovery
+//! keypair and discard its private half — that produces a write-only, forever
+//! undecryptable recovery blob and a meaningless "recovery key".
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use merkle_domain_identity::{KEYCHAIN_ACCOUNT_MASTER_KEY, KEYCHAIN_SERVICE};
+use merkle_ports::AgeRecipient;
 use merkle_types::{AuditOp, AuditOutcome, NamespaceId, SecurityProfile, UuidV7};
-use tracing::info;
+use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 use crate::{AppContext, AppError};
 
@@ -59,10 +66,11 @@ pub struct InitVaultOutput {
     /// UUIDv7 identifying this vault installation.
     pub vault_id: UuidV7,
 
-    /// The age X25519 public key string (`age1<bech32>`).
+    /// The recovery recipient (`age1<bech32>`) the VRK was wrapped under.
     ///
-    /// This is the ONLY time this value is transmitted. It MUST NOT be logged
-    /// or persisted by any component.
+    /// This echoes the operator-supplied `MERKLE_RECOVERY_RECIPIENT`; the
+    /// operator holds the matching private age identity out-of-band and uses it
+    /// to decrypt `vrk-recovery-v1` during disaster recovery.
     pub recovery_key: String,
 
     /// Canonical service + account reference where the Master Key was stored.
@@ -88,6 +96,13 @@ impl InitVaultCommand {
                   atomic ceremony across private helpers without clarity gain"
     )]
     pub async fn execute(&self, ctx: &AppContext) -> Result<InitVaultOutput, AppError> {
+        // Serialize the whole ceremony: the idempotency probe (step 1) and the
+        // three keychain writes (steps 3, 7) form a check-then-write sequence
+        // across independent round-trips. Two overlapping inits could interleave
+        // and persist a master key paired with a VRK wrapped under a *different*
+        // master key, permanently bricking the vault. Hold the lock end-to-end.
+        let _init_guard = ctx.init_lock.lock().await;
+
         info!("init_vault: checking idempotency (step 1)");
 
         // ── Step 1: Check idempotency ──────────────────────────────────────
@@ -113,8 +128,10 @@ impl InitVaultCommand {
         }
 
         // ── Step 2: Generate Master Key (32 random bytes, OsRng) ────────────
+        // Zeroizing so the plaintext master key is wiped when this frame drops,
+        // on every path (success or early return).
         info!("init_vault: generating master key (step 2)");
-        let master_key_bytes: [u8; 32] = ctx.crypto.random_bytes_32();
+        let master_key_bytes = Zeroizing::new(ctx.crypto.random_bytes_32());
 
         // ── Step 3: Persist Master Key in OS Keychain ──────────────────────
         info!("init_vault: storing master key in keychain (step 3)");
@@ -122,7 +139,7 @@ impl InitVaultCommand {
             .store(
                 KEYCHAIN_SERVICE,
                 KEYCHAIN_ACCOUNT_MASTER_KEY,
-                &master_key_bytes,
+                &*master_key_bytes,
             )
             .await
             .map_err(|e| {
@@ -130,36 +147,67 @@ impl InitVaultCommand {
                 AppError::Keychain(e)
             })?;
 
-        // ── Step 4: Generate Recovery Key (age X25519) ─────────────────────
-        // Generate a fresh X25519 keypair. The private key is used only for
-        // wrapping the VRK (step 6) and MUST NOT be stored.
-        info!("init_vault: generating recovery key (step 4)");
-        let (recovery_privkey, recovery_pubkey_raw) = ctx.crypto.x25519_keypair();
-        let recovery_key_str = encode_age_public_key(&recovery_pubkey_raw.0);
+        // ── Step 4: Resolve the operator's Recovery recipient ──────────────
+        // The recipient is the operator-supplied age public key
+        // (`MERKLE_RECOVERY_RECIPIENT`, GAP-003) whose private identity the
+        // operator holds out-of-band. Wrapping the VRK under it is what makes
+        // recovery possible when the master key is lost — NEVER mint an
+        // ephemeral keypair here and discard its private half.
+        info!("init_vault: resolving recovery recipient (step 4)");
+        let recovery_recipient = ctx
+            .identity
+            .read()
+            .await
+            .recovery_pubkey()
+            .identity_pubkey()
+            .to_owned();
 
         // ── Step 5: Generate Vault Root Key (32 random bytes, OsRng) ────────
         info!("init_vault: generating vault root key (step 5)");
-        let vrk_bytes: [u8; 32] = ctx.crypto.random_bytes_32();
+        let vrk_bytes = Zeroizing::new(ctx.crypto.random_bytes_32());
 
         // ── Step 6: Dual-wrap VRK ──────────────────────────────────────────
         // 6a. AEAD(VRK, master_key) — XChaCha20-Poly1305 with random nonce.
         info!("init_vault: dual-wrapping VRK (step 6)");
         let nonce_master: [u8; 24] = ctx.crypto.random_bytes_24();
-        let wrapped_by_master = ctx
-            .crypto
-            .aead_encrypt(&master_key_bytes, &nonce_master, &vrk_bytes, VRK_MASTER_AAD)
-            .inspect_err(|_e| {
-                // Clean up keychain on failure (best-effort): drop key material.
-                let _ = std::hint::black_box((&master_key_bytes, &recovery_privkey.0));
-            })?;
+        let wrapped_by_master = match ctx.crypto.aead_encrypt(
+            &master_key_bytes,
+            &nonce_master,
+            vrk_bytes.as_slice(),
+            VRK_MASTER_AAD,
+        ) {
+            Ok(ct) => ct,
+            Err(e) => {
+                // Roll back the master key persisted in step 3 so a retry is not
+                // permanently blocked by the step-1 idempotency check on a
+                // half-initialized vault.
+                warn!("init_vault: VRK master-wrap failed, rolling back master key");
+                let _ = ctx
+                    .keychain
+                    .delete(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY)
+                    .await;
+                return Err(e.into());
+            }
+        };
 
-        // 6b. ECIES(VRK, recovery_pubkey) — X25519 + XChaCha20-Poly1305.
-        let recovery_pk_typed = merkle_ports::X25519PublicKey(recovery_pubkey_raw.0);
-        let wrapped_by_recovery = ctx.crypto.x25519_ecies_encrypt(
-            &recovery_pk_typed,
-            &vrk_bytes,
-            b"vault-root-key-recovery",
-        )?;
+        // 6b. age-encrypt(VRK, recovery recipient). The operator can decrypt
+        // `vrk-recovery-v1` with their held age identity during disaster
+        // recovery. Nothing (steps 7+) is persisted yet beyond the master key,
+        // so a failure here rolls back to a clean, re-initializable state.
+        let wrapped_by_recovery = match ctx
+            .crypto
+            .age_encrypt(&[AgeRecipient(recovery_recipient.clone())], vrk_bytes.as_slice())
+        {
+            Ok(ct) => ct,
+            Err(e) => {
+                warn!("init_vault: VRK recovery-wrap failed, rolling back master key");
+                let _ = ctx
+                    .keychain
+                    .delete(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY)
+                    .await;
+                return Err(e.into());
+            }
+        };
 
         // ── Step 7: Persist both wrapped copies ────────────────────────────
         // We use the Keychain port (the only writable persistent port available
@@ -175,11 +223,9 @@ impl InitVaultCommand {
             BASE64.encode(&buf).into_bytes()
         };
 
-        let recovery_wrapped_payload = {
-            let envelope = serde_json::to_vec(&wrapped_by_recovery)
-                .map_err(|e| AppError::Domain(e.to_string()))?;
-            BASE64.encode(&envelope).into_bytes()
-        };
+        // age_encrypt already returns a self-describing armored/binary blob, so
+        // base64 it directly (no envelope framing needed, unlike the old ECIES).
+        let recovery_wrapped_payload = BASE64.encode(&wrapped_by_recovery).into_bytes();
 
         // Store master-wrapped VRK. On failure, remove master key from keychain.
         if let Err(e) = ctx
@@ -229,6 +275,8 @@ impl InitVaultCommand {
         let namespace_id = NamespaceId::new(); // vault root namespace
         let hmac_key =
             crate::commands::unseal_vault::derive_audit_hmac_key(ctx.crypto.as_ref(), &vrk_bytes);
+        // `hmac_key` and the wrapped copies are all derived; `vrk_bytes` and
+        // `master_key_bytes` are wiped by their `Zeroizing` drop at frame end.
 
         let vault_id = UuidV7::new();
         let params = merkle_domain_audit_compliance::AppendParams::new(
@@ -244,103 +292,10 @@ impl InitVaultCommand {
 
         Ok(InitVaultOutput {
             vault_id,
-            recovery_key: recovery_key_str,
+            recovery_key: recovery_recipient,
             master_key_keychain_ref: KEYCHAIN_REF.to_owned(),
         })
     }
-}
-
-// ---------------------------------------------------------------------------
-// age X25519 public key bech32 encoding
-// ---------------------------------------------------------------------------
-
-/// Encode a 32-byte X25519 public key as an age recipient string (`age1<bech32>`).
-///
-/// age uses bech32 with HRP `age`. The 32 raw bytes are converted to 5-bit
-/// groups using the standard bech32 alphabet. A bech32 checksum is appended.
-fn encode_age_public_key(pubkey: &[u8; 32]) -> String {
-    // bech32 charset (BIP-0173).
-    const CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-
-    // Convert 8-bit groups to 5-bit groups.
-    let mut data: Vec<u8> = Vec::with_capacity(52);
-    let mut acc: u32 = 0;
-    let mut bits: u32 = 0;
-    for &byte in pubkey {
-        acc = (acc << 8) | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            data.push(u8::try_from((acc >> bits) & 0x1f).unwrap_or(0));
-        }
-    }
-    if bits > 0 {
-        data.push(u8::try_from((acc << (5 - bits)) & 0x1f).unwrap_or(0));
-    }
-
-    // Compute bech32 checksum for HRP "age".
-    let checksum = bech32_checksum(b"age", &data);
-
-    // Assemble the final string.
-    let mut encoded = String::with_capacity(4 + 1 + data.len() + 6);
-    encoded.push_str("age1");
-    for &v in &data {
-        encoded.push(char::from(CHARSET[v as usize]));
-    }
-    for &c in &checksum {
-        encoded.push(char::from(CHARSET[c as usize]));
-    }
-    encoded
-}
-
-/// Compute a 6-element bech32 checksum over `hrp` and `data`.
-fn bech32_checksum(hrp: &[u8], data: &[u8]) -> [u8; 6] {
-    let mut values: Vec<u32> = Vec::with_capacity(hrp.len() * 2 + data.len() + 6);
-
-    // HRP high bits
-    for &c in hrp {
-        values.push(u32::from(c) >> 5);
-    }
-    values.push(0);
-    // HRP low bits
-    for &c in hrp {
-        values.push(u32::from(c) & 0x1f);
-    }
-    // data
-    for &d in data {
-        values.push(u32::from(d));
-    }
-    // padding for checksum
-    values.extend(std::iter::repeat_n(0u32, 6));
-
-    let polymod = bech32_polymod(&values) ^ 1;
-    let mut checksum = [0u8; 6];
-    for (i, c) in checksum.iter_mut().enumerate() {
-        *c = u8::try_from((polymod >> (5 * (5 - i))) & 0x1f).unwrap_or(0);
-    }
-    checksum
-}
-
-/// bech32 polymod function (GF(2^5) polynomial).
-fn bech32_polymod(values: &[u32]) -> u32 {
-    const GEN: [u32; 5] = [
-        0x3b6a_57b2,
-        0x2650_8e6d,
-        0x1ea1_19fa,
-        0x3d42_33dd,
-        0x2a14_62b3,
-    ];
-    let mut chk: u32 = 1;
-    for &v in values {
-        let b = chk >> 25;
-        chk = (chk & 0x1ff_ffff) << 5 ^ v;
-        for (i, &g) in GEN.iter().enumerate() {
-            if (b >> i) & 1 == 1 {
-                chk ^= g;
-            }
-        }
-    }
-    chk
 }
 
 #[cfg(test)]
@@ -348,34 +303,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn age_public_key_format() {
-        let pubkey = [0xAB_u8; 32];
-        let encoded = encode_age_public_key(&pubkey);
-        assert!(
-            encoded.starts_with("age1"),
-            "must start with age1, got: {encoded}"
-        );
-        assert!(
-            encoded.chars().all(|c| c.is_ascii_alphanumeric()),
-            "must be alphanumeric, got: {encoded}"
-        );
-        // age bech32: "age1" + 52 data chars + 6 checksum chars = 62 chars minimum
-        assert!(
-            encoded.len() >= 10,
-            "must be at least 10 chars, got len={}",
-            encoded.len()
-        );
-    }
-
-    #[test]
     fn keychain_ref_constant() {
         assert_eq!(KEYCHAIN_REF, "dev.fapp.merkle/master-v1");
-    }
-
-    #[test]
-    fn different_keys_produce_different_encodings() {
-        let key_a = [0x00_u8; 32];
-        let key_b = [0xFF_u8; 32];
-        assert_ne!(encode_age_public_key(&key_a), encode_age_public_key(&key_b));
     }
 }
