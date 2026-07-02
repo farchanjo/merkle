@@ -1,9 +1,16 @@
 #!/bin/sh
 # merkle-agent-launchd — launchd wrapper for /usr/local/bin/merkle-agent.
 #
-# Reads MERKLE_KEYSTORE_PASSPHRASE from the macOS login Keychain
-# (service: dev.fapp.merkle.launchd, account: passphrase) and exec's
-# the vault agent. Avoids plain-text secrets in the LaunchAgent plist.
+# Pins the OS keychain keystore backend (ADR-0029 Amendment 1) and
+# opportunistically reads MERKLE_KEYSTORE_PASSPHRASE from the macOS login
+# Keychain (service: dev.fapp.merkle.launchd, account: passphrase) before
+# exec'ing the vault agent. Avoids plain-text secrets in the LaunchAgent
+# plist.
+#
+# The passphrase is OPTIONAL once the OS keystore backend is pinned and
+# provisioned: it is only consumed for the one-time file->OS keystore
+# migration, or as a fallback if the backend ever degrades to `file`. A
+# missing keychain entry is logged and non-fatal — the agent still execs.
 #
 # Install (after deploying merkle-agent per project CLAUDE.md):
 #   sudo install -m 755 -o root -g wheel \
@@ -20,9 +27,11 @@
 #
 # Exit codes:
 #   0   — agent exited cleanly (SIGTERM); launchd KeepAlive will NOT respawn.
-#   1+  — keychain fetch failed OR agent crashed; KeepAlive respawns after ThrottleInterval.
+#   1+  — agent crashed; KeepAlive respawns after ThrottleInterval.
 
 set -eu
+
+export MERKLE__KEYSTORE__BACKEND="${MERKLE__KEYSTORE__BACKEND:-os}"
 
 PASS="$(/usr/bin/security find-generic-password \
   -s 'dev.fapp.merkle.launchd' \
@@ -30,12 +39,12 @@ PASS="$(/usr/bin/security find-generic-password \
   -w 2>/dev/null || true)"
 
 if [ -z "$PASS" ]; then
-  echo "merkle-agent-launchd: keychain entry dev.fapp.merkle.launchd/passphrase not found" >&2
+  echo "merkle-agent-launchd: keychain entry dev.fapp.merkle.launchd/passphrase not found — continuing without it (OS keystore backend does not require it)" >&2
   echo "  provision via: security add-generic-password -s 'dev.fapp.merkle.launchd' -a 'passphrase' -w '<pass>' -U" >&2
-  exit 1
+else
+  export MERKLE_KEYSTORE_PASSPHRASE="$PASS"
 fi
 
-export MERKLE_KEYSTORE_PASSPHRASE="$PASS"
 export MERKLE_LOG="${MERKLE_LOG:-info}"
 
 exec /usr/local/bin/merkle-agent
