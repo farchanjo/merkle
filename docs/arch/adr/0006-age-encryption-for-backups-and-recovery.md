@@ -326,3 +326,38 @@ Cross-reference: [0005-argon2id-kdf-for-passphrase-fallback.md](0005-argon2id-kd
 [0004-xchacha20-poly1305-aead-for-blobs.md](0004-xchacha20-poly1305-aead-for-blobs.md),
 [0009-merkle-style-audit-hash-chain.md](0009-merkle-style-audit-hash-chain.md),
 [0015-rust-keyring-crate-for-multi-os-keychain.md](0015-rust-keyring-crate-for-multi-os-keychain.md).
+
+## Amendment — 2026-07-01
+
+### Recovery Identity Is Operator-Supplied, Not Agent-Generated
+
+This amendment supersedes the "Amendment 2 — Recovery Key Generation
+Algorithm" mechanism above. That amendment had the agent draw 32 bytes from
+`OsRng` at `merkle init`, construct the `age` X25519 identity itself, and
+display the `AGE-SECRET-KEY-1…` secret to the operator exactly once. In the
+shipped design the agent never generates or displays a recovery secret key.
+
+**Corrected model (mandatory):** the operator PRE-GENERATES the `age` recovery
+identity out-of-band and holds the private half themselves. Only the
+recipient (a real `age1…` X25519 recipient) is supplied to the agent, via
+`MERKLE_RECOVERY_RECIPIENT` (required at startup; placeholders are rejected).
+At init the `wrapped_by = "recovery"` copy of the Vault Root Key is produced
+by `age`-encrypting the VRK under that operator-supplied recipient, and the
+`recovery_key` returned by init merely echoes that same recipient — it is not
+a freshly minted secret.
+
+Consequences for text above:
+- The `OsRng`-draw / identity-construction / secret-display procedure in
+  Amendment 2 no longer applies; the agent stores no recovery secret and has
+  none to display.
+- The `recovery_pubkey` in `config.toml` and the recipient echoed by init are
+  the operator's own recipient, not a value the agent derived.
+- Disaster recovery is unchanged in intent: the VRK remains recoverable via
+  the operator-held private identity if the OS Keychain or Master Key is lost.
+- `merkle verify-recovery-key` (Amendment 1) still applies: it confirms the
+  operator-held identity matches the stored recipient.
+
+Cross-reference: [0021-init-vault-bootstrap-ceremony.md](0021-init-vault-bootstrap-ceremony.md)
+Amendment — 2026-07-01,
+[0004-xchacha20-poly1305-aead-for-blobs.md](0004-xchacha20-poly1305-aead-for-blobs.md),
+[0015-rust-keyring-crate-for-multi-os-keychain.md](0015-rust-keyring-crate-for-multi-os-keychain.md).
