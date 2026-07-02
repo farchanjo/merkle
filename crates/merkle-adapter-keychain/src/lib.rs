@@ -35,8 +35,16 @@
 //! ## Headless / CI contexts
 //!
 //! [`FileKeystoreAdapter`] persists secrets to an age-encrypted file and is
-//! intended for CI pipelines, Docker containers, and macOS background processes
-//! where the OS keychain is unavailable or silently no-ops writes.
+//! intended for CI pipelines and Docker containers where no OS keychain
+//! backend is reachable at all, or as the fallback the daemon takes when the
+//! write+verify+delete persistence probe (ADR-0015 Amendment 4) catches a
+//! genuine no-GUI-auth keychain failure. It is **not** the macOS default:
+//! with the `apple-native` `keyring` feature enabled, the `os`/`auto`
+//! backends use the real Security framework keychain from background/launchd
+//! processes in the same login session. A missing `apple-native` feature
+//! once routed macOS to the crate's in-memory mock store instead, which was
+//! misdiagnosed as "macOS silently no-ops keychain writes" — see ADR-0015
+//! Amendment 5 and ADR-0029 Amendment 1 for the corrected root cause.
 //! See `docs/arch/adr/0022-file-backed-keystore-for-headless-contexts.md`.
 
 pub mod file;

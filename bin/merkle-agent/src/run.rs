@@ -315,12 +315,17 @@ async fn build_keychain(cfg: &AgentConfig) -> anyhow::Result<Arc<dyn Keychain>> 
                     | KeychainError::Backend(_),
                 ) => {
                     tracing::warn!(
-                        "keystore auto: OS keychain write+verify FAILED — macOS silently \
-                         no-ops keychain writes for a headless/unapproved process (ADR-0015). \
-                         Falling back to the file keystore. That file keystore's VRK is now the \
-                         source of truth for the audit-chain HMAC key; pin it with \
-                         [keystore] backend = \"file\" (or MERKLE__KEYSTORE__BACKEND=file) to \
-                         avoid backend flip-flop across restarts (see ADR-0029)."
+                        "keystore auto: OS keychain write+verify FAILED — the persistence \
+                         probe (ADR-0015 Amendment 4) could not round-trip a sentinel entry \
+                         through the OS keychain backend (a genuine no-GUI-auth failure, a \
+                         headless session with no Secret Service/Credential Manager, or \
+                         another backend fault; see ADR-0015 Amendment 5 / ADR-0029 Amendment \
+                         1 for a past macOS build-feature bug that produced this same \
+                         symptom). Falling back to the file keystore. That file keystore's \
+                         VRK is now the source of truth for the audit-chain HMAC key; pin it \
+                         with [keystore] backend = \"file\" (or \
+                         MERKLE__KEYSTORE__BACKEND=file) to avoid backend flip-flop across \
+                         restarts (see ADR-0029)."
                     );
                     let path = cfg.keystore.resolved_file_path();
                     let passphrase = read_keystore_passphrase()?;

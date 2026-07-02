@@ -277,7 +277,7 @@ Redeploy fast path: `launchctl kickstart -k gui/$UID/dev.fapp.merkle.agent`. Ful
 | `rmcp` | 1.7 | **1.8.0** | `["server","macros"]`; many types `#[non_exhaustive]` |
 | `sqlx` | 0.8 | — | sqlite + runtime-tokio-rustls + macros + chrono + uuid |
 | `axum` | 0.8 | — | socket server (`["macros"]`) |
-| `keyring` | 3.6 | — | `["sync-secret-service"]` |
+| `keyring` | 3.6 | — | `["apple-native","windows-native","sync-secret-service"]` — `apple-native`/`windows-native` added per ADR-0015 Amendment 5 / ADR-0029 Amendment 1 (a missing `apple-native` feature previously routed macOS to the crate's in-memory mock store, misdiagnosed as a headless no-op) |
 | `prometheus` | 0.14 | 0.14.0 | `default-features=false, features=["process"]` → **protobuf intentionally absent** (drops RUSTSEC-2024-0437) |
 | `config` | 0.15 | 0.15.25 | env overlay prefix `MERKLE`, separator `__` |
 | `toml` | 1.1 (cli local 0.8) | 1.1.2 | both present in the tree |
