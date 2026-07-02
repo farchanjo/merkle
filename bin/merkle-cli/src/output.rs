@@ -3,6 +3,7 @@
 use std::io::{self, Write as _};
 
 use anyhow::Context as _;
+use merkle_companion_client::dto::DoctorResponse;
 
 /// Output format selected via `--output`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -29,6 +30,34 @@ pub fn print_value(value: &serde_json::Value, format: OutputFormat) -> anyhow::R
         }
         OutputFormat::Human => print_human(value),
         OutputFormat::Plain => print_plain(value),
+    }
+    Ok(())
+}
+
+/// Print a `GET /v1/agent/doctor` response: one line per check (name,
+/// status, optional message) followed by a final `overall` line.
+///
+/// - `Human`: key column aligned to the widest check name, mirroring
+///   [`print_human`]'s key/value alignment.
+/// - `Plain`: headerless, tab-separated, mirroring [`print_plain`].
+/// - `Json`: the raw [`DoctorResponse`] serialized compactly.
+pub fn print_doctor(doctor: &DoctorResponse, format: OutputFormat) -> anyhow::Result<()> {
+    match format {
+        OutputFormat::Json => {
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, doctor).context("writing JSON to stdout")?;
+            writeln!(stdout).context("writing newline")?;
+        }
+        OutputFormat::Human => {
+            for line in doctor_lines_human(doctor) {
+                println!("{line}");
+            }
+        }
+        OutputFormat::Plain => {
+            for line in doctor_lines_plain(doctor) {
+                println!("{line}");
+            }
+        }
     }
     Ok(())
 }
@@ -96,5 +125,104 @@ fn render_scalar(v: &serde_json::Value) -> String {
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
         other => serde_json::to_string(other).unwrap_or_else(|_| "(error)".to_owned()),
+    }
+}
+
+/// Column width for the doctor check-name column: the widest check name, or
+/// `"overall"` if that happens to be wider (empty check list).
+fn doctor_name_width(doctor: &DoctorResponse) -> usize {
+    doctor
+        .checks
+        .iter()
+        .map(|c| c.name.len())
+        .max()
+        .unwrap_or(0)
+        .max("overall".len())
+}
+
+fn doctor_lines_human(doctor: &DoctorResponse) -> Vec<String> {
+    let width = doctor_name_width(doctor);
+    let mut lines: Vec<String> = doctor
+        .checks
+        .iter()
+        .map(|check| match &check.message {
+            Some(msg) => format!("{:<width$}  {:<4}  {msg}", check.name, check.status),
+            None => format!("{:<width$}  {}", check.name, check.status),
+        })
+        .collect();
+    lines.push(format!("{:<width$}  {}", "overall", doctor.overall));
+    lines
+}
+
+fn doctor_lines_plain(doctor: &DoctorResponse) -> Vec<String> {
+    let mut lines: Vec<String> = doctor
+        .checks
+        .iter()
+        .map(|check| match &check.message {
+            Some(msg) => format!("{}\t{}\t{msg}", check.name, check.status),
+            None => format!("{}\t{}", check.name, check.status),
+        })
+        .collect();
+    lines.push(format!("overall\t{}", doctor.overall));
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use merkle_companion_client::dto::DoctorCheck;
+
+    fn sample_doctor(overall: &str) -> DoctorResponse {
+        DoctorResponse {
+            checks: vec![
+                DoctorCheck {
+                    name: "vault_state".to_owned(),
+                    status: "pass".to_owned(),
+                    message: Some("unsealed".to_owned()),
+                    duration_ms: 0,
+                },
+                DoctorCheck {
+                    name: "audit_chain_integrity".to_owned(),
+                    status: "pass".to_owned(),
+                    message: None,
+                    duration_ms: 4,
+                },
+            ],
+            overall: overall.to_owned(),
+        }
+    }
+
+    #[test]
+    fn doctor_human_lines_include_checks_and_overall() {
+        let lines = doctor_lines_human(&sample_doctor("healthy"));
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("vault_state"));
+        assert!(lines[0].contains("pass"));
+        assert!(lines[0].contains("unsealed"));
+        assert!(lines[1].starts_with("audit_chain_integrity"));
+        assert!(lines[2].starts_with("overall"));
+        assert!(lines[2].ends_with("healthy"));
+    }
+
+    #[test]
+    fn doctor_plain_lines_are_tab_separated() {
+        let lines = doctor_lines_plain(&sample_doctor("unhealthy"));
+        assert_eq!(lines[0], "vault_state\tpass\tunsealed");
+        assert_eq!(lines[1], "audit_chain_integrity\tpass");
+        assert_eq!(lines[2], "overall\tunhealthy");
+    }
+
+    #[test]
+    fn doctor_name_width_accounts_for_overall() {
+        let doctor = DoctorResponse {
+            checks: vec![DoctorCheck {
+                name: "ok".to_owned(),
+                status: "pass".to_owned(),
+                message: None,
+                duration_ms: 0,
+            }],
+            overall: "healthy".to_owned(),
+        };
+        assert_eq!(doctor_name_width(&doctor), "overall".len());
     }
 }

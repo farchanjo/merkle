@@ -45,6 +45,11 @@ pub enum CliError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// `merkle doctor` completed but the agent's `overall` health status was
+    /// not `"healthy"` (`"degraded"` or `"unhealthy"`).
+    #[error("doctor check failed: overall status is `{0}`")]
+    DoctorUnhealthy(String),
+
     /// Any other error forwarded through anyhow.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -61,6 +66,7 @@ impl CliError {
     /// | 4    | Agent returned an HTTP error |
     /// | 5    | Vault sealed |
     /// | 6    | TTY / passphrase input error |
+    /// | 7    | `merkle doctor` reported a non-healthy overall status |
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::AgentUnreachable(_) => 3,
@@ -68,6 +74,7 @@ impl CliError {
             Self::Sealed => 5,
             Self::MissingConfirm => 2,
             Self::TtyInput(_) => 6,
+            Self::DoctorUnhealthy(_) => 7,
             Self::Json(_) | Self::Config(_) | Self::Io(_) | Self::Other(_) => 1,
         }
     }

@@ -921,3 +921,61 @@ impl CompanionSocketClient {
         self.post("/v1/proxy/crypto/decrypt", &req).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exact wire sample for `GET /v1/agent/doctor`
+    /// (`docs/arch/integrations/openapi/companion-socket.yaml` →
+    /// `DoctorResponse`) — six checks, all passing, `overall: "healthy"`.
+    const DOCTOR_SAMPLE: &str = r#"{
+        "checks": [
+            {"name": "vault_state", "status": "pass", "message": "unsealed", "duration_ms": 0},
+            {"name": "audit_chain_integrity", "status": "pass", "message": "entries_checked=241", "duration_ms": 4},
+            {"name": "storage_liveness", "status": "pass", "duration_ms": 1},
+            {"name": "oob_notifier", "status": "pass", "duration_ms": 0},
+            {"name": "fts5_consistency", "status": "pass", "message": "columns: name, tags, description, category, namespace_label; weights: 10.0, 5.0, 3.0, 2.0, 1.0", "duration_ms": 2},
+            {"name": "keystore_backend", "status": "pass", "message": "os", "duration_ms": 0}
+        ],
+        "overall": "healthy"
+    }"#;
+
+    #[test]
+    fn doctor_response_deserializes_from_wire_sample() {
+        let doctor: DoctorResponse =
+            serde_json::from_str(DOCTOR_SAMPLE).expect("doctor sample must deserialize");
+
+        assert_eq!(doctor.checks.len(), 6);
+        assert_eq!(doctor.overall, "healthy");
+
+        assert_eq!(doctor.checks[0].name, "vault_state");
+        assert_eq!(doctor.checks[0].status, "pass");
+        assert_eq!(doctor.checks[0].message.as_deref(), Some("unsealed"));
+        assert_eq!(doctor.checks[0].duration_ms, 0);
+
+        // `storage_liveness` and `oob_notifier` omit `message` on the wire —
+        // the DTO must treat the field as optional, not required.
+        assert!(doctor.checks[2].message.is_none());
+        assert!(doctor.checks[3].message.is_none());
+
+        assert_eq!(doctor.checks[5].name, "keystore_backend");
+        assert_eq!(doctor.checks[5].message.as_deref(), Some("os"));
+    }
+
+    #[test]
+    fn doctor_response_round_trips_through_serialize() {
+        let doctor: DoctorResponse =
+            serde_json::from_str(DOCTOR_SAMPLE).expect("doctor sample must deserialize");
+
+        let reserialized = serde_json::to_string(&doctor).expect("serialize doctor response");
+        let round_tripped: DoctorResponse =
+            serde_json::from_str(&reserialized).expect("re-deserialize doctor response");
+
+        assert_eq!(round_tripped.overall, doctor.overall);
+        assert_eq!(round_tripped.checks.len(), doctor.checks.len());
+        // `message: None` must round-trip as an absent field, not `null`
+        // (`#[serde(skip_serializing_if = "Option::is_none")]` on `DoctorCheck`).
+        assert!(!reserialized.contains("\"message\":null"));
+    }
+}
