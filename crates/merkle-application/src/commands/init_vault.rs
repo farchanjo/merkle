@@ -194,10 +194,10 @@ impl InitVaultCommand {
         // `vrk-recovery-v1` with their held age identity during disaster
         // recovery. Nothing (steps 7+) is persisted yet beyond the master key,
         // so a failure here rolls back to a clean, re-initializable state.
-        let wrapped_by_recovery = match ctx
-            .crypto
-            .age_encrypt(&[AgeRecipient(recovery_recipient.clone())], vrk_bytes.as_slice())
-        {
+        let wrapped_by_recovery = match ctx.crypto.age_encrypt(
+            &[AgeRecipient(recovery_recipient.clone())],
+            vrk_bytes.as_slice(),
+        ) {
             Ok(ct) => ct,
             Err(e) => {
                 warn!("init_vault: VRK recovery-wrap failed, rolling back master key");

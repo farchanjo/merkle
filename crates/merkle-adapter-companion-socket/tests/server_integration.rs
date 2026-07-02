@@ -620,8 +620,7 @@ async fn test_device_revoke_route_exists() {
 
     // A well-formed UUIDv7 that matches no enrolled device.
     let device_id = "01890000-0000-7000-8000-000000000abc";
-    let (status, body) =
-        http(&sock, "DELETE", &format!("/v1/devices/{device_id}"), None).await;
+    let (status, body) = http(&sock, "DELETE", &format!("/v1/devices/{device_id}"), None).await;
     assert_eq!(
         status,
         StatusCode::NOT_FOUND,

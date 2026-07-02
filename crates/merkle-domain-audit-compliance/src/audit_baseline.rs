@@ -133,7 +133,10 @@ mod tests {
     #[test]
     fn mac_round_trips_under_the_pinning_key() {
         let b = sample().with_mac(&KEY);
-        assert!(b.verify_mac(&KEY), "baseline must authenticate under its key");
+        assert!(
+            b.verify_mac(&KEY),
+            "baseline must authenticate under its key"
+        );
     }
 
     #[test]
@@ -162,6 +165,9 @@ mod tests {
         assert!(!tampered.verify_mac(&KEY), "hash is bound into the MAC");
         let mut tampered = base;
         tampered.entry_count += 1;
-        assert!(!tampered.verify_mac(&KEY), "entry_count is bound into the MAC");
+        assert!(
+            !tampered.verify_mac(&KEY),
+            "entry_count is bound into the MAC"
+        );
     }
 }

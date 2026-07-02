@@ -207,10 +207,7 @@ pub trait Storage: Send + Sync {
     /// Upsert the trusted [`AuditBaseline`](ac::AuditBaseline) checkpoint
     /// (ADR-0029). Adds/updates the checkpoint row; never rewrites the
     /// append-only `audit_entries` log.
-    async fn set_audit_baseline(
-        &self,
-        baseline: &ac::AuditBaseline,
-    ) -> Result<(), StorageError>;
+    async fn set_audit_baseline(&self, baseline: &ac::AuditBaseline) -> Result<(), StorageError>;
 
     /// Read the full audit log, the pinned head, and the trusted baseline as
     /// ONE consistent snapshot (gap #10 — audit-verify snapshot isolation).

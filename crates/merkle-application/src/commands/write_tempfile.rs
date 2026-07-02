@@ -111,7 +111,9 @@ impl WriteTempfileCommand {
         }
         if let Err(e) = file.flush().await {
             let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(AppError::Domain(format!("write_tempfile: flush failed: {e}")));
+            return Err(AppError::Domain(format!(
+                "write_tempfile: flush failed: {e}"
+            )));
         }
         drop(file);
 

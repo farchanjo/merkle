@@ -614,9 +614,17 @@ fn verify_from_baseline_intact_over_poisoned_prefix() {
     let baseline = baseline_at(&first_good, 10);
     let result = ChainVerifier::verify_from_baseline(&log, &pinned, &baseline, &HMAC_KEY);
 
-    assert_eq!(result.outcome, ChainOutcome::Intact, "got {:?}", result.outcome);
+    assert_eq!(
+        result.outcome,
+        ChainOutcome::Intact,
+        "got {:?}",
+        result.outcome
+    );
     assert_eq!(result.baseline_seq, Some(first_good.seq));
-    assert_eq!(result.quarantined_below, 3, "the 3 poisoned entries are quarantined");
+    assert_eq!(
+        result.quarantined_below, 3,
+        "the 3 poisoned entries are quarantined"
+    );
     assert_eq!(result.entries_checked, 10);
     assert!(result.hmac_checked, "the tail is HMAC-authenticated");
 }

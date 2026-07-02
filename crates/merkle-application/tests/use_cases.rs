@@ -733,7 +733,10 @@ async fn test_doctor_reports_chain_integrity_ok() {
         .iter()
         .find(|c| c.name == "keystore_backend")
         .expect("keystore_backend check must be present");
-    assert!(backend_check.ok, "keystore_backend check is informational (ok)");
+    assert!(
+        backend_check.ok,
+        "keystore_backend check is informational (ok)"
+    );
     assert_eq!(
         backend_check.detail.as_deref(),
         Some("mock"),
@@ -1492,8 +1495,11 @@ async fn init_wraps_vrk_recoverably_under_operator_recipient() {
     let oob = Arc::new(MockOobNotifier::new());
     let external = Arc::new(MockExternalServices::new());
     let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
-    let recovery_pubkey =
-        RecoveryPublicKey::new(recipient.clone(), "SHA256:test=".to_owned(), Rfc3339Timestamp::now());
+    let recovery_pubkey = RecoveryPublicKey::new(
+        recipient.clone(),
+        "SHA256:test=".to_owned(),
+        Rfc3339Timestamp::now(),
+    );
     let identity = VaultIdentity::new(keychain_ref, recovery_pubkey);
     let ctx = AppContext::new(
         Arc::new(storage),

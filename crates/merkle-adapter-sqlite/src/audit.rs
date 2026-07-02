@@ -120,7 +120,15 @@ pub(crate) async fn append_audit_entry(
         .map_err(AdapterError::Sqlx)
         .map_err(StorageError::from)?;
     insert_entry_tx(&mut tx, entry).await?;
-    upsert_pinned_head_tx(&mut tx, &head_hash, head_seq, &head_id_blob, &updated_at, None).await?;
+    upsert_pinned_head_tx(
+        &mut tx,
+        &head_hash,
+        head_seq,
+        &head_id_blob,
+        &updated_at,
+        None,
+    )
+    .await?;
     tx.commit()
         .await
         .map_err(AdapterError::Sqlx)
