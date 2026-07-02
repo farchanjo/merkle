@@ -272,7 +272,7 @@ cargo build --release        # produces target/release/{merkle, merkle-agent, me
 The daemon must be running **before** you initialize — `merkle init` sends the init ceremony over the Companion Socket, so the agent has to be up to receive and execute it.
 
 ```bash
-cargo run -p merkle-agent    # dev mode (or: just agent)
+cargo run -p merkle-agent    # dev mode (or: make agent)
 ```
 
 On macOS, you'll normally run the agent as a per-user LaunchAgent — see [LaunchAgent setup](#-development) and the assets in `deploy/launchd/`.
@@ -473,24 +473,28 @@ cargo build --workspace                               # debug build (fast)
 cargo test --workspace --no-fail-fast                 # ~753 pass / 0 fail / ~18 ignored
 cargo clippy --workspace --all-targets -- -D warnings # lint (mirrors CI)
 ~/bin/spec validate                                   # medium lane — must stay 9/9 green
-just doctor                                           # check + clippy + test (no spec lane)
+make doctor                                           # check + clippy + test (no spec lane; `make doctor-full` adds it)
 ```
 
-### `just` recipes
+### `make` targets
 
-| Recipe | Command(s) | Notes |
+Run `make help` for the full self-documented list (build, deploy/codesign, launchd targets included).
+
+| Target | Command(s) | Notes |
 |---|---|---|
-| `just build` / `just build-release` | `cargo build --workspace [--release]` | Debug / optimized |
-| `just check` | `cargo check --workspace --all-targets` | Fast type-check |
-| `just test` / `just test-fast` | `cargo test --workspace [--lib --bins]` | Full / skip doc tests |
-| `just lint` | `cargo clippy --workspace --all-targets -- -D warnings` | CI gate |
-| `just fmt` / `just fmt-check` | `cargo fmt --all [--check]` | Format / dry-run |
-| `just deny` / `just audit` | `cargo deny check` / `cargo audit` | License+bans / advisories |
-| `just cov` | `cargo llvm-cov --workspace --html` | HTML report |
-| `just spec-fast` / `just spec-medium` / `just spec` | `~/bin/spec validate [--lane …]` | 4 / 9 / 14 validators |
-| `just doctor` | check + clippy + test | One-shot health gate (no spec lane — run `~/bin/spec validate` separately) |
-| `just agent` | `cargo run -p merkle-agent` | Start daemon (dev) |
-| `just cli args=…` | `cargo run -p merkle-cli -- <args>` | Run the CLI |
+| `make build` / `make build-release` | `cargo build --workspace [--release]` | Debug / optimized |
+| `make check` | `cargo check --workspace --all-targets` | Fast type-check |
+| `make test` / `make test-fast` | `cargo test --workspace [--lib --bins]` | Full / skip doc tests |
+| `make lint` | `cargo clippy --workspace --all-targets -- -D warnings` | CI gate |
+| `make fmt` / `make fmt-check` | `cargo fmt --all [--check]` | Format / dry-run |
+| `make deny` / `make audit` | `cargo deny check` / `cargo audit` | License+bans / advisories |
+| `make cov` | `cargo llvm-cov --workspace --html` | HTML report |
+| `make spec-fast` / `make spec-medium` / `make spec` | `~/bin/spec validate [--lane …]` | 4 / 9 / 14 validators |
+| `make doctor` | check + clippy + test | One-shot health gate (no spec lane — run `~/bin/spec validate` separately) |
+| `make doctor-full` | doctor + `spec` | doctor plus the full spec lane in one shot |
+| `make agent` | `cargo run -p merkle-agent` | Start daemon (dev) |
+| `make cli ARGS=…` | `cargo run -p merkle-cli -- <args>` | Run the CLI |
+| `make deploy` | build-release → sign → install → kickstart | macOS-only, one-shot release deploy |
 
 ### Spec lanes
 
@@ -498,9 +502,9 @@ The spec gate enforces spec-as-source-of-truth per [ADR-0018](docs/arch/adr/0018
 
 | Lane | Command | Time | Validators | Usage |
 |---|---|---|---|---|
-| **fast** | `just spec-fast` | ~1.5 s | 4: `lint_cue`, `lint_ddd_role`, `lint_openapi`, `lint_features` | Quick sanity during dev |
-| **medium** *(default)* | `just spec-medium` | ~10 s | 9: fast + `lint_structurizr`, `lint_md`, `lint_mermaid`, `lint_madr`, `lint_yaml` | **Must stay 9/9 green** |
-| **full** | `just spec` | ~60 s | 14: medium + `lint_conftest`, `lint_vale`, `lint_slo`, `lint_asyncapi`, `run_tlc` | **CI merge gate** |
+| **fast** | `make spec-fast` | ~1.5 s | 4: `lint_cue`, `lint_ddd_role`, `lint_openapi`, `lint_features` | Quick sanity during dev |
+| **medium** *(default)* | `make spec-medium` | ~10 s | 9: fast + `lint_structurizr`, `lint_md`, `lint_mermaid`, `lint_madr`, `lint_yaml` | **Must stay 9/9 green** |
+| **full** | `make spec` | ~60 s | 14: medium + `lint_conftest`, `lint_vale`, `lint_slo`, `lint_asyncapi`, `run_tlc` | **CI merge gate** |
 
 Every behavioral change must update `docs/arch/` in the **same commit** as the code. Spec artifacts are **locked** — fix the code or the spec to comply, never the validator config.
 

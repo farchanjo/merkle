@@ -11,14 +11,14 @@ cargo build --workspace                               # debug build (fast)
 cargo test --workspace --no-fail-fast                 # full suite (last green run ≈ 753 pass / 0 fail / ~14 ignored)
 cargo clippy --workspace --all-targets -- -D warnings
 ~/bin/spec validate                                   # default (medium) lane — must stay 9/9 green
-just doctor                                           # check + clippy + test (one shot; does NOT run spec)
+make doctor                                           # check + clippy + test (one shot; does NOT run spec — use `make doctor-full` to include it)
 ```
 
 Run the daemon locally for a smoke test:
 
 ```bash
-cargo run -p merkle-agent          # or `just agent`
-cargo run -p merkle-cli -- status  # no `just cli` recipe exists — call the binary directly
+cargo run -p merkle-agent          # or `make agent`
+cargo run -p merkle-cli -- status  # or `make cli ARGS=status`
 ```
 
 Read order to onboard: this file → `~/.claude/CLAUDE.md` (global rules) → `docs/arch/adr/` (start ADR-0002, then 0021/0022/0024/0026/0028) → `crates/merkle-application/src/commands/` (use-case entry points) → `docs/arch/integrations/openapi/companion-socket.yaml` (the HTTP contract).
@@ -170,16 +170,16 @@ Daemon spawns: backup scheduler (anacron, ADR-0010), chain verifier, tempfile re
 ## Build / test / lint / spec
 
 ```bash
-cargo fmt --all                                       # just fmt   (fmt-check = --check)
-cargo build --workspace [--release]                   # just build / build-release
-cargo check --workspace --all-targets                 # just check
-cargo test --workspace [--no-fail-fast]               # just test  (test-fast = --lib --bins)
-cargo clippy --workspace --all-targets -- -D warnings # just lint
-cargo deny check                                      # just deny  (license + bans + advisories)
-cargo audit                                           # just audit
-cargo llvm-cov --workspace --html                     # just cov
-~/bin/spec validate                                   # default (medium) lane; just spec-fast / spec-medium / spec
-just doctor                                           # check + clippy + test (NO spec lane)
+cargo fmt --all                                       # make fmt   (fmt-check = --check)
+cargo build --workspace [--release]                   # make build / build-release
+cargo check --workspace --all-targets                 # make check
+cargo test --workspace [--no-fail-fast]               # make test  (test-fast = --lib --bins)
+cargo clippy --workspace --all-targets -- -D warnings # make lint
+cargo deny check                                      # make deny  (license + bans + advisories)
+cargo audit                                           # make audit
+cargo llvm-cov --workspace --html                     # make cov
+~/bin/spec validate                                   # default (medium) lane; make spec-fast / spec-medium / spec
+make doctor                                           # check + clippy + test (NO spec lane); make doctor-full adds it
 ```
 
 **Lint baseline (LOCKED — never edit `[workspace.lints]`, `clippy.toml`, `rust-toolchain.toml`, or any `forbid/deny`):** `clippy::all = deny (prio -1)`, `clippy::pedantic = deny (prio -1)`, `missing_docs = warn`, `unsafe_code = forbid`, `unused_must_use = deny`. Workspace clippy allows: `module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`, `wildcard_imports`, `doc_markdown`. `clippy.toml`: msrv 1.85, cognitive-complexity 25, too-many-args 7, too-many-lines 100, `avoid-breaking-exported-api = false`. Every crate uses `[lints] workspace = true`; the **only** exception is `merkle-adapter-companion-socket`, which overrides `unsafe_code = "deny"` and `missing_docs = "allow"` with documented rationale. Fix code to comply — never alter a rule.
@@ -189,9 +189,9 @@ just doctor                                           # check + clippy + test (N
 ### Spec lanes (`docs/arch/.specconfig.yml` → `default_lane: medium`)
 | Lane | Command | Validators |
 |---|---|---|
-| fast (~1.5s) | `~/bin/spec validate --lane fast` (`just spec-fast`) | 4: `lint_cue`, `lint_ddd_role`, `lint_openapi`, `lint_features` |
-| **medium (~10s, default)** | `~/bin/spec validate` (`just spec-medium`) | **9** (fast + `lint_structurizr`, `lint_md`, `lint_mermaid`, `lint_madr`, `lint_yaml`) — the everyday local gate, must stay **9/9 green** |
-| full (CI gate, ADR-0018) | `~/bin/spec validate --lane full` (`just spec`) | 14 (medium + `lint_conftest`, `lint_vale`, `lint_slo`, `lint_asyncapi`, `run_tlc`) |
+| fast (~1.5s) | `~/bin/spec validate --lane fast` (`make spec-fast`) | 4: `lint_cue`, `lint_ddd_role`, `lint_openapi`, `lint_features` |
+| **medium (~10s, default)** | `~/bin/spec validate` (`make spec-medium`) | **9** (fast + `lint_structurizr`, `lint_md`, `lint_mermaid`, `lint_madr`, `lint_yaml`) — the everyday local gate, must stay **9/9 green** |
+| full (CI gate, ADR-0018) | `~/bin/spec validate --lane full` (`make spec`) | 14 (medium + `lint_conftest`, `lint_vale`, `lint_slo`, `lint_asyncapi`, `run_tlc`) |
 
 The **CI / ADR-0018 contract gate is the full lane (14 validators)**; the default/medium lane (9) is the everyday local must-stay-green check. In the full lane, `lint_vale` (prose style) currently **fails** on newer ADRs — known, tracked, not the contract failure. Spec source-of-truth lives in `docs/arch/` (28 ADRs `0001`–`0028`; `architecture/workspace.dsl`; `schemas/`, `policies/`, `specs/features/` 15 `.feature`, `domain/`, `formal/` TLA+, `threat-model/`, `slo/`). Spec artifacts are **LOCKED** like the lints — fix code or spec to comply, never the validator config.
 
@@ -226,6 +226,8 @@ The **CI / ADR-0018 contract gate is the full lane (14 validators)**; the defaul
 
 Always deploy **release** binaries, sign the exact `target/release/` artifact (never a staged copy), install with `install` (never `cp` — drops xattrs, breaks the signature), to `/usr/local/bin`.
 
+**`make deploy`** runs this exact sequence (`build-release` → `sign` → `install` → `kickstart`); `make sign` / `make install` / `make verify-sign` / `make kickstart` run individual stages, and `make redeploy` re-kickstarts an already-installed binary. The manual steps below document what those targets actually run.
+
 ```bash
 set -euo pipefail
 cd /Users/farchanjo/dev/mcp-vault
@@ -257,7 +259,7 @@ sleep 2 && /usr/local/bin/merkle status
 - `dev.fapp.merkle.agent.plist` — Label `dev.fapp.merkle.agent`, `Program = /usr/local/bin/merkle-agent-launchd` (the **wrapper**, never the agent directly), `KeepAlive {SuccessfulExit:false, Crashed:true}`, throttle 10s, logs to `~/Library/Logs/merkle-agent.{out,err}.log`. `REPLACE_WITH_USER` is rendered at install via `sed`.
 - `merkle-agent-launchd` — fetches the passphrase from the login keychain (`security find-generic-password -s dev.fapp.merkle.launchd -a passphrase -w`), then `exec merkle-agent`. The plist must **never** carry the passphrase in plaintext.
 
-First-time install:
+First-time install (`make install-wrapper` handles the wrapper step, injecting `MERKLE_RECOVERY_RECIPIENT` from the env or from the currently-installed wrapper; `make launchd-install` handles the plist render + bootstrap step):
 ```bash
 sudo install -m 755 -o root -g wheel deploy/launchd/merkle-agent-launchd /usr/local/bin/merkle-agent-launchd
 security add-generic-password -s 'dev.fapp.merkle.launchd' -a 'passphrase' -w '<pass>' -U
@@ -265,7 +267,7 @@ mkdir -p ~/Library/LaunchAgents ~/Library/Logs
 sed "s|REPLACE_WITH_USER|$USER|g" deploy/launchd/dev.fapp.merkle.agent.plist > ~/Library/LaunchAgents/dev.fapp.merkle.agent.plist
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.fapp.merkle.agent.plist
 ```
-Redeploy fast path: `launchctl kickstart -k gui/$UID/dev.fapp.merkle.agent`. Full cycle: `launchctl bootout … ` → deploy → `launchctl bootstrap …`. Verify: `launchctl print gui/$UID/dev.fapp.merkle.agent | grep -E "pid|state"` and tail the err log.
+Redeploy fast path: `launchctl kickstart -k gui/$UID/dev.fapp.merkle.agent` (`make kickstart` / `make redeploy`). Full cycle: `launchctl bootout … ` (`make launchd-bootout`) → deploy → `launchctl bootstrap …` (`make launchd-install`). Verify: `launchctl print gui/$UID/dev.fapp.merkle.agent | grep -E "pid|state"` (`make launchd-status`) and tail the err log (`make logs`).
 
 ---
 
@@ -316,4 +318,4 @@ Redeploy fast path: `launchctl kickstart -k gui/$UID/dev.fapp.merkle.agent`. Ful
 12. **`spctl --assess` returns "rejected" here and that's fine.** The deploy gate is `codesign --verify --deep --strict --verbose=2` (exit 0). Sign with the Apple Development identity; `sudo codesign`'s `errSecInternalComponent` is a non-fatal warning.
 13. **Concurrent materialization tests must use a unique per-test token** (`FixedTokenCrypto::with_token(...)`) — reusing one races on `temp_dir()/merkle_<token>.*`.
 14. **`cli_smoke` uses `--include-ignored` (not `--ignored`)** and a daemon already running+unsealed; its socket path is `$TMPDIR/merkle/companion.sock` (no `$USER` segment), unlike the production default `$TMPDIR/merkle-$USER/merkle/agent.sock`.
-15. **`just doctor` does NOT run the spec lanes** — it is `cargo check` + `cargo clippy -D warnings` + `cargo test` only. Run `~/bin/spec validate` (or `just spec` for the full CI lane) separately.
+15. **`make doctor` does NOT run the spec lanes** — it is `cargo check` + `cargo clippy -D warnings` + `cargo test` only (this now matches its documented contract exactly; the old `justfile doctor` recipe silently also ran the full spec lane, which was doc drift — the Makefile fixes it). Run `~/bin/spec validate` (or `make spec` for the full CI lane) separately, or run `make doctor-full` for doctor + spec full in one shot.
