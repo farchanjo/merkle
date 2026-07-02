@@ -41,9 +41,11 @@
 
 pub mod file;
 pub mod index;
+pub mod migrate;
 pub mod mock;
 pub mod os;
 
 pub use file::FileKeystoreAdapter;
+pub use migrate::migrate_accounts;
 pub use mock::MockKeychainAdapter;
 pub use os::OsKeychainAdapter;

@@ -376,3 +376,15 @@ keychain.
   `PersistenceFailed`.
 
 Cross-reference: [0021-init-vault-bootstrap-ceremony.md](0021-init-vault-bootstrap-ceremony.md).
+
+## Amendment 5 — 2026-07-02 — Persistence Probe Vindicated Against a Build-Feature Bug
+
+A live incident (see [0029-trusted-audit-baseline-for-key-provenance-recovery.md,
+Amendment 1](0029-trusted-audit-baseline-for-key-provenance-recovery.md)) initially
+looked like the exact headless/no-GUI-auth failure mode Amendment 4 targets, but the
+real cause was that the workspace `Cargo.toml` pinned `keyring = "3.6"` without the
+`apple-native` feature, silently routing macOS to the crate's in-memory mock store.
+The Amendment 4 verify-after-write check correctly caught the resulting persistence
+failure and triggered the documented `file`-backend fallback exactly as designed —
+the probe is vindicated, not defective. The fix was enabling `apple-native` (plus
+`windows-native`), not relaxing the persistence check.

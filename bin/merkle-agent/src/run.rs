@@ -260,7 +260,9 @@ async fn build_keychain(cfg: &AgentConfig) -> anyhow::Result<Arc<dyn Keychain>> 
     match cfg.keystore.backend {
         KeystoreBackend::Os => {
             info!("keystore backend: os");
-            Ok(Arc::new(OsKeychainAdapter::new()))
+            let os_adapter = OsKeychainAdapter::new();
+            maybe_migrate_file_keystore(&os_adapter, cfg).await;
+            Ok(Arc::new(os_adapter))
         }
         KeystoreBackend::File => {
             info!("keystore backend: file");
@@ -304,6 +306,7 @@ async fn build_keychain(cfg: &AgentConfig) -> anyhow::Result<Arc<dyn Keychain>> 
             match probe_result {
                 Ok(()) => {
                     info!("keystore auto: OS keychain write+verify OK, using os backend");
+                    maybe_migrate_file_keystore(&os_adapter, cfg).await;
                     Ok(Arc::new(os_adapter))
                 }
                 Err(
@@ -346,6 +349,64 @@ async fn build_keychain(cfg: &AgentConfig) -> anyhow::Result<Arc<dyn Keychain>> 
                 }
             }
         }
+    }
+}
+
+/// One-time copy of file-keystore entries into the OS keychain (ADR-0029).
+///
+/// Runs only when the OS keychain is missing the wrapped VRK
+/// (`vrk-master-v1`) while an age-encrypted file keystore exists on disk and
+/// `MERKLE_KEYSTORE_PASSPHRASE` is set. Copy-only: the file keystore is left
+/// intact as a cold backup. Failures are logged and never abort startup.
+async fn maybe_migrate_file_keystore(os_adapter: &OsKeychainAdapter, cfg: &AgentConfig) {
+    use merkle_application::commands::init_vault::KEYCHAIN_ACCOUNT_VRK_MASTER;
+    use merkle_domain_identity::KEYCHAIN_SERVICE;
+    use merkle_ports::KeychainError;
+
+    match os_adapter
+        .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_VRK_MASTER)
+        .await
+    {
+        Ok(_) => return, // already migrated
+        Err(KeychainError::NotFound) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "keystore migration: OS keychain probe failed, skipping");
+            return;
+        }
+    }
+
+    let path = cfg.keystore.resolved_file_path();
+    if !path.exists() {
+        return;
+    }
+
+    let Ok(passphrase) = std::env::var("MERKLE_KEYSTORE_PASSPHRASE") else {
+        tracing::warn!(
+            "file keystore present but MERKLE_KEYSTORE_PASSPHRASE unset — skipping migration"
+        );
+        return;
+    };
+    let passphrase = secrecy::SecretString::new(passphrase.into());
+
+    let file_adapter = match FileKeystoreAdapter::open(path, passphrase).await {
+        Ok(adapter) => adapter,
+        Err(e) => {
+            tracing::warn!(error = %e, "keystore migration: failed to open file keystore");
+            return;
+        }
+    };
+
+    match merkle_adapter_keychain::migrate_accounts(&file_adapter, os_adapter, KEYCHAIN_SERVICE)
+        .await
+    {
+        Ok(copied) if !copied.is_empty() => {
+            info!(
+                count = copied.len(),
+                "keystore migration: file → os complete; file keystore left as cold backup"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "keystore migration: copy failed"),
     }
 }
 

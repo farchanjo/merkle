@@ -165,3 +165,100 @@ It is **not** an MCP tool.
 - ADR-0015 — rust-keyring crate + macOS persistence-verification fallback.
 - ADR-0021 — vault init ceremony (VRK derivation).
 - BUG-05 / BUG-08 — VRK ↔ audit-HMAC key must feed identical bytes.
+
+## Amendment 1 (2026-07-02): Root cause of the provenance incident — missing `apple-native` keyring feature
+
+### Root cause
+
+The incident described in the Context section was misdiagnosed at the time as
+"macOS headless daemon can't persist to the OS keychain," matching the known
+ADR-0015 Amendment 4 failure mode (background process lacks GUI auth, Security
+framework silently no-ops the write). The actual root cause was different and
+more basic: the workspace `Cargo.toml` pinned `keyring = "3.6"` with only the
+`sync-secret-service` feature enabled (the Linux Secret Service backend). No
+`apple-native` feature was enabled, so on macOS the `keyring` crate had no
+platform backend compiled in at all and silently fell back to its **per-`Entry`
+in-memory mock store**.
+
+That mock store makes `store()` appear to succeed and even round-trips
+correctly *within the same `Entry` instance* — which is exactly the
+verify-after-write check that ADR-0015 Amendment 4 added. But the daemon's
+`auto` backend probe constructs a **fresh** `Entry` for its write+verify+delete
+sentinel round-trip (`dev.fapp.merkle/__merkle_probe_persist_check`) and a
+**separate** `Entry` for the real VRK read on the next unseal. A fresh mock
+`Entry` never sees another mock `Entry`'s writes, so the *probe* passed but the
+real VRK retrieve returned `NotFound` on the next process invocation (or even
+later in the same run, depending on `Entry` lifetime) — reproducing the exact
+symptom the Amendment 4 persistence check exists to catch, without the cause
+Amendment 4 was written against. The daemon correctly treated this as a
+persistence failure and fell back to the `file` keystore backend mid-session,
+which is what produced the VRK swap and the poisoned audit-HMAC window this
+ADR's baseline mechanism recovers from.
+
+### Fix
+
+Enable the platform-native `keyring` features for every target OS in the
+workspace `Cargo.toml`: `apple-native` (macOS Security framework, via
+`Security.framework` FFI inside the crate — no new `unsafe` in Merkle code),
+`windows-native` (Windows Credential Manager), alongside the existing
+`sync-secret-service` (Linux). With `apple-native` enabled, `os_smoke`
+(`crates/merkle-adapter-keychain/tests/os_smoke.rs`, `--ignored`) passes in
+both a signed and an unsigned build inside a GUI login session, and the `auto`
+probe's write+verify+delete round-trip exercises the real Keychain, not a mock.
+
+### One-time file→keychain migration on upgrade
+
+Vaults that were provisioned or ran for any period under the mock-store defect
+persisted their VRK wrap (`vrk-master-v1`) to the `file` keystore, not the OS
+keychain, even where `backend = "auto"` was configured and the operator
+believed the OS keychain was in use. To avoid requiring a manual `merkle
+rotate` / re-init after deploying the `apple-native` fix, the daemon now runs a
+one-time, copy-only migration on startup:
+
+- New `merkle_adapter_keychain::migrate_accounts(src, dst, service)`
+  (`crates/merkle-adapter-keychain/src/migrate.rs`) copies keychain accounts
+  from a source backend to a destination backend under a given service
+  identifier. It **never overwrites** an account already present at the
+  destination, and it **never deletes** the source entry — the file keystore
+  is left intact as a cold backup after a successful migration.
+- `maybe_migrate_file_keystore` (`bin/merkle-agent/src/run.rs`) invokes the
+  migration at startup only when **all** of the following hold: the
+  configured backend is `os`, or `auto` **and** the OS-keychain persistence
+  probe just succeeded; the OS keychain does not already contain
+  `vrk-master-v1`; a file keystore exists on disk; and
+  `MERKLE_KEYSTORE_PASSPHRASE` is set in the environment (so the migration
+  never blocks startup on an interactive TTY passphrase prompt).
+- Migration failures are logged and do **not** abort startup — the daemon
+  proceeds with whatever backend it already resolved. The migration is
+  advisory acceleration, not a correctness dependency.
+- The migrated VRK bytes are byte-identical to the source (a copy, not a
+  re-wrap), so `derive_audit_hmac_key(vrk_bytes)` (ADR-0009 / BUG-05) produces
+  the same audit-HMAC key before and after migration. The ADR-0029 trusted
+  baseline pinned against the pre-migration incident is unaffected by running
+  this migration afterward.
+
+### Operational guidance
+
+- After a successful migration (confirmed via `merkle status` / `vault.doctor`
+  reporting the OS keychain as the active backend), operators should pin
+  `[keystore] backend = "os"` explicitly in `~/.config/merkle/config.toml`
+  rather than leaving `auto` — this removes any residual ambiguity from the
+  startup probe and guarantees the daemon never silently falls back to `file`
+  again for this vault.
+- The on-disk `keystore.age` file and the launchd login-keychain passphrase
+  entry (`dev.fapp.merkle.launchd`) become **cold-backup artifacts** once
+  `backend = "os"` is pinned and migration is confirmed — they are not deleted
+  automatically (per the copy-only, non-destructive migration contract above)
+  and remain useful as a recovery path if the OS keychain becomes unavailable,
+  but they are no longer read on the hot path.
+- Operators upgrading from a pre-fix build should run `vault.doctor` after
+  deploying the `apple-native`-enabled binary to confirm the migration ran and
+  the OS keychain now holds `vrk-master-v1` before pinning `backend = "os"`.
+
+### Related
+
+- ADR-0015 — Amendment 4 (persistence-verification-on-write); this amendment
+  clarifies that the verify-after-write check is not itself defective — it
+  correctly detected a real persistence failure, just one with a different
+  root cause (missing crate feature) than the amendment's own motivating
+  scenario (headless GUI-auth denial).
