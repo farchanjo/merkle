@@ -74,6 +74,28 @@ pub struct RankedSearchResult {
     pub has_more: bool,
 }
 
+/// A consistent, single-point-in-time view of the audit log used by chain
+/// verification (gap #10 — audit-verify snapshot isolation).
+///
+/// `read_audit`, `pinned_head`, and `audit_baseline` are otherwise three
+/// independent storage round-trips; a concurrent [`Storage::commit_audit_entry`]
+/// landing between them can produce an inconsistent view (e.g. entries from
+/// before the write paired with a pinned head from after), which fails chain
+/// verification closed with a false `TruncationDetected` / `HeadHashMismatch`.
+/// [`Storage::audit_snapshot`] reads all three fields as one atomic unit so
+/// verification always observes a self-consistent log.
+#[derive(Debug, Clone)]
+pub struct AuditSnapshot {
+    /// All persisted audit entries matching the query, in ascending `seq` order.
+    pub entries: Vec<ac::AuditEntry>,
+    /// The pinned chain head at the moment of the snapshot, or `None` on an
+    /// empty vault.
+    pub pinned_head: Option<ac::PinnedHead>,
+    /// The trusted baseline checkpoint (ADR-0029) pinned at the moment of the
+    /// snapshot, or `None` when no baseline has been set.
+    pub baseline: Option<ac::AuditBaseline>,
+}
+
 /// Driven port for all persistent storage operations.
 ///
 /// A single [`Storage`] implementation covers all bounded-context writes so
@@ -189,6 +211,26 @@ pub trait Storage: Send + Sync {
         &self,
         baseline: &ac::AuditBaseline,
     ) -> Result<(), StorageError>;
+
+    /// Read the full audit log, the pinned head, and the trusted baseline as
+    /// ONE consistent snapshot (gap #10 — audit-verify snapshot isolation).
+    ///
+    /// The default implementation performs the three reads sequentially,
+    /// which is adequate for in-memory/mock adapters where there is no
+    /// concurrent writer to race against. Durable adapters backed by a
+    /// transactional store SHOULD override this to read all three within a
+    /// single read transaction, closing the interleave window against a
+    /// concurrent [`Storage::commit_audit_entry`].
+    async fn audit_snapshot(&self) -> Result<AuditSnapshot, StorageError> {
+        let entries = self.read_audit(&ac::AuditQuery::default()).await?;
+        let pinned_head = self.pinned_head().await?;
+        let baseline = self.audit_baseline().await?;
+        Ok(AuditSnapshot {
+            entries,
+            pinned_head,
+            baseline,
+        })
+    }
 
     /// Persist a completed [`Backup`](br::backup::Backup) aggregate.
     async fn put_backup(&self, backup: &br::backup::Backup) -> Result<(), StorageError>;

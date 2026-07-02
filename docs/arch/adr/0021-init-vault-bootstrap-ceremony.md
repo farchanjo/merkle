@@ -207,3 +207,25 @@ key rotation and policy migration.
   `POST /v1/agent/init`.
 * CUE schemas: `docs/arch/schemas/identity_and_sealing/init_vault.cue`.
 * Feature: `docs/arch/specs/features/init_vault.feature`.
+
+## Amendment — 2026-07-01
+
+### Recovery Wrap Uses the Operator-Supplied Recovery Recipient
+
+Steps 4 and 6 as originally specified had the agent mint an ephemeral `age`
+X25519 identity at init time and discard its private half after wrapping the
+Vault Root Key under the throwaway public key — leaving `vrk-recovery-v1`
+undecryptable by anyone and reducing the `recovery_key` returned in Step 9 to
+a useless public key with no recoverable secret.
+
+**Corrected behavior (mandatory):** init MUST NOT mint or discard an
+ephemeral recovery keypair. The `wrapped_by = "recovery"` wrap in Step 6 uses
+`age` encryption under the operator-supplied recovery recipient read from
+`MERKLE_RECOVERY_RECIPIENT` (a real `age1…` X25519 recipient the operator
+generates out-of-band and whose private identity the operator already holds).
+The `recovery_key` returned in Step 9 echoes that same operator-supplied
+recipient. This restores the disaster-recovery intent stated in the Context:
+the VRK is recoverable via the operator-held identity if the OS Keychain or
+Master Key is lost.
+
+Cross-reference: [0006-age-encryption-for-backups-and-recovery.md](0006-age-encryption-for-backups-and-recovery.md).

@@ -456,6 +456,56 @@ async fn commit_audit_entry_pins_head_with_mac_atomically() {
     );
 }
 
+/// Gap #10 (audit-verify snapshot isolation): `audit_snapshot()` must return a
+/// self-consistent view — the last entry's `seq` matches the pinned head's
+/// `head_seq`, the committed entry is present, and the (absent) baseline is
+/// reflected faithfully. This is the single-transaction read that replaces
+/// three independent `read_audit` + `pinned_head` + `audit_baseline` calls in
+/// the verify-chain path, closing the window where a concurrent
+/// `commit_audit_entry` could interleave and produce an inconsistent view.
+#[tokio::test]
+async fn audit_snapshot_returns_self_consistent_view() {
+    let db = open_memory().await;
+    let ns_id = NamespaceId::new();
+    let entry = make_audit_entry(0, ns_id, None);
+
+    // A head carrying a real MAC, as AuditWriter::append produces.
+    let mut head = PinnedHead::new(entry.current_hash, 0, entry.id, Rfc3339Timestamp::now());
+    head.hmac_head = Some(dummy_hmac());
+
+    db.commit_audit_entry(&entry, &head).await.expect("commit");
+
+    let snapshot = db.audit_snapshot().await.expect("audit_snapshot");
+
+    assert_eq!(
+        snapshot.entries.len(),
+        1,
+        "snapshot must include the committed entry"
+    );
+    let last_entry = snapshot.entries.last().expect("snapshot has one entry");
+    assert_eq!(last_entry.id, entry.id);
+    assert_eq!(last_entry.current_hash, entry.current_hash);
+
+    let pinned = snapshot
+        .pinned_head
+        .expect("pinned head present after commit");
+    assert_eq!(
+        last_entry.seq, pinned.head_seq,
+        "snapshot entries and pinned head must agree on the chain-head sequence"
+    );
+    assert_eq!(pinned.head_hash, entry.current_hash);
+    assert_eq!(
+        pinned.hmac_head,
+        Some(dummy_hmac()),
+        "snapshot must observe the atomically-committed head MAC"
+    );
+
+    assert!(
+        snapshot.baseline.is_none(),
+        "no baseline was pinned in this test — the snapshot must reflect that faithfully"
+    );
+}
+
 #[tokio::test]
 async fn update_pinned_head_overwrites() {
     let db = open_memory().await;

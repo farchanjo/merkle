@@ -10,12 +10,12 @@
 //!   (see `001_initial.sql`).
 
 use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, AuditQuery, PinnedHead};
-use merkle_ports::StorageError;
-use sqlx::{Row, SqlitePool};
+use merkle_ports::{AuditSnapshot, StorageError};
+use sqlx::SqlitePool;
 
 use crate::error::AdapterError;
-use crate::mappers::{blob_to_audit_entry_id, row_to_audit_entry, uuid_to_blob};
-use merkle_types::{Blake3Hash, HmacSignature, Rfc3339Timestamp};
+use crate::mappers::{row_to_audit_baseline, row_to_audit_entry, row_to_pinned_head, uuid_to_blob};
+use merkle_types::Rfc3339Timestamp;
 
 /// Insert a single [`AuditEntry`] row inside an open transaction.
 async fn insert_entry_tx(
@@ -260,6 +260,31 @@ pub(crate) async fn read_audit(
         .collect()
 }
 
+/// Read every persisted audit entry, in ascending `seq` order, within an open
+/// transaction.
+///
+/// Used by [`audit_snapshot`]. Equivalent to `read_audit(pool,
+/// &AuditQuery::default())` — the snapshot always reads the full unfiltered
+/// log, so no dynamic `WHERE`-clause construction is needed here; the SQL
+/// text matches what [`read_audit`] would generate for a default query.
+async fn read_all_entries_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<Vec<AuditEntry>, StorageError> {
+    let rows = sqlx::query(
+        "SELECT id, seq, ts, namespace_id, caller_program, op, outcome,
+                denial_reason, handle, sensitivity, prev_hash, current_hash, hmac
+         FROM audit_entries ORDER BY seq ASC",
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    rows.iter()
+        .map(|r| row_to_audit_entry(r).map_err(StorageError::from))
+        .collect()
+}
+
 /// Fetch the current pinned chain head, returning `None` on an empty vault.
 pub(crate) async fn pinned_head(pool: &SqlitePool) -> Result<Option<PinnedHead>, StorageError> {
     let row = sqlx::query(
@@ -271,54 +296,34 @@ pub(crate) async fn pinned_head(pool: &SqlitePool) -> Result<Option<PinnedHead>,
     .map_err(AdapterError::Sqlx)
     .map_err(StorageError::from)?;
 
-    let Some(r) = row else {
-        return Ok(None);
-    };
-
-    let head_hash_str: String = r
-        .try_get("head_hash")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let head_hash = head_hash_str
-        .parse::<Blake3Hash>()
-        .map_err(|e| StorageError::Constraint(e.to_string()))?;
-
-    let head_seq: i64 = r
-        .try_get("head_seq")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-
-    let head_id_bytes: Vec<u8> = r
-        .try_get("head_id")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let head_id = blob_to_audit_entry_id(&head_id_bytes).map_err(StorageError::from)?;
-
-    let updated_at_str: String = r
-        .try_get("updated_at")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let updated_at = updated_at_str
-        .parse::<Rfc3339Timestamp>()
-        .map_err(|e| StorageError::Constraint(e.to_string()))?;
-
-    let hmac_head_str: Option<String> = r
-        .try_get("hmac_head")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let hmac_head = hmac_head_str
-        .map(|s| s.parse::<HmacSignature>())
+    row.as_ref()
+        .map(row_to_pinned_head)
         .transpose()
-        .map_err(|e| StorageError::Constraint(e.to_string()))?;
+        .map_err(StorageError::from)
+}
 
-    let mut head = PinnedHead::new(
-        head_hash,
-        u64::try_from(head_seq).unwrap_or(0),
-        head_id,
-        updated_at,
-    );
-    head.hmac_head = hmac_head;
-    Ok(Some(head))
+/// Fetch the current pinned chain head within an open transaction.
+///
+/// Used by [`audit_snapshot`] so the read observes the same in-flight
+/// transaction as the entries and baseline reads (gap #10 — audit-verify
+/// snapshot isolation). Uses the exact same SQL and row-mapping as
+/// [`pinned_head`].
+async fn pinned_head_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<Option<PinnedHead>, StorageError> {
+    let row = sqlx::query(
+        "SELECT head_hash, head_seq, head_id, updated_at, hmac_head \
+         FROM pinned_head WHERE singleton = 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    row.as_ref()
+        .map(row_to_pinned_head)
+        .transpose()
+        .map_err(StorageError::from)
 }
 
 /// Overwrite the pinned chain head directly (used by the chain verifier /
@@ -370,66 +375,34 @@ pub(crate) async fn audit_baseline(
     .map_err(AdapterError::Sqlx)
     .map_err(StorageError::from)?;
 
-    let Some(r) = row else {
-        return Ok(None);
-    };
-
-    let baseline_seq: i64 = r
-        .try_get("baseline_seq")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-
-    let baseline_id_bytes: Vec<u8> = r
-        .try_get("baseline_id")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let baseline_id = blob_to_audit_entry_id(&baseline_id_bytes).map_err(StorageError::from)?;
-
-    let baseline_hash_str: String = r
-        .try_get("baseline_hash")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let baseline_hash = baseline_hash_str
-        .parse::<Blake3Hash>()
-        .map_err(|e| StorageError::Constraint(e.to_string()))?;
-
-    let entry_count: i64 = r
-        .try_get("entry_count")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-
-    let reason: String = r
-        .try_get("reason")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-
-    let created_at_str: String = r
-        .try_get("created_at")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let created_at = created_at_str
-        .parse::<Rfc3339Timestamp>()
-        .map_err(|e| StorageError::Constraint(e.to_string()))?;
-
-    let hmac_str: Option<String> = r
-        .try_get("hmac")
-        .map_err(AdapterError::Sqlx)
-        .map_err(StorageError::from)?;
-    let hmac = hmac_str
-        .map(|s| s.parse::<HmacSignature>())
+    row.as_ref()
+        .map(row_to_audit_baseline)
         .transpose()
-        .map_err(|e| StorageError::Constraint(e.to_string()))?;
+        .map_err(StorageError::from)
+}
 
-    let mut baseline = AuditBaseline::new(
-        u64::try_from(baseline_seq).unwrap_or(0),
-        baseline_id,
-        baseline_hash,
-        u64::try_from(entry_count).unwrap_or(0),
-        reason,
-        created_at,
-    );
-    baseline.hmac = hmac;
-    Ok(Some(baseline))
+/// Fetch the trusted audit baseline singleton within an open transaction.
+///
+/// Used by [`audit_snapshot`] so the read observes the same in-flight
+/// transaction as the entries and pinned-head reads (gap #10 — audit-verify
+/// snapshot isolation). Uses the exact same SQL and row-mapping as
+/// [`audit_baseline`].
+async fn audit_baseline_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<Option<AuditBaseline>, StorageError> {
+    let row = sqlx::query(
+        "SELECT baseline_seq, baseline_id, baseline_hash, entry_count, reason, created_at, hmac \
+         FROM audit_baseline WHERE singleton = 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AdapterError::Sqlx)
+    .map_err(StorageError::from)?;
+
+    row.as_ref()
+        .map(row_to_audit_baseline)
+        .transpose()
+        .map_err(StorageError::from)
 }
 
 /// Upsert the trusted audit baseline singleton (ADR-0029).
@@ -473,4 +446,43 @@ pub(crate) async fn set_audit_baseline(
     .map_err(StorageError::from)?;
 
     Ok(())
+}
+
+/// Read the full audit log, the pinned head, and the trusted baseline as ONE
+/// consistent snapshot (gap #10 — audit-verify snapshot isolation).
+///
+/// `read_audit` + `pinned_head` + `audit_baseline` are otherwise three
+/// independent round-trips against the pool; a concurrent
+/// [`commit_audit_entry`] landing between them can pair entries from before
+/// the write with a pinned head from after (or vice-versa), producing a false
+/// `TruncationDetected` / `HeadHashMismatch` in the chain verifier. Opening a
+/// single transaction and reading all three within it closes that interleave
+/// window: SQLite's WAL mode gives a transaction a consistent view of the
+/// database as of its first read statement, so every read below observes the
+/// exact same point-in-time state regardless of concurrent writers.
+///
+/// This is a read-only snapshot, so a plain (deferred) transaction is used —
+/// unlike the write path (`commit_audit_entry`), there is no need for
+/// `BEGIN IMMEDIATE` writer-serialization here.
+pub(crate) async fn audit_snapshot(pool: &SqlitePool) -> Result<AuditSnapshot, StorageError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    let entries = read_all_entries_tx(&mut tx).await?;
+    let pinned_head = pinned_head_tx(&mut tx).await?;
+    let baseline = audit_baseline_tx(&mut tx).await?;
+
+    tx.commit()
+        .await
+        .map_err(AdapterError::Sqlx)
+        .map_err(StorageError::from)?;
+
+    Ok(AuditSnapshot {
+        entries,
+        pinned_head,
+        baseline,
+    })
 }
