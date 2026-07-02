@@ -26,13 +26,14 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    AppContext,
+    AppContext, consumer_gate,
     dto::{
         DeleteSecretRequest, DeleteSecretResponse, ListSecretVersionsResponse, ListSecretsParams,
         ListSecretsResponse, PublicMetadataDto, PutSecretRequest, PutSecretResponse,
         RankedSecretDto, RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse,
         SearchHighlightDto, SecretDto, SecretVersionDto, TagDto,
     },
+    extensions::ExtractedPeerCred,
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
 
@@ -301,15 +302,21 @@ pub async fn list_secrets(
 }
 
 /// `POST /v1/namespaces/{namespace_id}/secrets`
-#[instrument(skip(ctx, body))]
+#[instrument(skip(ctx, peer, body))]
 pub async fn put_secret(
     State(ctx): State<Arc<AppContext>>,
     Path(ns_raw): Path<Uuid>,
+    ExtractedPeerCred(peer): ExtractedPeerCred,
     Json(body): Json<PutSecretRequest>,
 ) -> impl IntoResponse {
     let Ok(namespace_id) = ns_raw.to_string().parse::<NamespaceId>() else {
         return invalid_ns_id_problem().into_response();
     };
+
+    // Enforce the per-namespace process allowlist (gap #6) before any write.
+    if let Err(problem) = consumer_gate::check(&ctx, &namespace_id, &peer).await {
+        return problem.into_response();
+    }
 
     // Parse the category from the body to derive the handle.
     let Ok(category) = body.category.parse::<merkle_types::CategoryName>() else {
@@ -432,15 +439,21 @@ pub async fn get_secret(
 }
 
 /// `DELETE /v1/namespaces/{namespace_id}/secrets/{handle_encoded}`
-#[instrument(skip(ctx))]
+#[instrument(skip(ctx, peer))]
 pub async fn delete_secret(
     State(ctx): State<Arc<AppContext>>,
     Path((ns_raw, handle_enc)): Path<(Uuid, String)>,
+    ExtractedPeerCred(peer): ExtractedPeerCred,
     Json(body): Json<DeleteSecretRequest>,
 ) -> impl IntoResponse {
     let Ok(namespace_id) = ns_raw.to_string().parse::<NamespaceId>() else {
         return invalid_ns_id_problem().into_response();
     };
+
+    // Enforce the per-namespace process allowlist (gap #6) before any deletion.
+    if let Err(problem) = consumer_gate::check(&ctx, &namespace_id, &peer).await {
+        return problem.into_response();
+    }
 
     let handle = match parse_handle_encoded(&handle_enc) {
         Ok(h) => h,
@@ -536,15 +549,21 @@ pub async fn list_secret_versions(
 }
 
 /// `POST /v1/namespaces/{namespace_id}/secrets/{handle_encoded}/rotate`
-#[instrument(skip(ctx, body))]
+#[instrument(skip(ctx, peer, body))]
 pub async fn rotate_secret(
     State(ctx): State<Arc<AppContext>>,
     Path((ns_raw, handle_enc)): Path<(Uuid, String)>,
+    ExtractedPeerCred(peer): ExtractedPeerCred,
     Json(body): Json<RotateSecretRequest>,
 ) -> impl IntoResponse {
     let Ok(namespace_id) = ns_raw.to_string().parse::<NamespaceId>() else {
         return invalid_ns_id_problem().into_response();
     };
+
+    // Enforce the per-namespace process allowlist (gap #6) before any rotation.
+    if let Err(problem) = consumer_gate::check(&ctx, &namespace_id, &peer).await {
+        return problem.into_response();
+    }
 
     let handle = match parse_handle_encoded(&handle_enc) {
         Ok(h) => h,

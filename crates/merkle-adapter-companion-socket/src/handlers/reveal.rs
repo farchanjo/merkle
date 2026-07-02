@@ -22,8 +22,9 @@ use std::time::Duration;
 use tracing::instrument;
 
 use crate::{
-    AppContext,
+    AppContext, consumer_gate,
     dto::{OobPendingResponse, RevealAuthorizationResponse, RevealRequest},
+    extensions::ExtractedPeerCred,
     problem::{Problem, ProblemType, app_error_to_problem},
 };
 
@@ -89,9 +90,10 @@ fn rand_nonce() -> u64 {
 ///
 /// Returns the decrypted Private Blob of a Secret, subject to operator
 /// confirmation (ADR-0011).
-#[instrument(skip(ctx, body))]
+#[instrument(skip(ctx, peer, body))]
 pub async fn reveal(
     State(ctx): State<Arc<AppContext>>,
+    ExtractedPeerCred(peer): ExtractedPeerCred,
     Json(body): Json<RevealRequest>,
 ) -> impl IntoResponse {
     // 1. Enforce slash_command gate. The flag's provenance is established by the
@@ -131,6 +133,14 @@ pub async fn reveal(
         }
         .into_response();
     };
+
+    // 2b. Enforce the per-namespace process allowlist (gap #6). Fails closed
+    //     when the namespace has a configured allowlist and the peer's program
+    //     path does not match (or could not be resolved). Empty allowlist =
+    //     opt-in skip. Runs before the secret is even described.
+    if let Err(problem) = consumer_gate::check(&ctx, &namespace_id, &peer).await {
+        return problem.into_response();
+    }
 
     // 3. Load the secret sensitivity before calling RevealSecretCommand.
     let sensitivity = match (DescribeSecretCommand {

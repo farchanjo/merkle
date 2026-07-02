@@ -36,8 +36,9 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    AppContext,
+    AppContext, consumer_gate,
     dto::{CloseSessionResponse, CreateSessionRequest, CreateSessionResponse},
+    extensions::ExtractedPeerCred,
     problem::app_error_to_problem,
 };
 
@@ -45,9 +46,10 @@ use crate::{
 ///
 /// Called by the MCP Adapter after the `notifications/initialized` handshake.
 /// Creates or re-binds a namespace for the given `cwd_hash`.
-#[instrument(skip(ctx, body))]
+#[instrument(skip(ctx, peer, body))]
 pub async fn create_session(
     State(ctx): State<Arc<AppContext>>,
+    ExtractedPeerCred(peer): ExtractedPeerCred,
     Json(body): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
     // Derive a namespace label from the optional namespace_label field or the
@@ -103,6 +105,17 @@ pub async fn create_session(
 
     match cmd.execute(&ctx).await {
         Ok(output) => {
+            // Enforce the per-namespace process allowlist (gap #6). This is the
+            // primary chokepoint for MCP clients: ADR-0026 allows at most one
+            // bind per session, so gating bind gates the whole session's
+            // namespace access. Bind is idempotent (ADR-0026) — for an existing
+            // namespace `execute` resolves it with no INSERT/audit, so denying
+            // here has no side effect; a brand-new namespace has an empty
+            // allowlist and is therefore allowed.
+            if let Err(problem) = consumer_gate::check(&ctx, &output.namespace_id, &peer).await {
+                return problem.into_response();
+            }
+
             let resp = CreateSessionResponse {
                 // Use the namespace_id as the session_id — there's a 1:1
                 // mapping in Phase 6; a separate session table is Phase 6.B.

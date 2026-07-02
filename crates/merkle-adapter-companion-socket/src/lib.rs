@@ -28,6 +28,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod consumer_gate;
 pub mod dto;
 pub mod error;
 pub mod extensions;
