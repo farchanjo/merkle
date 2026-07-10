@@ -38,6 +38,11 @@ pub struct PutSecretCommand {
     /// Whether the public metadata for this secret is exposed.
     pub expose_metadata: bool,
 
+    /// Optional operator commentary safe for the LLM transcript (public metadata).
+    ///
+    /// Must never contain credentials. Indexed by FTS5 for discovery.
+    pub description: Option<String>,
+
     /// Raw payload as received from the transport.
     ///
     /// Interpretation depends on [`value_format`]: when `Utf8` the bytes are
@@ -123,7 +128,8 @@ impl PutSecretCommand {
         };
 
         // 3. Construct the Secret aggregate (validates invariants).
-        let public_meta = PublicMetadata::new(self.expose_metadata);
+        let mut public_meta = PublicMetadata::new(self.expose_metadata);
+        public_meta.description = self.description.clone();
         let secret = Secret::new(
             self.namespace_id,
             self.handle.clone(),

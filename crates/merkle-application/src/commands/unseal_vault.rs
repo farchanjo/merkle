@@ -719,6 +719,7 @@ pub(crate) mod test_support {
             sensitivity: Sensitivity::Medium,
             tags: vec![],
             expose_metadata: false,
+            description: None,
             plaintext: b"leak-secret".to_vec(),
             dek_version: 1,
             dek_bytes: TEST_DEK,

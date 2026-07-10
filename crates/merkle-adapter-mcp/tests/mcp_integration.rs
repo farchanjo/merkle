@@ -133,6 +133,7 @@ async fn tools_return_namespace_not_bound_before_bind() {
             schema_id: None,
             tags: None,
             sensitivity: None,
+            description: None,
             expose: None,
         }))
         .await

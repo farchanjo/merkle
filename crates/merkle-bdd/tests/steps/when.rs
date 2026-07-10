@@ -249,6 +249,7 @@ async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
         sensitivity,
         tags,
         expose_metadata: expose,
+        description: None,
         plaintext: value_bytes,
         dek_version: 1,
         dek_bytes: world.session_dek,

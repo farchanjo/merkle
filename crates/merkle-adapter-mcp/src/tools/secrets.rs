@@ -42,6 +42,8 @@ pub struct VaultPutInput {
     pub tags: Option<Vec<String>>,
     /// Sensitivity level: low | medium | high.
     pub sensitivity: Option<String>,
+    /// Optional public description (safe for LLM transcript; never put credentials here).
+    pub description: Option<String>,
     /// If true, mark as safe for FTS public indexing.
     pub expose: Option<bool>,
 }
@@ -209,7 +211,7 @@ fn put_request_from_input(input: VaultPutInput) -> PutSecretRequest {
         schema_id: input.schema_id,
         tags: input.tags.map(tag_strings_to_dto).unwrap_or_default(),
         sensitivity: input.sensitivity.as_deref().and_then(|s| s.parse().ok()),
-        description: None,
+        description: input.description,
         expose: input.expose.unwrap_or(false),
         expires_at: None,
         force: false,
@@ -733,6 +735,7 @@ mod tests {
             schema_id: None,
             tags: Some(vec!["env:prod".into(), "team:core".into()]),
             sensitivity: Some("high".into()),
+            description: Some("prod API token".into()),
             expose: None,
         };
 
@@ -744,6 +747,7 @@ mod tests {
         assert_eq!(req.tags[1].key, "team");
         assert_eq!(req.tags[1].value, "core");
         assert_eq!(req.sensitivity, Some(Sensitivity::High));
+        assert_eq!(req.description.as_deref(), Some("prod API token"));
     }
 
     /// BUG-11: vault.list must forward `tags`, `sensitivity`, and

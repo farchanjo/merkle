@@ -400,6 +400,7 @@ pub async fn put_secret(
         sensitivity,
         tags,
         expose_metadata: body.expose,
+        description: body.description,
         plaintext,
         value_format: value_format_from_dto(body.value_format),
         dek_version: 1,
