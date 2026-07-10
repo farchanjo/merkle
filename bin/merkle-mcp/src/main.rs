@@ -98,7 +98,9 @@ async fn main() {
     match run(cli).await {
         Ok(()) => {}
         Err(e) => {
-            error!(error = %e, "merkle-mcp fatal error");
+            // `:#` prints the full anyhow chain (context + source), which is
+            // essential when the host reports only "connection failed".
+            error!(error = %format!("{e:#}"), "merkle-mcp fatal error");
             process::exit(2);
         }
     }
@@ -133,13 +135,31 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     // Wait for either the MCP session to complete or a shutdown signal.
     tokio::select! {
         result = async {
-            server
-                .serve(transport)
-                .await
-                .context("MCP server failed to start")?
-                .waiting()
-                .await
-                .context("MCP server exited with error")
+            match server.serve(transport).await {
+                Ok(running) => {
+                    running
+                        .waiting()
+                        .await
+                        .context("MCP server exited with error")?;
+                    Ok(())
+                }
+                Err(e) => {
+                    // Hosts that probe the process by opening stdio and closing
+                    // it without an MCP initialize handshake hit this path.
+                    // Treat premature client disconnect as a clean exit so the
+                    // host does not mis-report "connection failed" for a
+                    // healthy adapter that simply had no peer.
+                    if is_client_gone_before_init(&e) {
+                        info!(
+                            error = %e,
+                            "MCP client disconnected before initialize; exiting cleanly"
+                        );
+                        Ok(())
+                    } else {
+                        Err(e).context("MCP server failed to start")
+                    }
+                }
+            }
         } => {
             result?;
         }
@@ -150,6 +170,25 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     info!("merkle-mcp shutdown complete");
     Ok(())
+}
+
+/// Return `true` when `rmcp` failed because the client closed stdio (or the
+/// stream ended) before completing the MCP initialize handshake.
+fn is_client_gone_before_init(err: &rmcp::service::ServerInitializeError) -> bool {
+    use rmcp::service::ServerInitializeError;
+    match err {
+        ServerInitializeError::ConnectionClosed(_) | ServerInitializeError::Cancelled => true,
+        // Transport-level EOF / broken pipe during handshake.
+        other => {
+            let msg = other.to_string().to_ascii_lowercase();
+            msg.contains("closed")
+                || msg.contains("eof")
+                || msg.contains("broken pipe")
+                || msg.contains("connection reset")
+                || msg.contains("early end")
+                || msg.contains("unexpected end")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
