@@ -4,8 +4,9 @@
 //! storage the existing namespace is resolved and returned without a new INSERT
 //! or audit entry. Only the first bind for a given label writes to storage.
 
+use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::namespace::Namespace as NsDomain;
-use merkle_types::{AuditOp, AuditOutcome, NamespaceId, NamespaceLabel};
+use merkle_types::{AuditOp, AuditOutcome, NamespaceId, NamespaceLabel, SecurityProfile};
 use tracing::info;
 
 use crate::{AppContext, AppError};
@@ -52,8 +53,20 @@ impl BindNamespaceCommand {
             return Err(AppError::InvalidInput("dek_version must be >= 1".into()));
         }
 
-        // Resolve existing namespace; skip INSERT + audit on re-bind.
+        // Resolve existing namespace; skip INSERT + audit on re-bind. Repair
+        // legacy namespaces that predate mandatory policy creation so the
+        // socket consumer gate can fail closed consistently.
         if let Some(existing) = ctx.storage.get_namespace_by_label(&self.label).await? {
+            if ctx
+                .storage
+                .get_namespace_policy(&existing.id)
+                .await?
+                .is_none()
+            {
+                let mut policy = NamespacePolicy::defaults_for(SecurityProfile::Balanced);
+                policy.namespace_id = existing.id;
+                ctx.storage.put_namespace_policy(&policy).await?;
+            }
             info!(
                 namespace_id = %existing.id,
                 label = %self.label,
@@ -71,6 +84,13 @@ impl BindNamespaceCommand {
         let ns_id = ns.id;
 
         ctx.storage.put_namespace(&ns).await?;
+
+        // Every namespace receives an explicit deny-all-by-default policy.
+        // A caller cannot exploit the historical "policy absent" gap between
+        // namespace creation and later policy configuration.
+        let mut policy = NamespacePolicy::defaults_for(SecurityProfile::Balanced);
+        policy.namespace_id = ns_id;
+        ctx.storage.put_namespace_policy(&policy).await?;
 
         let hmac_key = ctx.require_hmac_key().await?;
         let params = merkle_domain_audit_compliance::AppendParams::new(

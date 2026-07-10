@@ -5,7 +5,11 @@ use merkle_domain_backup_recovery::{
 };
 use merkle_ports::AgeRecipient;
 use merkle_types::{AuditOp, AuditOutcome, HmacSignature, NamespaceId, Rfc3339Timestamp, UuidV7};
-use std::path::PathBuf;
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tracing::info;
 
 use crate::{AppContext, AppError};
@@ -48,6 +52,19 @@ impl TriggerBackupCommand {
     pub async fn execute(&self, ctx: &AppContext) -> Result<TriggerBackupOutput, AppError> {
         ctx.require_unsealed().await?;
 
+        if self.master_pubkey_recipient.trim().is_empty()
+            || self.recovery_pubkey_recipient.trim().is_empty()
+        {
+            return Err(AppError::InvalidInput(
+                "backup recipients must not be empty".into(),
+            ));
+        }
+        if self.master_pubkey_recipient == self.recovery_pubkey_recipient {
+            return Err(AppError::InvalidInput(
+                "backup requires distinct master and recovery age recipients".into(),
+            ));
+        }
+
         info!(namespace = %self.namespace_id, "trigger_backup: gathering secrets");
 
         // 1. Collect all secrets in the namespace.
@@ -83,7 +100,13 @@ impl TriggerBackupCommand {
         let size_bytes = u64::try_from(ciphertext.len())
             .map_err(|_| AppError::InvalidInput("ciphertext size overflows u64".into()))?;
 
-        // 5. Build the Backup aggregate.
+        // 5. Persist the exact ciphertext that was MAC'd.  The temporary file
+        // lives next to the target, so rename is atomic on a single filesystem.
+        // We do this before recording metadata: a listed backup must always
+        // have an artifact at its advertised path.
+        persist_artifact_atomically(&self.output_path, &ciphertext)?;
+
+        // 6. Build the Backup aggregate.
         //    BackupArtifact::new takes (path, age_format_version: u8, hmac_tag).
         let artifact = BackupArtifact::new(self.output_path.clone(), 1_u8, hmac);
 
@@ -104,10 +127,14 @@ impl TriggerBackupCommand {
         )
         .map_err(|e| AppError::Domain(e.to_string()))?;
 
-        // 6. Persist backup record.
-        ctx.storage.put_backup(&backup).await?;
+        // 7. Persist backup record.  Do not leave a discoverable, untracked
+        // secret-bearing artifact when the metadata write fails.
+        if let Err(error) = ctx.storage.put_backup(&backup).await {
+            let _ = std::fs::remove_file(&self.output_path);
+            return Err(error.into());
+        }
 
-        // 7. Audit.
+        // 8. Audit.
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::Backup,
             AuditOutcome::Allow,
@@ -119,4 +146,67 @@ impl TriggerBackupCommand {
         info!("trigger_backup: backup complete");
         Ok(TriggerBackupOutput { backup })
     }
+}
+
+/// Write a backup without ever publishing a partial ciphertext at `target`.
+///
+/// The output directory is deliberately required to exist.  Silently creating
+/// it would give a security-sensitive artifact an implicit ownership and mode.
+fn persist_artifact_atomically(target: &Path, ciphertext: &[u8]) -> Result<(), AppError> {
+    let Some(parent) = target.parent() else {
+        return Err(AppError::InvalidInput(
+            "backup output path must have a parent directory".into(),
+        ));
+    };
+    if !parent.is_dir() {
+        return Err(AppError::InvalidInput(format!(
+            "backup output directory does not exist: {}",
+            parent.display()
+        )));
+    }
+    if target.file_name().is_none() {
+        return Err(AppError::InvalidInput(
+            "backup output path must name a file".into(),
+        ));
+    }
+    if target.exists() {
+        return Err(AppError::InvalidInput(format!(
+            "refusing to overwrite existing backup artifact: {}",
+            target.display()
+        )));
+    }
+
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        target.file_name().map_or_else(
+            || "backup".into(),
+            |name| name.to_string_lossy().into_owned()
+        ),
+        UuidV7::new()
+    ));
+
+    let result = (|| -> Result<(), std::io::Error> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(ciphertext)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, target)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result.map_err(|error| {
+        AppError::Domain(format!(
+            "failed to persist backup artifact at {}: {error}",
+            target.display()
+        ))
+    })
 }

@@ -131,13 +131,13 @@ impl RevealRequest {
         }
 
         // Validate challenge_id correlation when a challenge was issued.
-        if let Some(ch) = &self.challenge {
-            if ch.challenge_id != resolution.challenge_id {
-                return Err(DomainError::ChallengeMismatch {
-                    expected: ch.challenge_id,
-                    got: resolution.challenge_id,
-                });
-            }
+        if let Some(ch) = &self.challenge
+            && ch.challenge_id != resolution.challenge_id
+        {
+            return Err(DomainError::ChallengeMismatch {
+                expected: ch.challenge_id,
+                got: resolution.challenge_id,
+            });
         }
 
         self.state = if authorization.is_allowed() {

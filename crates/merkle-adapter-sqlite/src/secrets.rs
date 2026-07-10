@@ -340,10 +340,10 @@ pub(crate) async fn list_secrets(
     // When a tag filter is present the SQL query did NOT apply the limit (see
     // `limit_clause` above), so enforce it here — AFTER tag matching — so the
     // page reflects the filtered set rather than a pre-filter truncation.
-    if filter.tag_match.is_some() {
-        if let Some(limit) = filter.limit {
-            secrets.truncate(limit as usize);
-        }
+    if filter.tag_match.is_some()
+        && let Some(limit) = filter.limit
+    {
+        secrets.truncate(limit as usize);
     }
 
     Ok(secrets)

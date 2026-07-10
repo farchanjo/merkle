@@ -81,13 +81,23 @@ type Snapshot = HashMap<String, HashMap<String, String>>;
 /// let adapter = FileKeystoreAdapter::open(path, passphrase).await.expect("open ok");
 /// # }
 /// ```
-#[derive(Debug)]
 pub struct FileKeystoreAdapter {
     path: PathBuf,
     /// Passphrase kept in memory to re-encrypt on each persist.
     passphrase: secrecy::SecretString,
     /// In-memory snapshot guarded by a Tokio mutex.
     inner: tokio::sync::Mutex<HashMap<StoreKey, Vec<u8>>>,
+}
+
+impl std::fmt::Debug for FileKeystoreAdapter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FileKeystoreAdapter")
+            .field("path", &self.path)
+            .field("passphrase", &"[REDACTED]")
+            .field("inner", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl FileKeystoreAdapter {

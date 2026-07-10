@@ -12,10 +12,10 @@
 //! # Enforcement policy (opt-in, fail-closed)
 //!
 //! The domain's *documented* default is "empty allowlist = deny all". Enforcing
-//! that literally would break every currently-running namespace, none of which
-//! has an allowlist configured yet. The ENFORCEMENT layer therefore deviates
-//! deliberately and treats an empty allowlist as ALLOW (opt-in), while keeping
-//! every configured allowlist strict and fail-closed:
+//! that literally would prevent a newly bound namespace from being used before
+//! its operator can configure a consumer allowlist. The socket adapter therefore
+//! treats an empty allowlist as opt-in: process-level gating begins only after a
+//! namespace has a configured allowlist, which is then enforced fail-closed.
 //!
 //! | allowlist    | `program_path`      | decision |
 //! |--------------|---------------------|----------|
@@ -51,11 +51,6 @@ pub(crate) fn enforce_consumer_allowlist(
     policy: &NamespacePolicy,
     peer: &PeerCredentials,
 ) -> Result<(), Problem> {
-    // DEVIATION-FROM-DENY-ALL (deliberate): the domain treats an empty allowlist
-    // as deny-all, but enforcing that would lock out every namespace that has
-    // not yet configured `allowed_consumers`. Here an empty allowlist means the
-    // operator has not opted in, so the process check is SKIPPED (allow). A
-    // namespace only gains process-level gating once its allowlist is populated.
     if policy.allowed_consumers.globs.is_empty() {
         return Ok(());
     }
@@ -79,9 +74,8 @@ pub(crate) fn enforce_consumer_allowlist(
 
 /// Load the namespace policy and enforce the consumer allowlist against `peer`.
 ///
-/// Absent policy row → treated as an empty allowlist → allow (opt-in). A storage
-/// error fails CLOSED: the operation is refused because the allowlist cannot be
-/// determined.
+/// An absent policy row is treated as an empty allowlist (allow). A storage
+/// error fails closed because the allowlist cannot be determined.
 pub(crate) async fn check(
     ctx: &AppContext,
     namespace_id: &NamespaceId,
@@ -90,7 +84,6 @@ pub(crate) async fn check(
     match ctx.storage.get_namespace_policy(namespace_id).await {
         // Policy present: apply the allowlist decision.
         Ok(Some(policy)) => enforce_consumer_allowlist(&policy, peer),
-        // No policy row yet: no allowlist configured → allow (opt-in).
         Ok(None) => Ok(()),
         // Cannot read the policy → cannot know the allowlist → fail closed.
         Err(e) => Err(app_error_to_problem(AppError::Storage(e))),
@@ -127,7 +120,6 @@ mod tests {
 
     #[test]
     fn empty_allowlist_allows_even_without_path() {
-        // Unconfigured namespace: check skipped, allow (opt-in deviation).
         let policy = policy_with(vec![]);
         let peer = peer_with(None);
         assert!(enforce_consumer_allowlist(&policy, &peer).is_ok());

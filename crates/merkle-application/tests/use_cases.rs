@@ -16,7 +16,8 @@ use merkle_application::{
     commands::{
         bind_namespace::BindNamespaceCommand, init_vault::InitVaultCommand,
         list_secrets::ListSecretsCommand, put_secret::PutSecretCommand,
-        seal_vault::SealVaultCommand, unseal_vault::UnsealVaultCommand,
+        seal_vault::SealVaultCommand, trigger_backup::TriggerBackupCommand,
+        unseal_vault::UnsealVaultCommand,
     },
     queries::{
         agent_status::AgentStatusQuery, list_namespaces::ListNamespacesQuery,
@@ -304,9 +305,9 @@ async fn test_unseal_and_seal_transitions() {
     assert!(hmac_guard.is_none(), "HMAC key must be cleared after seal");
 }
 
-/// T03 — reveal_secret denied when sensitivity=High without OOB.
+/// T03 — a transport-controlled OOB boolean can never authorize High reveal.
 #[tokio::test]
-async fn test_reveal_denied_high_sensitivity_no_oob() {
+async fn test_reveal_denied_high_sensitivity_with_forged_oob_ack() {
     use merkle_application::commands::reveal_secret::RevealSecretCommand;
     use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation;
     use merkle_types::{CompanionDeviceClass, OobChannel};
@@ -341,14 +342,15 @@ async fn test_reveal_denied_high_sensitivity_no_oob() {
     };
     put_cmd.execute(&ctx).await.expect("put_secret");
 
-    // Attempt reveal WITHOUT OOB acknowledgement.
+    // A caller can forge this boolean. It must not bypass a signed OOB
+    // resolution, which is currently unavailable and therefore fail-closed.
     let handle = "vault://secure/ssh-key/prod".parse().expect("handle");
     let reveal_cmd = RevealSecretCommand {
         namespace_id: ns_id,
         handle,
         operator_confirmation: OperatorConfirmation {
             slash_command: true,
-            oob_ack: false, // no OOB ack
+            oob_ack: true,
             signed_config_flag: None,
         },
         challenge_id: None,
@@ -365,7 +367,7 @@ async fn test_reveal_denied_high_sensitivity_no_oob() {
     let result = reveal_cmd.execute(&ctx).await;
     assert!(
         result.is_err(),
-        "reveal should be denied without OOB ack for High sensitivity"
+        "reveal should be denied even when a caller sends oob_ack=true"
     );
     let err = result.unwrap_err();
     assert!(
@@ -797,6 +799,125 @@ async fn test_write_tempfile_returns_opaque_token() {
 
     // Clean up.
     let _ = std::fs::remove_file(&tmp_path);
+}
+
+/// A successful backup publishes the encrypted artifact before it records the
+/// snapshot, and the artifact is decryptable by either documented recipient.
+#[tokio::test]
+async fn trigger_backup_persists_atomic_decryptable_artifact() {
+    use merkle_domain_backup_recovery::trigger::BackupTrigger;
+    use merkle_ports::AgeIdentity;
+    use secrecy::ExposeSecret as _;
+
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+    let (namespace_id, _, _) = setup_ns_and_secret(
+        &ctx,
+        "backup-artifact",
+        "vault://backup-artifact/api-key/service",
+        b"backup-me",
+    )
+    .await;
+
+    let master = age::x25519::Identity::generate();
+    let recovery = age::x25519::Identity::generate();
+    let master_recipient = master.to_public().to_string();
+    let recovery_recipient = recovery.to_public().to_string();
+    let recovery_identity = AgeIdentity(recovery.to_string().expose_secret().to_owned());
+
+    let directory = std::env::temp_dir().join(format!(
+        "merkle-backup-artifact-test-{}",
+        merkle_types::UuidV7::new()
+    ));
+    std::fs::create_dir(&directory).expect("create dedicated backup directory");
+    let output_path = directory.join("snapshot.merkle.age");
+
+    let output = TriggerBackupCommand {
+        namespace_id,
+        trigger: BackupTrigger::Manual,
+        master_pubkey_recipient: master_recipient,
+        recovery_pubkey_recipient: recovery_recipient,
+        output_path: output_path.clone(),
+    }
+    .execute(&ctx)
+    .await
+    .expect("backup succeeds");
+
+    let ciphertext = std::fs::read(&output_path).expect("published artifact exists");
+    assert_eq!(
+        output.backup.hmac,
+        merkle_types::HmacSignature::compute(
+            &ctx.require_hmac_key().await.expect("hmac key"),
+            &ciphertext
+        )
+    );
+    let plaintext = ctx
+        .crypto
+        .age_decrypt(&recovery_identity, &ciphertext)
+        .expect("recovery identity decrypts artifact");
+    let restored: Vec<merkle_domain_secret_storage::Secret> =
+        serde_json::from_slice(&plaintext).expect("artifact contains secret snapshot");
+    assert_eq!(restored.len(), 1);
+
+    let backups = ctx
+        .storage
+        .list_backups(&namespace_id)
+        .await
+        .expect("list backups");
+    assert_eq!(backups.len(), 1, "only a published artifact is recorded");
+    assert_eq!(backups[0].artifact.path, output_path);
+
+    std::fs::remove_dir_all(directory).expect("cleanup backup directory");
+}
+
+/// A duplicate recipient is not a dual-recipient backup and must not publish
+/// an artifact or create a misleading snapshot record.
+#[tokio::test]
+async fn trigger_backup_rejects_duplicate_recipients_without_artifact() {
+    use merkle_domain_backup_recovery::trigger::BackupTrigger;
+
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+    let (namespace_id, _, _) = setup_ns_and_secret(
+        &ctx,
+        "backup-recipient",
+        "vault://backup-recipient/api-key/service",
+        b"backup-me",
+    )
+    .await;
+
+    let directory = std::env::temp_dir().join(format!(
+        "merkle-backup-recipient-test-{}",
+        merkle_types::UuidV7::new()
+    ));
+    std::fs::create_dir(&directory).expect("create dedicated backup directory");
+    let output_path = directory.join("snapshot.merkle.age");
+
+    let error = TriggerBackupCommand {
+        namespace_id,
+        trigger: BackupTrigger::Manual,
+        master_pubkey_recipient: "age1same-recipient".into(),
+        recovery_pubkey_recipient: "age1same-recipient".into(),
+        output_path: output_path.clone(),
+    }
+    .execute(&ctx)
+    .await
+    .expect_err("duplicate recipients are rejected");
+
+    assert!(matches!(
+        error,
+        merkle_application::AppError::InvalidInput(_)
+    ));
+    assert!(!output_path.exists(), "no artifact may be published");
+    assert!(
+        ctx.storage
+            .list_backups(&namespace_id)
+            .await
+            .expect("list backups")
+            .is_empty(),
+        "no snapshot record may be created"
+    );
+    std::fs::remove_dir_all(directory).expect("cleanup backup directory");
 }
 
 /// T12 — delete_secret denied for High-sensitivity without slash_command.

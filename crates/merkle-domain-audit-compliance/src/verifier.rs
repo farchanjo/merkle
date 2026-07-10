@@ -87,17 +87,17 @@ fn check_link(
     to_id: Option<AuditEntryId>,
     verified_at: Rfc3339Timestamp,
 ) -> Result<(), Box<ChainVerifyResult>> {
-    if let Some(prev_seq) = state.last_seq {
-        if entry.seq != prev_seq + 1 {
-            return Err(Box::new(broken_at(
-                entry,
-                state.last_hash,
-                state,
-                from_id,
-                to_id,
-                verified_at,
-            )));
-        }
+    if let Some(prev_seq) = state.last_seq
+        && entry.seq != prev_seq + 1
+    {
+        return Err(Box::new(broken_at(
+            entry,
+            state.last_hash,
+            state,
+            from_id,
+            to_id,
+            verified_at,
+        )));
     }
     if entry.prev_hash != Some(state.last_hash) {
         return Err(Box::new(broken_at(
@@ -234,10 +234,10 @@ fn slice_entries<'a>(
     let mut collected = Vec::new();
     for e in iter {
         collected.push(e);
-        if let Some(end_id) = to_id {
-            if &e.id == end_id {
-                break;
-            }
+        if let Some(end_id) = to_id
+            && &e.id == end_id
+        {
+            break;
         }
     }
     collected
@@ -424,10 +424,10 @@ fn walk_from_baseline(
             state.last_hash
         };
 
-        if !state.first_entry {
-            if let Err(r) = check_link(entry, &state, None, None, verified_at) {
-                return *r;
-            }
+        if !state.first_entry
+            && let Err(r) = check_link(entry, &state, None, None, verified_at)
+        {
+            return *r;
         }
 
         if let Err(r) = check_hash(entry, &prev_for_hashing, &state, None, None, verified_at) {
@@ -595,10 +595,11 @@ impl ChainVerifier {
 
         // Genesis anchor (full-range only): a complete chain MUST begin at the
         // genesis entry (seq == 0, no prev_hash).
-        if from_id.is_none() && to_id.is_none() {
-            if let Some(result) = check_genesis_anchor(&entries, log, verified_at) {
-                return result;
-            }
+        if from_id.is_none()
+            && to_id.is_none()
+            && let Some(result) = check_genesis_anchor(&entries, log, verified_at)
+        {
+            return result;
         }
 
         let mut state = WalkState::new();
@@ -612,10 +613,10 @@ impl ChainVerifier {
                 state.last_hash
             };
 
-            if !state.first_entry {
-                if let Err(r) = check_link(entry, &state, from_id, to_id, verified_at) {
-                    return *r;
-                }
+            if !state.first_entry
+                && let Err(r) = check_link(entry, &state, from_id, to_id, verified_at)
+            {
+                return *r;
             }
 
             if let Err(r) = check_hash(
@@ -639,12 +640,12 @@ impl ChainVerifier {
         }
 
         // Head-commitment checks: full-range only (both bounds are None).
-        if from_id.is_none() && to_id.is_none() {
-            if let Some(result) =
+        if from_id.is_none()
+            && to_id.is_none()
+            && let Some(result) =
                 check_head_commitment(&state, pinned_head, hmac_key_array, verified_at)
-            {
-                return result;
-            }
+        {
+            return result;
         }
 
         ChainVerifyResult {

@@ -52,40 +52,40 @@ impl<'a> AuditQueryModel<'a> {
     }
 
     fn matches(entry: &AuditEntry, q: &AuditQuery) -> bool {
-        if let Some(op) = q.op {
-            if entry.op != op {
-                return false;
-            }
+        if let Some(op) = q.op
+            && entry.op != op
+        {
+            return false;
         }
-        if let Some(outcome) = q.outcome {
-            if entry.outcome != outcome {
-                return false;
-            }
+        if let Some(outcome) = q.outcome
+            && entry.outcome != outcome
+        {
+            return false;
         }
-        if let Some(ref ns) = q.namespace_id {
-            if &entry.namespace_id != ns {
-                return false;
-            }
+        if let Some(ref ns) = q.namespace_id
+            && &entry.namespace_id != ns
+        {
+            return false;
         }
-        if let Some(ref handle) = q.handle {
-            if entry.handle.as_ref() != Some(handle) {
-                return false;
-            }
+        if let Some(ref handle) = q.handle
+            && entry.handle.as_ref() != Some(handle)
+        {
+            return false;
         }
-        if let Some(sensitivity) = q.sensitivity {
-            if entry.sensitivity != Some(sensitivity) {
-                return false;
-            }
+        if let Some(sensitivity) = q.sensitivity
+            && entry.sensitivity != Some(sensitivity)
+        {
+            return false;
         }
-        if let Some(from) = q.from {
-            if entry.ts < from {
-                return false;
-            }
+        if let Some(from) = q.from
+            && entry.ts < from
+        {
+            return false;
         }
-        if let Some(to) = q.to {
-            if entry.ts > to {
-                return false;
-            }
+        if let Some(to) = q.to
+            && entry.ts > to
+        {
+            return false;
         }
         true
     }

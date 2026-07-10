@@ -69,12 +69,12 @@ pub async fn run(
     }
 
     // Immediate reveal — print the plaintext.
-    if format == OutputFormat::Human {
-        if let Some(plaintext) = value.get("plaintext") {
-            print_ok("plaintext revealed");
-            println!("{plaintext}");
-            return Ok(());
-        }
+    if format == OutputFormat::Human
+        && let Some(plaintext) = value.get("plaintext")
+    {
+        print_ok("plaintext revealed");
+        println!("{plaintext}");
+        return Ok(());
     }
 
     print_value(&value, format)?;

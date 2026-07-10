@@ -146,12 +146,12 @@ async fn send_and_drain(builder: reqwest::RequestBuilder) -> Result<HttpResponse
 /// same ceiling while streaming so an absent or dishonest `Content-Length`
 /// cannot bypass the limit.
 async fn read_capped_body(mut response: Response) -> Result<Vec<u8>, ExternalError> {
-    if let Some(len) = response.content_length() {
-        if len > MAX_BODY_BYTES as u64 {
-            return Err(ExternalError::OperationFailed(format!(
-                "response Content-Length {len} exceeds limit of {MAX_BODY_BYTES} bytes"
-            )));
-        }
+    if let Some(len) = response.content_length()
+        && len > MAX_BODY_BYTES as u64
+    {
+        return Err(ExternalError::OperationFailed(format!(
+            "response Content-Length {len} exceeds limit of {MAX_BODY_BYTES} bytes"
+        )));
     }
 
     let mut buf: Vec<u8> = Vec::new();

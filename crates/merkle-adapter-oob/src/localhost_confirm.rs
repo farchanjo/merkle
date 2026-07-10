@@ -395,11 +395,11 @@ impl OobNotifier for LocalhostConfirmChannel {
             // already running).
             {
                 let guard = self.server_handle.lock().await;
-                if let Some(h) = guard.as_ref() {
-                    if !h.is_finished() {
-                        // Server is running — channel is available.
-                        return true;
-                    }
+                if let Some(h) = guard.as_ref()
+                    && !h.is_finished()
+                {
+                    // Server is running — channel is available.
+                    return true;
                 }
             }
             // Port probe: can we bind it?

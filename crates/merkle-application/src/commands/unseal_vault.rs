@@ -234,13 +234,13 @@ async fn commit_unseal(
 async fn rollback_to_sealed(ctx: &AppContext) {
     {
         let mut identity = ctx.identity.write().await;
-        if identity.state() == SealedState::Unsealing {
-            if let Err(rollback_err) = identity.revert_to_sealed() {
-                tracing::error!(
-                    error = %rollback_err,
-                    "unseal_vault: rollback to Sealed failed — vault may be stuck in Unsealing"
-                );
-            }
+        if identity.state() == SealedState::Unsealing
+            && let Err(rollback_err) = identity.revert_to_sealed()
+        {
+            tracing::error!(
+                error = %rollback_err,
+                "unseal_vault: rollback to Sealed failed — vault may be stuck in Unsealing"
+            );
         }
     }
     // Defensive: never leave key material behind on a rolled-back unseal.
@@ -272,7 +272,9 @@ pub(crate) fn derive_audit_hmac_key(crypto: &dyn Crypto, vrk_bytes: &[u8; 32]) -
 /// (atomic-under-the-same-guard) and roll the in-memory head back to its prior
 /// position if persistence fails, so the next append never builds on a
 /// non-durable tail.
-pub(crate) async fn audit_commit(
+/// Append and durably commit an audit entry for an inbound adapter that must
+/// record a policy denial before returning a response.
+pub async fn audit_commit(
     ctx: &AppContext,
     params: AppendParams,
     hmac_key: &[u8; 32],

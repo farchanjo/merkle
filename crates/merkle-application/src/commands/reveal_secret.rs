@@ -11,8 +11,8 @@
 use std::time::Duration;
 
 use merkle_domain_access_mediation::{
-    companion_device::CompanionDevice, decision, oob::challenge::OobChallenge,
-    operator_confirmation::OperatorConfirmation, reveal_authorization::RevealAuthorization,
+    companion_device::CompanionDevice, decision, operator_confirmation::OperatorConfirmation,
+    reveal_authorization::RevealAuthorization,
 };
 use merkle_domain_identity::keychain_entry::KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION;
 use merkle_domain_identity::keychain_entry::KEYCHAIN_SERVICE;
@@ -111,44 +111,64 @@ impl RevealSecretCommand {
         // 0. JWT attestation path: if the client supplied a signed_config_flag
         //    and did NOT set slash_command, verify the JWT and treat success as
         //    equivalent to slash_command=true (ADR-0011 Amendment 6).
-        if let Some(ref scf) = self.operator_confirmation.signed_config_flag {
-            if !self.operator_confirmation.slash_command {
-                // Retrieve operator Ed25519 public key from OS keychain.
-                let pubkey_bytes = ctx
-                    .keychain
-                    .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION)
-                    .await
-                    .map_err(|_| {
-                        AppError::PolicyDenied(
-                            "invalid_signed_config_flag: key_not_enrolled".into(),
-                        )
-                    })?;
-
-                let key_arr: [u8; 32] = pubkey_bytes.try_into().map_err(|_| {
-                    AppError::PolicyDenied("invalid_signed_config_flag: key malformed".into())
-                })?;
-                let operator_pubkey = Ed25519PublicKey(key_arr);
-
-                let challenge_id = self.challenge_id.ok_or_else(|| {
-                    AppError::PolicyDenied(
-                        "invalid_signed_config_flag: missing challenge_id".into(),
-                    )
+        if let Some(ref scf) = self.operator_confirmation.signed_config_flag
+            && !self.operator_confirmation.slash_command
+        {
+            // Retrieve operator Ed25519 public key from OS keychain.
+            let pubkey_bytes = ctx
+                .keychain
+                .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_OPERATOR_ATTESTATION)
+                .await
+                .map_err(|_| {
+                    AppError::PolicyDenied("invalid_signed_config_flag: key_not_enrolled".into())
                 })?;
 
-                let flag = crate::jwt_verifier::SignedConfigFlag {
-                    jwt: scf.jwt.clone(),
-                    key_id: scf.key_id.clone(),
-                };
-                JwtAttestationVerifier::verify(
-                    &flag,
-                    &challenge_id,
-                    &operator_pubkey,
-                    &Rfc3339Timestamp::now(),
-                )?;
-                // JWT verified — operator confirmation is treated as satisfied.
-                // Continue with the rest of the policy evaluation; slash_command
-                // equivalence is already reflected in `slash_confirmed()`.
-            }
+            let key_arr: [u8; 32] = pubkey_bytes.try_into().map_err(|_| {
+                AppError::PolicyDenied("invalid_signed_config_flag: key malformed".into())
+            })?;
+            let operator_pubkey = Ed25519PublicKey(key_arr);
+
+            let challenge_id = self.challenge_id.ok_or_else(|| {
+                AppError::PolicyDenied("invalid_signed_config_flag: missing challenge_id".into())
+            })?;
+
+            let flag = crate::jwt_verifier::SignedConfigFlag {
+                jwt: scf.jwt.clone(),
+                key_id: scf.key_id.clone(),
+            };
+            JwtAttestationVerifier::verify(
+                &flag,
+                &challenge_id,
+                &operator_pubkey,
+                &Rfc3339Timestamp::now(),
+            )?;
+            // JWT verified — operator confirmation is treated as satisfied.
+            // Continue with the rest of the policy evaluation; slash_command
+            // equivalence is already reflected in `slash_confirmed()`.
+        }
+
+        let oob_required = self.sensitivity >= self.oob_threshold
+            || self.security_profile == SecurityProfile::Paranoid;
+        if oob_required {
+            // The OOB adapter does not yet route a resolution back to the
+            // originating challenge and this command does not verify its
+            // device signature.  A caller-provided `oob_ack` boolean is not an
+            // authorization factor, so every OOB-gated reveal must stop here.
+            let hmac_key = ctx.require_hmac_key().await?;
+            let params = merkle_domain_audit_compliance::AppendParams::new(
+                AuditOp::Reveal,
+                AuditOutcome::Deny,
+                self.namespace_id,
+            )
+            .handle(self.handle.clone())
+            .sensitivity(self.sensitivity)
+            .denial_reason("oob_verification_unavailable")
+            .caller_program("merkle-agent");
+            crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+
+            return Err(AppError::PolicyDenied(
+                "oob_verification_unavailable".into(),
+            ));
         }
 
         // 1. Resolve the companion device class (Software if no device enrolled).
@@ -188,50 +208,14 @@ impl RevealSecretCommand {
             RevealAuthorization::Allow => {}
         }
 
-        // 3. Determine whether OOB is required and not yet acknowledged.
-        let oob_required = self.sensitivity >= self.oob_threshold
-            || self.security_profile == SecurityProfile::Paranoid;
-
-        if oob_required && !self.operator_confirmation.oob_ack {
-            // Dispatch OOB challenge and await resolution.
-            let device = self
-                .companion_device
-                .as_ref()
-                .ok_or_else(|| AppError::PolicyDenied("no companion device enrolled".into()))?;
-
-            let challenge = OobChallenge {
-                challenge_id: ChallengeId::new(),
-                namespace_id: self.namespace_id,
-                secret_handle: self.handle.clone(),
-                sensitivity: self.sensitivity,
-                oob_channel: self.oob_channel,
-                expires_at: Rfc3339Timestamp::now(),
-                request_nonce: ctx.crypto.random_bytes_32(),
-                envelope: None,
-            };
-
-            ctx.oob.dispatch(&challenge, device).await?;
-            let resolution = ctx
-                .oob
-                .await_resolution(challenge.challenge_id, self.oob_timeout)
-                .await?;
-
-            // Verify that the resolution is an approval.
-            if resolution.outcome != merkle_types::OobChallengeOutcome::Approved {
-                return Err(AppError::PolicyDenied(
-                    "oob resolution denied or expired".into(),
-                ));
-            }
-        }
-
-        // 4. Load the secret from storage.
+        // 3. Load the secret from storage.
         let secret = ctx
             .storage
             .get_secret_by_handle(&self.handle)
             .await?
             .ok_or(AppError::NotFound)?;
 
-        // 5. Decrypt the private blob from the current version.
+        // 4. Decrypt the private blob from the current version.
         let blob = &secret
             .versions()
             .iter()

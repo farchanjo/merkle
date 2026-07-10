@@ -2,6 +2,7 @@
 
 use merkle_types::{AuditOp, AuditOutcome, NamespaceId};
 use tracing::{info, warn};
+use zeroize::Zeroize as _;
 
 use crate::{AppContext, AppError};
 
@@ -60,10 +61,14 @@ impl SealVaultCommand {
             drop(hmac_key);
         }
 
-        // Zero the HMAC key.
+        // Take and explicitly zero the key before dropping it. Assigning
+        // `None` alone only drops a copyable array and leaves its bytes in the
+        // allocation until reused.
         {
             let mut hmac_guard = ctx.hmac_key.write().await;
-            *hmac_guard = None;
+            if let Some(mut key) = hmac_guard.take() {
+                key.zeroize();
+            }
         }
 
         // Restore the in-memory audit log from the persisted PinnedHead so the

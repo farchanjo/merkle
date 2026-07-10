@@ -103,17 +103,17 @@ impl PolicyEvaluator {
         }
 
         // --- Steps 6 + 7: reveal-specific checks ---
-        if input.op == AuditOp::Reveal {
-            if let Some(d) = Self::check_reveal(policy, input) {
-                return d;
-            }
+        if input.op == AuditOp::Reveal
+            && let Some(d) = Self::check_reveal(policy, input)
+        {
+            return d;
         }
 
         // --- Step 8: unseal preconditions (only for the unseal op) ---
-        if input.op == AuditOp::Unseal {
-            if let Some(d) = Self::check_unseal_op_state(input) {
-                return d;
-            }
+        if input.op == AuditOp::Unseal
+            && let Some(d) = Self::check_unseal_op_state(input)
+        {
+            return d;
         }
 
         PolicyDecision::Allow
