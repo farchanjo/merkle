@@ -29,6 +29,8 @@ thiserror                        = { workspace = true }
 serde                            = { workspace = true, features = ["derive"] }
 serde_json                       = { workspace = true }
 zeroize                          = { workspace = true }
+age                              = { workspace = true }
+secrecy                          = { workspace = true }
 
 [dev-dependencies]
 tokio                             = { workspace = true, features = ["macros", "rt-multi-thread"] }
@@ -37,5 +39,3 @@ merkle-adapter-crypto             = { path = "../merkle-adapter-crypto" }
 merkle-adapter-keychain           = { path = "../merkle-adapter-keychain" }
 merkle-adapter-oob                = { path = "../merkle-adapter-oob" }
 merkle-adapter-external-services  = { path = "../merkle-adapter-external-services" }
-age                               = { workspace = true }
-secrecy                           = { workspace = true }

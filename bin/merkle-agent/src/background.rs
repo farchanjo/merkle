@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use merkle_application::AppContext;
+use merkle_application::backup_recipients::resolve_dual_recipients;
 use merkle_application::commands::seal_vault::SealVaultCommand;
 use merkle_application::commands::trigger_backup::TriggerBackupCommand;
-use merkle_application::AppContext;
 use merkle_domain_backup_recovery::scheduler::BackupScheduler;
-use merkle_domain_identity::KEYCHAIN_SERVICE;
-use merkle_ports::{KeychainError, SecretFilter};
+use merkle_ports::SecretFilter;
 use merkle_types::Rfc3339Timestamp;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -31,11 +31,6 @@ use tracing::{error, info, warn};
 // ---------------------------------------------------------------------------
 
 const BACKUP_POLL_INTERVAL: Duration = Duration::from_secs(60);
-
-/// Keychain account holding the master backup age *recipient* (`age1…`).
-const ACCOUNT_RECIPIENT: &str = "backup-master-recipient-v1";
-/// Keychain account holding the master backup age *identity* (`AGE-SECRET-KEY-1…`).
-const ACCOUNT_IDENTITY: &str = "backup-master-identity-v1";
 
 /// Anacron-style backup scheduler.
 ///
@@ -89,21 +84,13 @@ async fn run_backup_check(ctx: &Arc<AppContext>) {
         return;
     };
 
-    let Some(master_recipient) = ensure_master_recipient(ctx).await else {
-        warn!("backup scheduler: could not resolve master age recipient; skipping");
-        return;
+    let (master_recipient, recovery_recipient) = match resolve_dual_recipients(ctx).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            warn!(error = %e, "backup scheduler: could not resolve dual age recipients; skipping");
+            return;
+        }
     };
-
-    let recovery_recipient = {
-        let identity = ctx.identity.read().await;
-        identity.recovery_pubkey().identity_pubkey().to_owned()
-    };
-    if !is_usable_recovery_recipient(&recovery_recipient, &master_recipient) {
-        warn!(
-            "backup scheduler: recovery recipient empty, placeholder, or equals master; skipping"
-        );
-        return;
-    }
 
     let output_dir = prepare_backup_dir(ctx).await;
     let Ok(namespaces) = ctx.storage.list_namespaces().await else {
@@ -197,83 +184,6 @@ async fn maybe_record_idle_window(ctx: &Arc<AppContext>) {
         .write()
         .await
         .record_idle_window_start(Rfc3339Timestamp::now());
-}
-
-/// Ensure a master age identity/recipient pair exists in the keychain.
-///
-/// Generates a new `age::x25519::Identity` on first use and persists both the
-/// identity and the public recipient under dedicated keychain accounts.
-async fn ensure_master_recipient(ctx: &Arc<AppContext>) -> Option<String> {
-    match ctx
-        .keychain
-        .retrieve(KEYCHAIN_SERVICE, ACCOUNT_RECIPIENT)
-        .await
-    {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(s) if !s.trim().is_empty() => Some(s),
-            Ok(_) => {
-                warn!("backup scheduler: master recipient entry is empty");
-                None
-            }
-            Err(e) => {
-                warn!(error = %e, "backup scheduler: master recipient is not utf-8");
-                None
-            }
-        },
-        Err(KeychainError::NotFound) => generate_and_store_master_identity(ctx).await,
-        Err(e) => {
-            warn!(error = %e, "backup scheduler: keychain retrieve failed");
-            None
-        }
-    }
-}
-
-async fn generate_and_store_master_identity(ctx: &Arc<AppContext>) -> Option<String> {
-    use secrecy::ExposeSecret as _;
-
-    let identity = age::x25519::Identity::generate();
-    // age 0.11 returns a `SecretString` from `Identity::to_string`.
-    let identity_str = identity.to_string().expose_secret().to_owned();
-    let recipient_str = identity.to_public().to_string();
-
-    if let Err(e) = ctx
-        .keychain
-        .store(
-            KEYCHAIN_SERVICE,
-            ACCOUNT_IDENTITY,
-            identity_str.as_bytes(),
-        )
-        .await
-    {
-        warn!(error = %e, "backup scheduler: failed to store master identity");
-        return None;
-    }
-    if let Err(e) = ctx
-        .keychain
-        .store(
-            KEYCHAIN_SERVICE,
-            ACCOUNT_RECIPIENT,
-            recipient_str.as_bytes(),
-        )
-        .await
-    {
-        warn!(error = %e, "backup scheduler: failed to store master recipient");
-        return None;
-    }
-
-    info!("backup scheduler: generated and stored master age identity for backups");
-    Some(recipient_str)
-}
-
-fn is_usable_recovery_recipient(recovery: &str, master: &str) -> bool {
-    let trimmed = recovery.trim();
-    if trimmed.is_empty() || trimmed.contains("placeholder") {
-        return false;
-    }
-    if trimmed == master {
-        return false;
-    }
-    trimmed.starts_with("age1")
 }
 
 async fn prepare_backup_dir(ctx: &Arc<AppContext>) -> PathBuf {
@@ -553,7 +463,9 @@ fn idle_poll_interval(idle_timeout: Duration) -> Duration {
     let tenth = idle_timeout
         .checked_div(10)
         .unwrap_or(Duration::from_secs(30));
-    tenth.min(Duration::from_secs(30)).max(Duration::from_secs(1))
+    tenth
+        .min(Duration::from_secs(30))
+        .max(Duration::from_secs(1))
 }
 
 async fn maybe_idle_seal(ctx: &Arc<AppContext>, idle_timeout: Duration) {

@@ -26,6 +26,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod backup_recipients;
 pub mod commands;
 pub mod context;
 pub mod error;
@@ -34,6 +35,7 @@ pub mod prelude;
 pub mod queries;
 pub mod value_format;
 
+pub use backup_recipients::resolve_dual_recipients;
 pub use context::{AppContext, RegisteredTempfile};
 pub use error::AppError;
 pub use value_format::ValueFormat;

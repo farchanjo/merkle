@@ -12,6 +12,7 @@ use axum::{
     response::IntoResponse,
 };
 use merkle_application::{
+    backup_recipients::resolve_dual_recipients,
     commands::{
         execute_restore::ExecuteRestoreCommand, restore_plan::RestorePlanCommand,
         trigger_backup::TriggerBackupCommand,
@@ -23,8 +24,8 @@ use merkle_domain_backup_recovery::{
     trigger::BackupTrigger as DomainBackupTrigger,
 };
 use merkle_ports::AgeIdentity;
-use merkle_types::{NamespaceId, UuidV7};
-use std::{path::PathBuf, sync::Arc};
+use merkle_types::{NamespaceId, Rfc3339Timestamp, UuidV7};
+use std::sync::Arc;
 use tracing::instrument;
 
 use crate::{
@@ -53,76 +54,55 @@ async fn default_namespace_id(ctx: &AppContext) -> Option<NamespaceId> {
         .map(|ns| ns.id)
 }
 
-/// Backup and restore deliberately fail closed until their two-recipient key
-/// provisioning and durable restore-plan storage are designed and wired.
-///
-/// The Master Key is symmetric and no corresponding `age` recipient exists in
-/// the current identity model.  Pretending the recovery recipient is both
-/// recipients produced backups that no documented recovery path could prove.
-/// Likewise, restore plans are not persisted, so an opaque plan id cannot be
-/// resolved safely after a request boundary.
-fn backup_recovery_available() -> bool {
-    false
-}
-
 /// `POST /v1/backup`
 ///
-/// Initiates an on-demand encrypted backup of the entire vault state.
+/// On-demand dual-recipient age backup (same recipient resolution as the
+/// background scheduler — ADR-0006).
 #[instrument(skip(ctx))]
 pub async fn trigger_backup(
     State(ctx): State<Arc<AppContext>>,
     body: Option<Json<TriggerBackupRequest>>,
 ) -> impl IntoResponse {
-    if !backup_recovery_available() {
-        return not_implemented(
-            "Backup is unavailable until distinct master and recovery age recipients are configured.",
-        )
-        .into_response();
-    }
-
-    // Resolve namespace to back up.
     let Some(namespace_id) = default_namespace_id(&ctx).await else {
-        return not_implemented("trigger_backup: no namespace found; create a session first.")
-            .into_response();
+        return Problem {
+            kind: ProblemType::NamespaceNotFound,
+            title: "No namespace found".into(),
+            status: 404,
+            detail: "Create a namespace (vault.bind / session) before backing up.".into(),
+            instance: None,
+            hint: Some("Run `merkle bind <label>` first.".into()),
+            fields: vec![],
+        }
+        .into_response();
     };
 
-    // Write backup artifact to a temp file in the system temp dir.
-    let artifact_path = PathBuf::from(format!("/tmp/merkle-backup-{}.age", uuid::Uuid::now_v7()));
+    let (master_recipient, recovery_recipient) = match resolve_dual_recipients(&ctx).await {
+        Ok(pair) => pair,
+        Err(err) => return app_error_to_problem(err).into_response(),
+    };
 
     let _note = body.as_ref().and_then(|b| b.note.clone());
 
-    // Encrypt the backup to the vault's real recovery recipient (the age public
-    // key held in VaultIdentity), so only the holder of the offline recovery
-    // private key can ever decrypt it. The master key is symmetric and is not
-    // an age recipient, so the recovery key is the sole recipient.
-    let recovery_recipient = {
-        let identity = ctx.identity.read().await;
-        identity.recovery_pubkey().identity_pubkey().to_owned()
-    };
-
-    // Refuse to back up if the identity still carries the bootstrap placeholder:
-    // a backup encrypted to a guessable / null recipient is worse than no
-    // backup at all.
-    if recovery_recipient.is_empty() || recovery_recipient.contains("placeholder") {
+    let backup_dir = ctx.backup_dir.read().await.clone();
+    if let Err(e) = std::fs::create_dir_all(&backup_dir) {
         return Problem {
             kind: ProblemType::BackupFailed,
-            title: "Vault recovery key not configured".into(),
-            status: 409,
-            detail: "The vault has no real recovery key; run the init ceremony \
-                     before creating a backup. Refusing to encrypt a backup to a \
-                     placeholder recipient."
-                .into(),
+            title: "Backup directory unavailable".into(),
+            status: 500,
+            detail: format!("cannot create {}: {e}", backup_dir.display()),
             instance: None,
-            hint: Some("Initialise the vault with `merkle init`.".into()),
+            hint: None,
             fields: vec![],
         }
         .into_response();
     }
+    let iso = Rfc3339Timestamp::now().to_string().replace(':', "-");
+    let artifact_path = backup_dir.join(format!("merkle-bk-{iso}.merkle.age"));
 
     let cmd = TriggerBackupCommand {
         namespace_id,
         trigger: DomainBackupTrigger::Manual,
-        master_pubkey_recipient: recovery_recipient.clone(),
+        master_pubkey_recipient: master_recipient,
         recovery_pubkey_recipient: recovery_recipient,
         output_path: artifact_path.clone(),
     };
@@ -215,6 +195,11 @@ fn conflict_resolution_str(r: ConflictResolution) -> &'static str {
     }
 }
 
+/// Restore plans remain fail-closed until durable plan storage is wired.
+fn restore_available() -> bool {
+    false
+}
+
 /// `POST /v1/backup/restore-plan`
 ///
 /// Validates a backup file and generates a restore plan preview.
@@ -223,7 +208,7 @@ pub async fn create_restore_plan(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<CreateRestorePlanRequest>,
 ) -> impl IntoResponse {
-    if !backup_recovery_available() {
+    if !restore_available() {
         return not_implemented(
             "Restore planning is unavailable until encrypted artifacts and durable restore plans are safely configured.",
         )
@@ -325,7 +310,7 @@ pub async fn execute_restore(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<ExecuteRestoreRequest>,
 ) -> impl IntoResponse {
-    if !backup_recovery_available() {
+    if !restore_available() {
         return not_implemented(
             "Restore is unavailable until a durable, verified restore-plan capability is configured.",
         )
