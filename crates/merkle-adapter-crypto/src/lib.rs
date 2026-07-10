@@ -12,7 +12,8 @@
 //! - **BLAKE3** — Hash Chain content hashing:
 //!   `current_hash = BLAKE3(canonical_content || prev_hash)`.
 //!   Also used in keyed-derivation mode for the VaultHmacKey:
-//!   `vault_hmac_key = BLAKE3(key=vault_root_key, data="merkle:vault-hmac-key:v1")`.
+//!   `vault_hmac_key = BLAKE3_keyed(vault_root_key, b"merkle vault hmac key v1")`
+//!   (domain label must match `unseal_vault::AUDIT_HMAC_KEY_DOMAIN` — spaces, no colons).
 //! - **Argon2id** (RFC 9106) — MasterKey derivation from passphrase.
 //!   Minimum Hardness Floor enforced at compile time:
 //!   `m_cost >= 65536 KiB`, `t_cost >= 3`, `p_cost >= 1`.
