@@ -6,7 +6,7 @@ A **local-first MCP secret vault** that hands your LLM opaque *handles* — neve
 
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen?logo=github-actions)](https://github.com/farchanjo/merkle)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange?logo=rust)](rust-toolchain.toml)
+[![MSRV 1.89](https://img.shields.io/badge/MSRV-1.89-orange?logo=rust)](rust-toolchain.toml)
 [![Rust 2024](https://img.shields.io/badge/edition-2024-000000?logo=rust)](Cargo.toml)
 [![MCP](https://img.shields.io/badge/MCP-30_tools_%2B_4_prompts-6E40C9)](docs/arch/integrations/claude-code-wiring.md)
 [![Tests](https://img.shields.io/badge/tests-~753_passing_%2F_0_failing-brightgreen)](#-development)
@@ -255,7 +255,7 @@ Full analysis lives in the [STRIDE threat model](docs/arch/threat-model/stride-a
 
 ### Prerequisites
 
-- Rust **stable**, MSRV **1.85** (pinned via `rust-toolchain.toml`)
+- Rust **1.89**, MSRV **1.89** (pinned via `rust-toolchain.toml`)
 - Linux build deps: `libsqlite3-dev pkg-config libdbus-1-dev` (`libdbus-1-dev` is needed by the `keyring` Secret Service backend)
 - macOS / Windows: just the Rust toolchain (SQLite is bundled)
 
@@ -523,7 +523,7 @@ Every behavioral change must update `docs/arch/` in the **same commit** as the c
 
 ### Workspace layout
 
-**22 members — 19 library crates + 3 binaries.** Edition 2024, resolver 3, MSRV 1.85.
+**22 members — 19 library crates + 3 binaries.** Edition 2024, resolver 3, MSRV 1.89.
 
 <details>
 <summary><strong>Foundation &amp; domain</strong></summary>
@@ -595,4 +595,3 @@ Licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
 ## Project status
 
 Merkle is **implemented and green**, **pre-1.0**. The full 22-crate workspace is built out; all local gates pass — `cargo build`, `cargo clippy -D warnings`, `cargo deny`, and the medium spec lane (9/9 validators) — with **~753 tests passing / 0 failing** (plus ~18 `#[ignore]` E2E and live-smoke tests). Current version is **0.1.0 (unreleased)**. APIs and the on-disk format may still change before 1.0.
-

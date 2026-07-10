@@ -7,13 +7,6 @@ max_width = 100
 hard_tabs  = false
 tab_spaces = 4
 
-# Import organisation: collapse all imports from the same crate into one use.
-# group_imports = "StdExternalCrate" produces three groups:
-#   1. std / core / alloc
-#   2. external crates
-#   3. crate-local (self:: / super:: / crate::)
-imports_granularity = "Crate"
-group_imports       = "StdExternalCrate"
 reorder_imports     = true
 
 # Shorten struct-literal initialisation: `foo: foo` → `foo`.
@@ -21,23 +14,3 @@ use_field_init_shorthand = true
 
 # Enforce Unix line endings in all sources regardless of OS.
 newline_style = "Unix"
-
-# Keep comment width aligned with code width.
-comment_width        = 100
-wrap_comments        = false  # do not auto-wrap; preserve intentional line breaks
-
-# Trailing commas on multi-line constructs for cleaner diffs.
-trailing_comma = "Vertical"
-
-# Do not collapse single-statement match arms onto one line.
-match_arm_blocks = true
-
-# Blank lines: strip excess vertical whitespace.
-blank_lines_upper_bound = 2
-blank_lines_lower_bound = 0
-
-# Format string literals that happen to be valid Rust when possible.
-format_strings = false  # keep false; aggressive string formatting is surprising
-
-# Reorder impl items: types → consts → fns (matches common reading order).
-reorder_impl_items = false  # keep false; preserve author-chosen impl order

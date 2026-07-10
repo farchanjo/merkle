@@ -36,7 +36,7 @@ Read order to onboard: this file → `~/.claude/CLAUDE.md` (global rules) → `d
 
 ## Workspace layout
 
-**22 members: 19 library crates + 3 binaries.** Edition 2024, resolver 3, MSRV 1.85 (`rust-toolchain.toml` channel=stable, components rustfmt/clippy/rust-analyzer/rust-src).
+**22 members: 19 library crates + 3 binaries.** Edition 2024, resolver 3, MSRV 1.89 (`rust-toolchain.toml` channel=1.89.0, components rustfmt/clippy/rust-analyzer/rust-src).
 
 ### Foundation
 | Crate | Role |
@@ -182,7 +182,7 @@ cargo llvm-cov --workspace --html                     # make cov
 make doctor                                           # check + clippy + test (NO spec lane); make doctor-full adds it
 ```
 
-**Lint baseline (LOCKED — never edit `[workspace.lints]`, `clippy.toml`, `rust-toolchain.toml`, or any `forbid/deny`):** `clippy::all = deny (prio -1)`, `clippy::pedantic = deny (prio -1)`, `missing_docs = warn`, `unsafe_code = forbid`, `unused_must_use = deny`. Workspace clippy allows: `module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`, `wildcard_imports`, `doc_markdown`. `clippy.toml`: msrv 1.85, cognitive-complexity 25, too-many-args 7, too-many-lines 100, `avoid-breaking-exported-api = false`. Every crate uses `[lints] workspace = true`; the **only** exception is `merkle-adapter-companion-socket`, which overrides `unsafe_code = "deny"` and `missing_docs = "allow"` with documented rationale. Fix code to comply — never alter a rule.
+**Lint baseline (LOCKED — never edit `[workspace.lints]`, `clippy.toml`, `rust-toolchain.toml`, or any `forbid/deny`):** `clippy::all = deny (prio -1)`, `clippy::pedantic = deny (prio -1)`, `missing_docs = warn`, `unsafe_code = forbid`, `unused_must_use = deny`. Workspace clippy allows: `module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`, `wildcard_imports`, `doc_markdown`. `clippy.toml`: msrv 1.89, cognitive-complexity 25, too-many-args 7, too-many-lines 100, `avoid-breaking-exported-api = false`. Every crate uses `[lints] workspace = true`; the **only** exception is `merkle-adapter-companion-socket`, which overrides `unsafe_code = "deny"` and `missing_docs = "allow"` with documented rationale. Fix code to comply — never alter a rule.
 
 **Release profile** (`opt-level=3`, `lto=true`, `codegen-units=1`, `strip=true`, **`panic = "abort"`**). `panic = "abort"` is a security invariant (no unwind past a poisoned/invariant-violated state) — never change.
 

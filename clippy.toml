@@ -1,6 +1,6 @@
 # Clippy workspace-level configuration for Merkle
 # MSRV aligns with rust-toolchain.toml; update both in lock-step.
-msrv = "1.85"
+msrv = "1.89"
 
 # Do not warn when public API breaks Clippy-inferred return types.
 # Each crate controls its own API surface; the lint is too noisy during

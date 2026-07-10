@@ -11,7 +11,7 @@ include:
 # Defaults
 # ---------------------------------------------------------------------------
 default:
-  image: rust:1.85
+  image: rust:1.89
   before_script:
     - apt-get update -qq
     - apt-get install -y -qq
@@ -99,7 +99,7 @@ clippy:
 
 test:linux:
   <<: [*test-base, *cargo-cache]
-  image: rust:1.85
+  image: rust:1.89
   tags:
     - linux-x86_64
   rules:
@@ -112,8 +112,8 @@ test:macos:
   tags:
     - macos-aarch64
   before_script:
-    - rustup update stable
-    - rustup component add clippy rustfmt llvm-tools-preview
+    - rustup toolchain install 1.89.0 --profile minimal
+    - rustup component add --toolchain 1.89.0 clippy rustfmt llvm-tools-preview
     - cargo install cargo-deny --locked 2>/dev/null || true
     - cargo install cargo-audit --locked 2>/dev/null || true
   cache:
@@ -138,8 +138,8 @@ test:windows:
   tags:
     - windows-x86_64
   before_script:
-    - rustup update stable
-    - rustup component add clippy rustfmt
+    - rustup toolchain install 1.89.0 --profile minimal
+    - rustup component add --toolchain 1.89.0 clippy rustfmt
   cache:
     key:
       files:
@@ -155,13 +155,36 @@ test:windows:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       allow_failure: true  # Windows runner availability varies
 
+# Integration tests use Cargo's integration-test target instead of the
+# lib/bin-only smoke suite above.  Keep the Cucumber runner separate so its
+# custom harness has one unambiguous, blocking result.
+test:integration:
+  stage: test
+  needs: [clippy]
+  <<: *cargo-cache
+  script:
+    - cargo test --workspace --tests --exclude merkle-bdd
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+test:bdd:
+  stage: test
+  needs: [clippy]
+  <<: *cargo-cache
+  script:
+    - cargo test -p merkle-bdd
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
 # ---------------------------------------------------------------------------
 # Stage: spec  (ADR-0018 blocking gate — all 14 validators must pass)
 # ---------------------------------------------------------------------------
 spec:validate:full:
   stage: spec
-  needs: [test:linux]
-  image: rust:1.85
+  needs: [test:linux, test:integration, test:bdd]
+  image: rust:1.89
   before_script:
     - apt-get update -qq
     - apt-get install -y -qq curl git
@@ -185,7 +208,7 @@ spec:validate:full:
 # ---------------------------------------------------------------------------
 cargo:deny:
   stage: security
-  needs: [test:linux]
+  needs: [test:linux, test:integration, test:bdd]
   <<: *cargo-cache
   script:
     - cargo deny check
@@ -195,11 +218,10 @@ cargo:deny:
 
 cargo:audit:
   stage: security
-  needs: [test:linux]
+  needs: [test:linux, test:integration, test:bdd]
   <<: *cargo-cache
   script:
     - cargo audit
-  allow_failure: true  # advisory DB may lag; treat as warn; cargo deny advisories is the hard gate
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
