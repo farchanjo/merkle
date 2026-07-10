@@ -15,6 +15,7 @@ pub use crate::commands::{
     pair_device::{PairDeviceCommand, PairDeviceOutput},
     put_secret::{PutSecretCommand, PutSecretOutput},
     reveal_secret::{RevealSecretCommand, RevealSecretOutput},
+    rollback_secret::{RollbackSecretCommand, RollbackSecretOutput},
     rotate_secret::{RotateSecretCommand, RotateSecretOutput},
     seal_vault::{SealVaultCommand, SealVaultOutput},
     trigger_backup::{TriggerBackupCommand, TriggerBackupOutput},

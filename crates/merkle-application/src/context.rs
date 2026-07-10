@@ -6,7 +6,9 @@
 //! injection happens at the binary level (`merkle-agent/src/main.rs`).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use tokio::process::Child;
@@ -15,9 +17,24 @@ use tokio::sync::{Mutex, RwLock};
 use merkle_domain_access_mediation::error::DomainError;
 use merkle_domain_access_mediation::use_token::UseToken;
 use merkle_domain_audit_compliance::AuditLog;
+use merkle_domain_backup_recovery::anacron_state::AnacronState;
 use merkle_domain_identity::VaultIdentity;
 use merkle_ports::{Crypto, ExternalServices, Keychain, OobNotifier, Storage};
 use merkle_types::{Handle, UuidV7};
+
+/// In-memory registration for a materialized tempfile or FIFO.
+///
+/// The reaper task scans this map for expired entries and deletes the
+/// corresponding on-disk paths. Paths never leave the agent process.
+#[derive(Debug, Clone)]
+pub struct RegisteredTempfile {
+    /// Opaque token returned to the MCP transport (registry key).
+    pub opaque_token: String,
+    /// Real filesystem path (server-side only).
+    pub path: PathBuf,
+    /// Wall-clock expiry; reaper deletes when `Instant::now() >= expires_at`.
+    pub expires_at: Instant,
+}
 
 /// Shared handles to all driven ports, plus the in-memory sealed-state cache.
 ///
@@ -114,6 +131,31 @@ pub struct AppContext {
     /// makes concurrent inits mutually exclusive. Shared across all `AppContext`
     /// clones because it is an `Arc`.
     pub init_lock: Arc<Mutex<()>>,
+
+    /// Timestamp of the most recent operator/client activity (request, unseal).
+    ///
+    /// Used by the idle re-lock supervisor and the anacron idle-window logic.
+    /// Updated by the companion-socket activity middleware and by
+    /// [`AppContext::touch_activity`].
+    pub last_activity: Arc<RwLock<Instant>>,
+
+    /// Live tempfile / FIFO registry keyed by opaque token.
+    ///
+    /// Populated by materialization commands; drained by
+    /// `RevokeTempfileCommand` and the background reaper.
+    pub tempfiles: Arc<RwLock<HashMap<String, RegisteredTempfile>>>,
+
+    /// Anacron scheduler state (change counter, last backup, idle window).
+    ///
+    /// Mutated by vault write commands via [`AppContext::record_vault_change`]
+    /// and by the backup scheduler task.
+    pub anacron: Arc<RwLock<AnacronState>>,
+
+    /// Directory where scheduled backup artifacts are written.
+    ///
+    /// Defaults to `$TMPDIR/merkle-backups`; the agent overrides this from
+    /// `[backup] directory` / `MERKLE_BACKUP_DIR` via [`AppContext::set_backup_dir`].
+    pub backup_dir: Arc<RwLock<PathBuf>>,
 }
 
 impl AppContext {
@@ -142,7 +184,47 @@ impl AppContext {
             active_port_forwards: Arc::new(RwLock::new(HashMap::new())),
             use_tokens: Arc::new(RwLock::new(HashMap::new())),
             init_lock: Arc::new(Mutex::new(())),
+            last_activity: Arc::new(RwLock::new(Instant::now())),
+            tempfiles: Arc::new(RwLock::new(HashMap::new())),
+            // Default policy: max 24h interval, 50-change threshold, 15 min idle.
+            anacron: Arc::new(RwLock::new(AnacronState::new(24, 50, 15))),
+            backup_dir: Arc::new(RwLock::new(std::env::temp_dir().join("merkle-backups"))),
         }
+    }
+
+    /// Record operator/client activity: refresh `last_activity` and clear any
+    /// open anacron idle window.
+    pub async fn touch_activity(&self) {
+        *self.last_activity.write().await = Instant::now();
+        let mut anacron = self.anacron.write().await;
+        if anacron.idle_since.is_some() {
+            anacron.idle_since = None;
+        }
+    }
+
+    /// Register a materialized tempfile or FIFO for reaper tracking.
+    pub async fn register_tempfile(&self, token: String, path: PathBuf, ttl: Duration) {
+        let entry = RegisteredTempfile {
+            opaque_token: token.clone(),
+            path,
+            expires_at: Instant::now() + ttl,
+        };
+        self.tempfiles.write().await.insert(token, entry);
+    }
+
+    /// Drop a tempfile registry entry (does not touch the filesystem).
+    pub async fn unregister_tempfile(&self, token: &str) {
+        self.tempfiles.write().await.remove(token);
+    }
+
+    /// Increment the anacron pending-change counter after a vault mutation.
+    pub async fn record_vault_change(&self) {
+        self.anacron.write().await.record_change();
+    }
+
+    /// Override the scheduled-backup output directory (agent startup).
+    pub async fn set_backup_dir(&self, path: PathBuf) {
+        *self.backup_dir.write().await = path;
     }
 
     /// Restore the in-memory `audit_log` head from the persisted `PinnedHead`.

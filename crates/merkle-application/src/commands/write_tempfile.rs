@@ -5,14 +5,18 @@
 //! (not the real path). Audited with `op=write_tempfile`.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-use merkle_domain_access_mediation::tempfile::Tempfile;
+use chrono::{Duration as ChronoDuration, Utc};
 use merkle_types::{AuditOp, AuditOutcome, Handle, NamespaceId, Rfc3339Timestamp};
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 use zeroize::Zeroizing;
 
 use crate::{AppContext, AppError};
+
+/// Default lifetime for a materialized tempfile (matches reaper TTL).
+const TEMPFILE_TTL_SECS: i64 = 300;
 
 /// Input for writing a tempfile.
 #[derive(Debug)]
@@ -117,19 +121,10 @@ impl WriteTempfileCommand {
         }
         drop(file);
 
-        let expires_at = Rfc3339Timestamp::now();
-
-        // Domain entity (path stored server-side only — never crosses MCP boundary).
-        let _tempfile = Tempfile {
-            opaque_token: opaque_token.clone(),
-            real_path_redacted: tmp_path.clone(),
-            mode: 0o600,
-            expires_at,
-        };
-
         // Audit: op=write_tempfile (BUG-06: persist-then-advance atomically).
         // BUG-09: the plaintext tempfile must not survive a failed audit write,
         // so every fallible step from here removes it before returning the error.
+        // Expiry + registry registration happen only after audit succeeds.
         let hmac_key = match ctx.require_hmac_key().await {
             Ok(key) => key,
             Err(e) => {
@@ -150,12 +145,40 @@ impl WriteTempfileCommand {
             return Err(e);
         }
 
+        // Expiry is infallible in practice (chrono RFC 3339); compute after audit
+        // so a failed audit never registers a live entry.
+        let expires_at = match tempfile_expires_at() {
+            Ok(ts) => ts,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                return Err(e);
+            }
+        };
+        ctx.register_tempfile(
+            opaque_token.clone(),
+            tmp_path,
+            Duration::from_secs(TEMPFILE_TTL_SECS.unsigned_abs()),
+        )
+        .await;
+
         info!(handle = %self.handle, "write_tempfile: tempfile written");
         Ok(WriteTempfileOutput {
             opaque_token,
             expires_at,
         })
     }
+}
+
+/// RFC 3339 expiry `now + TEMPFILE_TTL_SECS`.
+fn tempfile_expires_at() -> Result<Rfc3339Timestamp, AppError> {
+    let Some(dt) = Utc::now().checked_add_signed(ChronoDuration::seconds(TEMPFILE_TTL_SECS)) else {
+        return Err(AppError::Domain(
+            "write_tempfile: expiry timestamp overflow".into(),
+        ));
+    };
+    dt.to_rfc3339().parse().map_err(|e| {
+        AppError::Domain(format!("write_tempfile: invalid expiry timestamp: {e}"))
+    })
 }
 
 /// Build the temporary file path from the opaque token.

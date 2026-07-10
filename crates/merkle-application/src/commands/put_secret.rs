@@ -151,6 +151,7 @@ impl PutSecretCommand {
         .sensitivity(self.sensitivity)
         .caller_program("merkle-agent");
         crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+        ctx.record_vault_change().await;
 
         info!(secret_id = %secret_id, "put_secret: secret persisted");
         Ok(PutSecretOutput {

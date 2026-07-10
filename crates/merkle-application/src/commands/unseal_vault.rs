@@ -90,7 +90,8 @@ impl UnsealVaultCommand {
 
         // ── Window 1: begin unseal (Sealed → Unsealing) ──────────────────────
         if self.begin(ctx).await? {
-            // No-op path: vault was already unsealed.
+            // No-op path: vault was already unsealed — still refresh activity.
+            ctx.touch_activity().await;
             return Ok(UnsealVaultOutput {
                 unsealed: true,
                 was_already_unsealed: true,
@@ -113,6 +114,9 @@ impl UnsealVaultCommand {
         let params = AppendParams::new(AuditOp::Unseal, AuditOutcome::Allow, NamespaceId::new())
             .caller_program("merkle-agent");
         audit_commit(ctx, params, &hmac_key).await?;
+
+        // Reset idle clock so an immediate idle re-lock cannot fire after unseal.
+        ctx.touch_activity().await;
 
         info!("unseal_vault: vault is now Unsealed");
         Ok(UnsealVaultOutput {

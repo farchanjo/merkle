@@ -23,6 +23,7 @@ pub mod restore_plan;
 pub mod reveal_secret;
 pub mod revoke_device;
 pub mod revoke_tempfile;
+pub mod rollback_secret;
 pub mod rotate_secret;
 pub mod seal_vault;
 pub mod search_secrets;

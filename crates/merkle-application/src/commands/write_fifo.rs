@@ -11,13 +11,17 @@
 //! returns [`AppError::NotImplemented`].
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-use merkle_domain_access_mediation::fifo::Fifo;
+use chrono::{Duration as ChronoDuration, Utc};
 use merkle_types::{AuditOp, AuditOutcome, Handle, NamespaceId, Rfc3339Timestamp};
 use tracing::info;
 use zeroize::Zeroizing;
 
 use crate::{AppContext, AppError};
+
+/// Default lifetime for a materialized FIFO (matches reaper TTL).
+const FIFO_TTL_SECS: i64 = 300;
 
 /// Input for writing to a named pipe.
 #[derive(Debug)]
@@ -130,6 +134,16 @@ impl WriteFifoCommand {
             return Err(e);
         }
 
+        // Resolve expiry before spawning the blocking writer so a rare timestamp
+        // failure can still clean up the FIFO without leaving a stuck thread.
+        let expires_at = match fifo_expires_at() {
+            Ok(ts) => ts,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&fifo_path).await;
+                return Err(e);
+            }
+        };
+
         // Spawn a task that opens the FIFO for writing, writes plaintext exactly
         // once (blocking until a reader connects), then removes the FIFO.
         {
@@ -146,14 +160,12 @@ impl WriteFifoCommand {
             });
         }
 
-        let expires_at = Rfc3339Timestamp::now();
-
-        // Domain entity (path server-side only — never crosses MCP boundary).
-        let _fifo = Fifo {
-            opaque_token: opaque_token.clone(),
-            real_path_redacted: fifo_path,
-            consumed: false,
-        };
+        ctx.register_tempfile(
+            opaque_token.clone(),
+            fifo_path,
+            Duration::from_secs(FIFO_TTL_SECS.unsigned_abs()),
+        )
+        .await;
 
         info!(handle = %self.handle, "write_fifo: FIFO created and writer task spawned");
         Ok(WriteFifoOutput {
@@ -161,6 +173,18 @@ impl WriteFifoCommand {
             expires_at,
         })
     }
+}
+
+/// RFC 3339 expiry `now + FIFO_TTL_SECS`.
+fn fifo_expires_at() -> Result<Rfc3339Timestamp, AppError> {
+    let Some(dt) = Utc::now().checked_add_signed(ChronoDuration::seconds(FIFO_TTL_SECS)) else {
+        return Err(AppError::Domain(
+            "write_fifo: expiry timestamp overflow".into(),
+        ));
+    };
+    dt.to_rfc3339()
+        .parse()
+        .map_err(|e| AppError::Domain(format!("write_fifo: invalid expiry timestamp: {e}")))
 }
 
 /// Build the FIFO path under the system temp directory.

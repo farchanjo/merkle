@@ -34,7 +34,7 @@ pub mod prelude;
 pub mod queries;
 pub mod value_format;
 
-pub use context::AppContext;
+pub use context::{AppContext, RegisteredTempfile};
 pub use error::AppError;
 pub use value_format::ValueFormat;
 

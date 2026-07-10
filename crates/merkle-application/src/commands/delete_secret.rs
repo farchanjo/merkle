@@ -83,6 +83,7 @@ impl DeleteSecretCommand {
         .sensitivity(secret.sensitivity)
         .caller_program("merkle-agent");
         crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+        ctx.record_vault_change().await;
 
         info!(handle = %self.handle, "delete_secret: secret deleted");
         Ok(DeleteSecretOutput {

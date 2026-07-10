@@ -133,6 +133,7 @@ impl RotateSecretCommand {
         .sensitivity(secret.sensitivity)
         .caller_program("merkle-agent");
         crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+        ctx.record_vault_change().await;
 
         info!(handle = %self.handle, version = new_version_no, "rotate_secret: rotated");
         Ok(RotateSecretOutput { new_version_no })

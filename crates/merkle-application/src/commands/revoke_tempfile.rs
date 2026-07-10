@@ -58,6 +58,10 @@ impl RevokeTempfileCommand {
         let fifo_removed = tokio::fs::remove_file(&fifo_path).await.is_ok();
         let revoked = tmp_removed || fifo_removed;
 
+        // Drop the in-memory registry entry after disk delete so the reaper
+        // does not try to remove the path a second time.
+        ctx.unregister_tempfile(&self.opaque_token).await;
+
         // Audit (no matter whether the file existed or not — the intent was to
         // revoke). BUG-06: persist-then-advance atomically (see `audit_commit`).
         let hmac_key = ctx.require_hmac_key().await?;
