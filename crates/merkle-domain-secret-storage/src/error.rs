@@ -58,6 +58,13 @@ pub enum DomainError {
         new: u32,
     },
 
+    /// Rollback requested a version number that is not present in history.
+    #[error("target version `{version_no}` not found in secret history")]
+    TargetVersionNotFound {
+        /// Requested historical version number.
+        version_no: u32,
+    },
+
     /// A duplicate tag was supplied (same `key:value` pair appears twice).
     #[error("duplicate tag: `{0}`")]
     DuplicateTag(String),

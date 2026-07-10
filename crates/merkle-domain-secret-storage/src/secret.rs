@@ -28,8 +28,9 @@ use crate::secret_versioning::SecretVersioning;
 
 /// The primary AggregateRoot for a stored credential.
 ///
-/// Construct via [`Secret::new`]; rotate via [`Secret::rotate`].
-/// Direct field mutation outside these methods bypasses invariant checks.
+/// Construct via [`Secret::new`]; rotate via [`Secret::rotate`]; roll back via
+/// [`Secret::rollback_to`]. Direct field mutation outside these methods
+/// bypasses invariant checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Secret {
     /// Stable UUIDv7 primary key; immutable after creation.
@@ -59,7 +60,7 @@ pub struct Secret {
     /// All historical versions, including the current one.
     ///
     /// Private to prevent bypassing the invariant checks enforced by
-    /// [`Secret::rotate`].
+    /// [`Secret::rotate`] and [`Secret::rollback_to`].
     versions: Vec<SecretVersion>,
 
     /// Identity of the currently active version.
@@ -219,6 +220,59 @@ impl Secret {
             .expect("just pushed; must be present");
 
         Ok(&self.versions[idx])
+    }
+
+    // -----------------------------------------------------------------------
+    // Mutation — rollback
+    // -----------------------------------------------------------------------
+
+    /// Roll back to a historical version by appending a **new** version that
+    /// copies the target's blob (immutable history — never re-activate in place).
+    ///
+    /// The new version gets `version_no = max(existing) + 1`, a fresh id, and
+    /// `created_at = now`. The previous active version is deprecated via
+    /// [`Secret::rotate`].
+    ///
+    /// # Errors
+    ///
+    /// - [`DomainError::TargetVersionNotFound`] — no version with
+    ///   `target_version_no` exists in history.
+    /// - Errors propagated from [`Secret::rotate`] (e.g. non-monotonic — should
+    ///   not occur when this method constructs the new version).
+    pub fn rollback_to(
+        &mut self,
+        target_version_no: u32,
+        policy: &RetentionPolicy,
+    ) -> Result<&SecretVersion, DomainError> {
+        let (blob, dek_version) = {
+            let target = self
+                .versions
+                .iter()
+                .find(|v| v.version_no == target_version_no)
+                .ok_or(DomainError::TargetVersionNotFound {
+                    version_no: target_version_no,
+                })?;
+            (target.blob.clone(), target.dek_version)
+        };
+
+        let current_max = self
+            .versions
+            .iter()
+            .map(|v| v.version_no)
+            .max()
+            .unwrap_or(0);
+
+        let new_version = SecretVersion {
+            id: SecretVersionId::new(),
+            secret_id: self.id,
+            version_no: current_max + 1,
+            blob,
+            dek_version,
+            created_at: Rfc3339Timestamp::now(),
+            deprecated_at: None,
+        };
+
+        self.rotate(new_version, policy)
     }
 
     // -----------------------------------------------------------------------
@@ -538,5 +592,106 @@ mod tests {
                 retain,
             );
         }
+    }
+
+    #[test]
+    fn rollback_to_appends_copy_of_historical_blob() {
+        let handle = make_handle("my-ns", "ssh", "my-key");
+        let v1 = make_version(&handle, 1);
+        let v1_blob = v1.blob.clone();
+        let mut s = Secret::new(
+            NamespaceId::new(),
+            handle.clone(),
+            CategoryName::SshKey,
+            Sensitivity::Medium,
+            vec![],
+            PublicMetadata::default(),
+            v1,
+        )
+        .expect("valid");
+
+        let policy = RetentionPolicy::default();
+        let mut v2 = make_version(&handle, 2);
+        // Distinct ciphertext so we can detect which blob is active after rollback.
+        v2.blob = PrivateBlob::new(
+            vec![9u8; 8],
+            [1u8; 24],
+            [2u8; 16],
+            handle.to_string().into_bytes(),
+            1,
+        );
+        s.rotate(v2, &policy).expect("rotate to v2");
+
+        let active = s.rollback_to(1, &policy).expect("rollback ok");
+        assert_eq!(active.version_no, 3, "rollback must allocate max+1");
+        assert!(active.deprecated_at.is_none());
+        assert_eq!(active.blob.ciphertext, v1_blob.ciphertext);
+        assert_eq!(
+            s.versions()
+                .iter()
+                .filter(|v| v.deprecated_at.is_none())
+                .count(),
+            1
+        );
+        // Original version 1 remains in history (not re-activated in place).
+        assert!(
+            s.versions()
+                .iter()
+                .any(|v| v.version_no == 1 && v.deprecated_at.is_some())
+        );
+    }
+
+    #[test]
+    fn rollback_to_missing_target_returns_not_found() {
+        let handle = make_handle("my-ns", "ssh", "my-key");
+        let v1 = make_version(&handle, 1);
+        let mut s = Secret::new(
+            NamespaceId::new(),
+            handle,
+            CategoryName::SshKey,
+            Sensitivity::Medium,
+            vec![],
+            PublicMetadata::default(),
+            v1,
+        )
+        .expect("valid");
+
+        let policy = RetentionPolicy::default();
+        let result = s.rollback_to(99, &policy);
+        assert!(matches!(
+            result,
+            Err(DomainError::TargetVersionNotFound { version_no: 99 })
+        ));
+    }
+
+    #[test]
+    fn rollback_to_version_numbers_are_monotonic() {
+        let handle = make_handle("my-ns", "ssh", "my-key");
+        let v1 = make_version(&handle, 1);
+        let mut s = Secret::new(
+            NamespaceId::new(),
+            handle.clone(),
+            CategoryName::SshKey,
+            Sensitivity::Medium,
+            vec![],
+            PublicMetadata::default(),
+            v1,
+        )
+        .expect("valid");
+
+        let policy = RetentionPolicy::default();
+        s.rotate(make_version(&handle, 2), &policy)
+            .expect("rotate");
+        s.rotate(make_version(&handle, 3), &policy)
+            .expect("rotate");
+
+        let active = s.rollback_to(2, &policy).expect("rollback");
+        assert_eq!(active.version_no, 4);
+
+        let numbers: Vec<u32> = s.versions().iter().map(|v| v.version_no).collect();
+        let mut sorted = numbers.clone();
+        sorted.sort_unstable();
+        assert_eq!(numbers, sorted, "version_no must stay sorted/monotonic");
+        assert!(numbers.windows(2).all(|w| w[0] < w[1]));
     }
 }
