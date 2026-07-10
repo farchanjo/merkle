@@ -595,6 +595,35 @@ async fn given_fts5_index(_world: &mut MerkleWorld) {
     // FTS5 is built automatically by SqliteStorage on put_secret.
 }
 
+/// search_bm25_ranking.feature Background — namespace-scoped wording.
+#[given(
+    expr = "the FTS5 Index is built over the public metadata fields of all Secrets in namespace {string}"
+)]
+async fn given_fts5_index_for_namespace(world: &mut MerkleWorld, ns_label: String) {
+    // Ensure the namespace exists; FTS5 rows are maintained on put_secret.
+    world.do_unseal().await;
+    let _ = world.ensure_namespace(&ns_label).await;
+}
+
+/// session_bind_idempotency.feature Background.
+#[given(expr = "the namespace label {string} does not yet exist in storage")]
+async fn given_namespace_label_absent(world: &mut MerkleWorld, label: String) {
+    use merkle_types::NamespaceLabel;
+    world.do_unseal().await;
+    let parsed: NamespaceLabel = match label.parse() {
+        Ok(l) => l,
+        Err(e) => {
+            world.last_error = Some(e.to_string());
+            return;
+        }
+    };
+    if let Ok(Some(_)) = world.app_ctx.storage.get_namespace_by_label(&parsed).await {
+        // Fresh in-memory DB scenarios should not hit this; if they do, leave
+        // a clear signal without failing the whole suite.
+        world.last_error = Some(format!("namespace label {label} already exists"));
+    }
+}
+
 #[given(expr = "a remote webhook URL {string} is configured in config.toml")]
 async fn given_webhook_url(_world: &mut MerkleWorld, _url: String) {
     // HMAC webhook sync is scaffolded.
@@ -714,7 +743,9 @@ async fn given_secret_has_category(_world: &mut MerkleWorld, _handle: String, _c
 }
 
 #[given(expr = "the Secret {string} has sensitivity {string}")]
-async fn given_secret_has_sensitivity(_world: &mut MerkleWorld, _handle: String, _s: String) {}
+async fn given_secret_has_sensitivity(_world: &mut MerkleWorld, _handle: String, _s: String) {
+    super::scaffolded("given_secret_has_sensitivity");
+}
 
 #[given(expr = "an ssh Secret with Handle {string} exists for host {string}")]
 async fn given_ssh_secret_for_host(world: &mut MerkleWorld, handle_str: String, _host: String) {
@@ -811,7 +842,9 @@ async fn given_session_access(_world: &mut MerkleWorld, _handle: String, _tag: S
 }
 
 #[given(expr = "the operator then accesses Secret {string} tagged {string} in the same session")]
-async fn given_second_session_access(_world: &mut MerkleWorld, _handle: String, _tag: String) {}
+async fn given_second_session_access(_world: &mut MerkleWorld, _handle: String, _tag: String) {
+    super::scaffolded("given_second_session_access");
+}
 
 #[given(
     expr = "entry {int} has had its {string} field changed from {string} to {string} after original insertion"
@@ -946,13 +979,19 @@ async fn given_ns_policy_backup_interval(
 }
 
 #[given(expr = "the operator has the Recovery Key (age X25519 secret key) {string}")]
-async fn given_operator_recovery_key(_world: &mut MerkleWorld, _key: String) {}
+async fn given_operator_recovery_key(_world: &mut MerkleWorld, _key: String) {
+    super::scaffolded("given_operator_recovery_key");
+}
 
 #[given(expr = "the Backup has been successfully decrypted using the Recovery Key")]
-async fn given_backup_decrypted(_world: &mut MerkleWorld) {}
+async fn given_backup_decrypted(_world: &mut MerkleWorld) {
+    super::scaffolded("given_backup_decrypted");
+}
 
 #[given(expr = "the derived fingerprint of the supplied key is {string}")]
-async fn given_derived_fingerprint(_world: &mut MerkleWorld, _fp: String) {}
+async fn given_derived_fingerprint(_world: &mut MerkleWorld, _fp: String) {
+    super::scaffolded("given_derived_fingerprint");
+}
 
 #[given(expr = "the Namespace contains {int} Secrets ordered by created_at descending")]
 async fn given_ns_secrets_ordered(world: &mut MerkleWorld, _count: u32) {
@@ -1014,7 +1053,9 @@ async fn given_secret_expires_at(world: &mut MerkleWorld, handle_str: String, _e
 }
 
 #[given(expr = "the current date is {string}")]
-async fn given_current_date(_world: &mut MerkleWorld, _date: String) {}
+async fn given_current_date(_world: &mut MerkleWorld, _date: String) {
+    super::scaffolded("given_current_date");
+}
 
 #[given(
     expr = "the Secret {string} has {int} retained versions \\(1, 2, 3\\) plus the new version {int}"
@@ -1064,7 +1105,9 @@ async fn given_op_confirm_slash_oob_short(world: &mut MerkleWorld) {
 }
 
 #[given(expr = "the LLM constructs a vault.reveal call with handle {string}")]
-async fn given_llm_reveal_call(_world: &mut MerkleWorld, _handle: String) {}
+async fn given_llm_reveal_call(_world: &mut MerkleWorld, _handle: String) {
+    super::scaffolded("given_llm_reveal_call");
+}
 
 #[given(
     expr = "the operator_confirmation has slash_command=false and oob_ack=true and oob_channel={string}"
@@ -1075,10 +1118,14 @@ async fn given_op_confirm_no_slash_oob(world: &mut MerkleWorld, _channel: String
 }
 
 #[given(expr = "the Vault Agent is in the process of zeroizing the Vault Root Key from memory")]
-async fn given_zeroizing(_world: &mut MerkleWorld) {}
+async fn given_zeroizing(_world: &mut MerkleWorld) {
+    super::scaffolded("given_zeroizing");
+}
 
 #[given(expr = "the idle_lock_timeout elapses")]
-async fn given_idle_timeout_elapsed(_world: &mut MerkleWorld) {}
+async fn given_idle_timeout_elapsed(_world: &mut MerkleWorld) {
+    super::scaffolded("given_idle_timeout_elapsed");
+}
 
 // ---------------------------------------------------------------------------
 // Init Vault Background steps
@@ -1205,11 +1252,15 @@ async fn given_op_confirm_no_slash_no_oob_fixture(_world: &mut MerkleWorld) {
 #[given(
     expr = "the elapsed time since last Backup is {int} hours, exceeding max_interval={int} hours"
 )]
-async fn given_elapsed_exceeds_max(_world: &mut MerkleWorld, _elapsed: u32, _max: u32) {}
+async fn given_elapsed_exceeds_max(_world: &mut MerkleWorld, _elapsed: u32, _max: u32) {
+    super::scaffolded("given_elapsed_exceeds_max");
+}
 
 // backup_and_restore — pending changes state
 #[given("there are pending changes since the last Backup")]
-async fn given_pending_changes(_world: &mut MerkleWorld) {}
+async fn given_pending_changes(world: &mut MerkleWorld) {
+    world.mutation_counter += 1;
+}
 
 // ---------------------------------------------------------------------------
 // port_forward — Given steps (ADR-0023)

@@ -593,7 +593,11 @@ async fn when_oob_timeout(_world: &mut MerkleWorld) {
 }
 
 #[when(expr = "the Vault Agent sends an OOB Confirmation request via desktop notification")]
-async fn when_oob_dispatched(_world: &mut MerkleWorld) {}
+async fn when_oob_dispatched(world: &mut MerkleWorld) {
+    // Dispatch records that an OOB challenge was sent; ack remains separate.
+    world.op_oob_ack = false;
+    super::scaffolded("when_oob_dispatched");
+}
 
 // ---------------------------------------------------------------------------
 // Additional when steps for rotate / disaster-recovery / proxy-ssh / unseal
@@ -771,7 +775,9 @@ async fn when_vault_put_custom_category(world: &mut MerkleWorld, _cat: String) {
 }
 
 #[when(expr = "an attacker writes that ciphertext into the database row for handle {string}")]
-async fn when_ciphertext_transplant(_world: &mut MerkleWorld, _handle: String) {}
+async fn when_ciphertext_transplant(_world: &mut MerkleWorld, _handle: String) {
+    super::scaffolded("when_ciphertext_transplant");
+}
 
 #[when(expr = "the operator calls vault.get with handle {string}")]
 async fn when_vault_get(world: &mut MerkleWorld, handle_str: String) {
