@@ -194,10 +194,10 @@ async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
                                 }
                             }
                         }
-                        if !k.is_empty() {
-                            if let (Ok(tk), Ok(tv)) = (k.parse::<TagKey>(), v.parse::<TagValue>()) {
-                                tags.push(Tag { key: tk, value: tv });
-                            }
+                        if !k.is_empty()
+                            && let (Ok(tk), Ok(tv)) = (k.parse::<TagKey>(), v.parse::<TagValue>())
+                        {
+                            tags.push(Tag { key: tk, value: tv });
                         }
                     }
                 }
