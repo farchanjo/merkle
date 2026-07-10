@@ -34,9 +34,14 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-/// Per-request deadline. A hung or wedged daemon must never hang the caller
-/// (CLI or MCP process) indefinitely.
+/// Default per-request deadline. A hung or wedged daemon must never hang the
+/// caller (CLI or MCP process) indefinitely.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Long deadline for ceremonies that touch the file keystore (scrypt work
+/// factor 18) or encrypt large dual-recipient backups. File-backend `init`
+/// routinely exceeds 30 s on cold stores.
+const LONG_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Hard ceiling on a response body. The Companion Socket only ever returns
 /// small JSON envelopes; a runaway or malicious body must not be able to OOM
@@ -123,10 +128,18 @@ impl CompanionSocketClient {
         &self,
         request: hyper::Request<Full<Bytes>>,
     ) -> Result<hyper::Response<Incoming>, ClientError> {
-        match tokio::time::timeout(REQUEST_TIMEOUT, self.inner.request(request)).await {
+        self.send_with_timeout(request, REQUEST_TIMEOUT).await
+    }
+
+    async fn send_with_timeout(
+        &self,
+        request: hyper::Request<Full<Bytes>>,
+        timeout: Duration,
+    ) -> Result<hyper::Response<Incoming>, ClientError> {
+        match tokio::time::timeout(timeout, self.inner.request(request)).await {
             Ok(Ok(resp)) => Ok(resp),
             Ok(Err(e)) => Err(ClientError::Unreachable(e.to_string())),
-            Err(_) => Err(ClientError::Timeout(REQUEST_TIMEOUT.as_secs())),
+            Err(_) => Err(ClientError::Timeout(timeout.as_secs())),
         }
     }
 
@@ -184,6 +197,24 @@ impl CompanionSocketClient {
         path: &str,
         body: &S,
     ) -> Result<T, ClientError> {
+        self.post_with_timeout(path, body, REQUEST_TIMEOUT).await
+    }
+
+    /// Like [`post`](Self::post) but with an explicit request deadline.
+    ///
+    /// Use [`LONG_REQUEST_TIMEOUT`]-class values for init / backup against a
+    /// file keystore (scrypt).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on network failure, non-success HTTP status, or
+    /// JSON (de)serialisation failure.
+    pub async fn post_with_timeout<S: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &S,
+        timeout: Duration,
+    ) -> Result<T, ClientError> {
         let uri: Uri = format!("http://localhost{path}")
             .parse()
             .with_context(|| format!("invalid URI path: {path}"))?;
@@ -197,8 +228,14 @@ impl CompanionSocketClient {
             .body(Full::new(Bytes::from(json_bytes)))
             .with_context(|| "building POST request")?;
 
-        let response = self.send(request).await?;
+        let response = self.send_with_timeout(request, timeout).await?;
         self.decode_response(response).await
+    }
+
+    /// Deadline used for vault init and on-demand backup (file-keystore scrypt).
+    #[must_use]
+    pub const fn long_request_timeout() -> Duration {
+        LONG_REQUEST_TIMEOUT
     }
 
     /// Issue a `DELETE` request with an optional JSON body.
@@ -296,7 +333,9 @@ impl CompanionSocketClient {
         &self,
         req: InitVaultRequest,
     ) -> Result<InitVaultResponse, ClientError> {
-        self.post("/v1/agent/init", &req).await
+        // File keystore scrypt routinely exceeds the default 30 s deadline.
+        self.post_with_timeout("/v1/agent/init", &req, LONG_REQUEST_TIMEOUT)
+            .await
     }
 
     /// `GET /v1/agent/status` — health and diagnostic snapshot.

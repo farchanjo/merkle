@@ -21,7 +21,15 @@ pub async fn run(
                 body["note"] = serde_json::Value::String(note.clone());
             }
 
-            let resp: serde_json::Value = client.post("/v1/backup", &body).await?;
+            // First-time master age identity generation re-encrypts the file
+            // keystore under scrypt and can exceed the default 30 s deadline.
+            let resp: serde_json::Value = client
+                .post_with_timeout(
+                    "/v1/backup",
+                    &body,
+                    merkle_companion_client::CompanionSocketClient::long_request_timeout(),
+                )
+                .await?;
 
             if format == OutputFormat::Human {
                 let filename = resp

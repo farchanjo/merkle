@@ -55,25 +55,35 @@ pub async fn run(
         security_profile: None, // agent defaults to balanced
     };
 
-    let resp: InitVaultResponse = client.post("/v1/agent/init", &req).await.map_err(|e| {
-        // Surface a tailored message for the already-initialized 409.
-        let cli_err: CliError = e.into();
-        if let CliError::AgentError {
-            status: 409,
-            ref title,
-            ..
-        } = cli_err
-        {
-            return CliError::AgentError {
+    // File keystore scrypt (log_n=18) can take >30 s for the multi-write
+    // ceremony; use the long client deadline so the CLI does not abort a
+    // successful init mid-flight.
+    let resp: InitVaultResponse = client
+        .post_with_timeout(
+            "/v1/agent/init",
+            &req,
+            merkle_companion_client::CompanionSocketClient::long_request_timeout(),
+        )
+        .await
+        .map_err(|e| {
+            // Surface a tailored message for the already-initialized 409.
+            let cli_err: CliError = e.into();
+            if let CliError::AgentError {
                 status: 409,
-                title: title.clone(),
-                detail: "Vault is already initialized. \
+                ref title,
+                ..
+            } = cli_err
+            {
+                return CliError::AgentError {
+                    status: 409,
+                    title: title.clone(),
+                    detail: "Vault is already initialized. \
                          Use `merkle status` to verify it is operational."
-                    .to_owned(),
-            };
-        }
-        cli_err
-    })?;
+                        .to_owned(),
+                };
+            }
+            cli_err
+        })?;
 
     // ── Recovery recipient display (REQUIRED — always before any other output) ──
     println!();
