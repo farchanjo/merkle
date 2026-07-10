@@ -251,8 +251,22 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
         .map_or_else(|_| cfg.backup.directory.clone(), std::path::PathBuf::from);
     ctx.set_backup_dir(backup_dir).await;
 
+    // Surface the SQLite path on `GET /v1/agent/status` (and free-space probe).
+    ctx.set_db_path(sqlite_file_path(&cfg.storage.database_url))
+        .await;
+
     info!("application context ready");
     Ok(ctx)
+}
+
+/// Extract an on-disk path from a `sqlite://…` URL (`None` for memory/unknown).
+fn sqlite_file_path(database_url: &str) -> Option<std::path::PathBuf> {
+    let rest = database_url.strip_prefix("sqlite:")?;
+    let path = rest.strip_prefix("//").unwrap_or(rest);
+    if path.is_empty() || path == ":memory:" || path.starts_with(":memory:") {
+        return None;
+    }
+    Some(std::path::PathBuf::from(path))
 }
 
 // ---------------------------------------------------------------------------

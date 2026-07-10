@@ -45,18 +45,21 @@ pub struct DoctorOutput {
 impl DoctorQuery {
     /// Execute doctor.
     ///
+    /// Runs sealed-safe checks always (storage, OOB, FTS5, keystore). HMAC
+    /// chain verification runs only while Unsealed — when Sealed the chain
+    /// check is reported as a non-failing skip so operators can diagnose a
+    /// sealed vault without a hard 412.
+    ///
     /// # Errors
     ///
-    /// - [`AppError::VaultSealed`] — vault must be Unsealed to run chain verification.
-    /// - [`AppError::Storage`] — storage probe failed.
+    /// Does not fail solely because the vault is sealed. Storage/port errors
+    /// surface as individual failed checks rather than a top-level error.
     pub async fn execute(&self, ctx: &AppContext) -> Result<DoctorOutput, AppError> {
-        ctx.require_unsealed().await?;
-
         info!("doctor: running health checks");
 
         let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
-        // Check 1: Sealed state.
+        // Check 1: Sealed state (informational — sealed is a valid operational mode).
         let sealed_state = ctx.identity.read().await.state();
         let sealed_state_str = match sealed_state {
             SealedState::Unsealed => "unsealed",
@@ -67,34 +70,38 @@ impl DoctorQuery {
         .to_owned();
         checks.push(DoctorCheckResult {
             name: "vault_state".into(),
-            ok: matches!(sealed_state, SealedState::Unsealed),
+            ok: true,
             detail: Some(sealed_state_str.clone()),
         });
 
-        // Check 2: Audit chain integrity.
-        let chain_result = VerifyChainQuery.execute(ctx).await;
-        let chain_ok = chain_result
-            .as_ref()
-            .is_ok_and(|r| r.result.outcome == ChainOutcome::Intact);
-        let chain_detail = chain_result.as_ref().map_or_else(
-            |e| format!("error: {e}"),
-            |r| match r.result.baseline_seq {
-                // Loud diagnostics: when a trusted baseline (ADR-0029) is
-                // anchoring verification, surface it so a green chain that is
-                // running on a quarantined prefix is never mistaken for a
-                // fully-authenticated one.
-                Some(seq) => format!(
-                    "entries_checked={}; baseline_seq={seq}; quarantined_below={}",
-                    r.result.entries_checked, r.result.quarantined_below
-                ),
-                None => format!("entries_checked={}", r.result.entries_checked),
-            },
-        );
-        checks.push(DoctorCheckResult {
-            name: "audit_chain_integrity".into(),
-            ok: chain_ok,
-            detail: Some(chain_detail),
-        });
+        // Check 2: Audit chain integrity (requires HMAC key ⇒ Unsealed only).
+        if matches!(sealed_state, SealedState::Unsealed) {
+            let chain_result = VerifyChainQuery.execute(ctx).await;
+            let chain_ok = chain_result
+                .as_ref()
+                .is_ok_and(|r| r.result.outcome == ChainOutcome::Intact);
+            let chain_detail = chain_result.as_ref().map_or_else(
+                |e| format!("error: {e}"),
+                |r| match r.result.baseline_seq {
+                    Some(seq) => format!(
+                        "entries_checked={}; baseline_seq={seq}; quarantined_below={}",
+                        r.result.entries_checked, r.result.quarantined_below
+                    ),
+                    None => format!("entries_checked={}", r.result.entries_checked),
+                },
+            );
+            checks.push(DoctorCheckResult {
+                name: "audit_chain_integrity".into(),
+                ok: chain_ok,
+                detail: Some(chain_detail),
+            });
+        } else {
+            checks.push(DoctorCheckResult {
+                name: "audit_chain_integrity".into(),
+                ok: true,
+                detail: Some("skipped: vault sealed (HMAC key unavailable)".into()),
+            });
+        }
 
         // Check 3: Storage liveness (companion device round-trip).
         let storage_ok = ctx.storage.list_companion_devices().await.is_ok();

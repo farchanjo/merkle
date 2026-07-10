@@ -2,8 +2,13 @@
 //! `POST /v1/agent/unseal`, and `POST /v1/agent/seal`.
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use merkle_domain_identity::UnsealPreconditions;
-use merkle_types::SecurityProfile;
+use merkle_application::ChainOutcome;
+use merkle_application::queries::verify_chain::VerifyChainQuery;
+use merkle_domain_backup_recovery::scheduler::BackupScheduler;
+use merkle_domain_identity::{KEYCHAIN_ACCOUNT_MASTER_KEY, KEYCHAIN_SERVICE, UnsealPreconditions};
+use merkle_ports::KeychainError;
+use merkle_types::{Rfc3339Timestamp, SecurityProfile};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -28,21 +33,121 @@ pub async fn status(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
     } else {
         VaultState::Unsealed
     };
+
+    let db_path = ctx.db_path.read().await.clone();
+    let (db_path_str, db_size_bytes, disk_free_bytes) = db_diagnostics(db_path.as_deref());
+
+    let keychain_reachable = probe_keychain_reachable(&ctx).await;
+    let audit_chain_valid = probe_audit_chain_valid(&ctx, sealed).await;
+    let (backup_overdue, last_backup_at) = backup_status(&ctx).await;
+
+    let mut warnings = Vec::new();
+    if sealed {
+        warnings.push("vault is sealed; unseal to run HMAC chain verification".into());
+    }
+    if !keychain_reachable {
+        warnings.push("keychain probe failed".into());
+    }
+    if !audit_chain_valid {
+        warnings.push("audit chain verification failed".into());
+    }
+
     let resp = AgentStatusResponse {
         agent_version: env!("CARGO_PKG_VERSION").to_owned(),
         vault_state,
         sealed,
-        keychain_reachable: true,
-        db_path: String::new(),
-        db_size_bytes: 0,
-        audit_chain_valid: true,
-        backup_overdue: false,
-        disk_free_bytes: 0,
-        last_backup_at: None,
+        keychain_reachable,
+        db_path: db_path_str,
+        db_size_bytes,
+        audit_chain_valid,
+        backup_overdue,
+        disk_free_bytes,
+        last_backup_at,
         expiring_soon: vec![],
-        warnings: vec![],
+        warnings,
     };
     (StatusCode::OK, Json(resp))
+}
+
+fn db_diagnostics(db_path: Option<&Path>) -> (String, u64, u64) {
+    let Some(path) = db_path else {
+        return (String::new(), 0, 0);
+    };
+    let path_str = path.display().to_string();
+    // SQLite WAL companions are named `{file}-wal` / `{file}-shm`.
+    let wal_path = PathBuf::from(format!("{}-wal", path.display()));
+    let shm_path = PathBuf::from(format!("{}-shm", path.display()));
+    let size = std::fs::metadata(path).map_or(0, |m| m.len())
+        + std::fs::metadata(&wal_path).map_or(0, |m| m.len())
+        + std::fs::metadata(&shm_path).map_or(0, |m| m.len());
+    let free = disk_free_bytes(path);
+    (path_str, size, free)
+}
+
+#[cfg(unix)]
+fn disk_free_bytes(path: &Path) -> u64 {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    // Prefer the parent dir so a missing file still yields free space of the volume.
+    let probe = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let Ok(c_path) = CString::new(probe.as_os_str().as_bytes()) else {
+        return 0;
+    };
+    // SAFETY: `statvfs` writes into a stack-allocated `statvfs`; `c_path` is a
+    // NUL-terminated CString whose lifetime covers the call.
+    #[expect(
+        unsafe_code,
+        reason = "statvfs(2) has no safe Rust wrapper in this crate's deps"
+    )]
+    let free = unsafe {
+        let mut s: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(c_path.as_ptr(), std::ptr::from_mut(&mut s)) == 0 {
+            u64::from(s.f_bavail).saturating_mul(s.f_frsize)
+        } else {
+            0
+        }
+    };
+    free
+}
+
+#[cfg(not(unix))]
+fn disk_free_bytes(_path: &Path) -> u64 {
+    0
+}
+
+async fn probe_keychain_reachable(ctx: &AppContext) -> bool {
+    match ctx
+        .keychain
+        .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY)
+        .await
+    {
+        Ok(_) | Err(KeychainError::NotFound) => true,
+        Err(_) => false,
+    }
+}
+
+async fn probe_audit_chain_valid(ctx: &AppContext, sealed: bool) -> bool {
+    if sealed {
+        // Cannot HMAC-verify without the key; treat readable storage as "not known bad".
+        return ctx.storage.pinned_head().await.is_ok();
+    }
+    match VerifyChainQuery.execute(ctx).await {
+        Ok(out) => out.result.outcome == ChainOutcome::Intact,
+        Err(_) => false,
+    }
+}
+
+async fn backup_status(ctx: &AppContext) -> (bool, Option<chrono::DateTime<chrono::Utc>>) {
+    let state = ctx.anacron.read().await.clone();
+    let now = Rfc3339Timestamp::now();
+    let overdue = BackupScheduler::should_trigger(&now, &state).is_some();
+    let last = state.last_backup_at.map(|ts| ts.inner());
+    (overdue, last)
 }
 
 /// `POST /v1/agent/init`
@@ -125,11 +230,10 @@ pub async fn unseal(
 
 /// `POST /v1/agent/seal`
 ///
-/// Zeroizes the Vault Root Key and transitions the agent to Sealed state.
+/// Transitions the agent from Unsealed to Sealed state, wiping VRK material.
 #[instrument(skip(ctx))]
 pub async fn seal(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
     let cmd = merkle_application::commands::seal_vault::SealVaultCommand;
-
     match cmd.execute(&ctx).await {
         Ok(output) => {
             let resp = SealResponse {

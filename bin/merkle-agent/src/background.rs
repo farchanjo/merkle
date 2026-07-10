@@ -267,6 +267,13 @@ async fn run_chain_verification(ctx: &Arc<AppContext>) {
     use merkle_application::ChainOutcome;
     use merkle_application::queries::verify_chain::VerifyChainQuery;
 
+    // HMAC verification needs the unsealed VRK-derived key. Skip quietly while
+    // sealed so boot and idle-relock periods do not spam ERROR logs / metrics.
+    if !ctx.is_unsealed().await {
+        tracing::debug!("chain verifier: skipped (vault sealed)");
+        return;
+    }
+
     let enabled = crate::metrics::is_enabled();
     match VerifyChainQuery.execute(ctx).await {
         Ok(output) if output.result.outcome == ChainOutcome::Intact => {

@@ -25,9 +25,9 @@ use crate::{
 /// must pass for `overall` to be `"healthy"`. Any single failure sets
 /// `overall` to `"unhealthy"`.
 ///
-/// The response intentionally avoids sensitive content: no key material,
-/// no audit entry hashes, and no file paths. It is safe to include in
-/// diagnostic tooling and MCP server health probes.
+/// Available while sealed (sealed-safe checks) and unsealed (full suite
+/// including HMAC chain verification). The response intentionally avoids
+/// key material and audit entry hashes.
 #[instrument(skip(ctx))]
 pub async fn doctor(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
     match DoctorQuery.execute(&ctx).await {

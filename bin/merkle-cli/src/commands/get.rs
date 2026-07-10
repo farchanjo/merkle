@@ -1,8 +1,11 @@
 //! `merkle get <handle> [--reason <text>]`
 //!
-//! Returns public metadata for a Secret.
-//! Maps to GET /v1/namespaces/{ns_id}/secrets/{handle_encoded}.
-//! Does NOT trigger a Reveal — use `merkle reveal` for that.
+//! Returns public metadata for a Secret (category, tags, version, …).
+//! Maps to `GET /v1/namespaces/{ns_id}/secrets/{handle_encoded}`.
+//!
+//! Does **not** issue a use-token and does **not** reveal plaintext —
+//! use the MCP `vault.use` / companion use-token endpoints for proxy
+//! materialization, and `merkle reveal` for operator plaintext.
 
 use std::fmt::Write as _;
 

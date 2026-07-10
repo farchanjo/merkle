@@ -63,7 +63,7 @@ pub enum Commands {
     /// List Secrets in a Namespace.
     List(ListArgs),
 
-    /// Obtain a Use Token for a low/medium-sensitivity Secret.
+    /// Show public metadata for a Secret (no plaintext; not a use-token).
     Get(GetArgs),
 
     /// Show read-only public metadata for a Secret.

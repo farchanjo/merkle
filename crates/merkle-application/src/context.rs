@@ -156,6 +156,13 @@ pub struct AppContext {
     /// Defaults to `$TMPDIR/merkle-backups`; the agent overrides this from
     /// `[backup] directory` / `MERKLE_BACKUP_DIR` via [`AppContext::set_backup_dir`].
     pub backup_dir: Arc<RwLock<PathBuf>>,
+
+    /// Absolute path of the vault SQLite database file, when known.
+    ///
+    /// Set by the agent at startup from `[storage] database_url`. Used by
+    /// `GET /v1/agent/status` for `db_path` / `db_size_bytes` / free disk.
+    /// `None` for in-memory or unknown backends.
+    pub db_path: Arc<RwLock<Option<PathBuf>>>,
 }
 
 impl AppContext {
@@ -189,6 +196,7 @@ impl AppContext {
             // Default policy: max 24h interval, 50-change threshold, 15 min idle.
             anacron: Arc::new(RwLock::new(AnacronState::new(24, 50, 15))),
             backup_dir: Arc::new(RwLock::new(std::env::temp_dir().join("merkle-backups"))),
+            db_path: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -225,6 +233,11 @@ impl AppContext {
     /// Override the scheduled-backup output directory (agent startup).
     pub async fn set_backup_dir(&self, path: PathBuf) {
         *self.backup_dir.write().await = path;
+    }
+
+    /// Record the on-disk SQLite path for status diagnostics (agent startup).
+    pub async fn set_db_path(&self, path: Option<PathBuf>) {
+        *self.db_path.write().await = path;
     }
 
     /// Restore the in-memory `audit_log` head from the persisted `PinnedHead`.
