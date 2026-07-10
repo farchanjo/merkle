@@ -1296,16 +1296,10 @@ paths:
       operationId: backup-recovery--trigger-backup
       summary: Trigger an on-demand Backup
       description: >
-        Initiates an encrypted `age`-format Backup of the entire vault
-        state. Two recipients are used: the Master public key and the
-        Recovery Public Key. The resulting file is written to the configured
-        target directory with the filename pattern
-        `merkle-bk-<utc-iso8601>.merkle.age`.
-
-
-        An Audit Entry with `op: backup` is appended on success.
-        Pre-rotate backups triggered automatically by `rotate` use
-        `note: pre_rotate_snapshot`.
+        Temporarily unavailable. The current identity model has no distinct,
+        configured `age` recipient for the Master Key, and the agent refuses
+        to create a misleading single-recipient backup. This endpoint returns
+        501 until the two-recipient key-provisioning design is implemented.
       tags:
         - backup-recovery
       x-merkle-sensitivity: medium
@@ -1324,14 +1318,8 @@ paths:
                     backup. The agent uses `pre_rotate_snapshot` internally;
                     custom values are allowed for manual triggers.
       responses:
-        "201":
-          description: Backup created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BackupSnapshot"
-        "503":
-          description: Agent is sealed or backup storage is unavailable.
+        "501":
+          description: Backup capability is not safely configured.
           content:
             application/problem+json:
               schema:
@@ -1380,15 +1368,9 @@ paths:
       operationId: backup-recovery--create-restore-plan
       summary: Create a Restore Plan from a Backup snapshot
       description: >
-        Validates a Backup file and generates a Restore Plan that previews
-        the changes that would be applied to the current vault state. Does
-        not apply any changes. The caller must inspect the plan and call
-        `/v1/backup/restore` with the `plan_id` to execute.
-
-
-        Restore modes: `overwrite` (replace all), `merge` (add missing,
-        skip existing), `newest_wins` (compare `created_at` and keep the
-        newer version).
+        Temporarily unavailable. Restore plans must be durably stored and
+        bound to a verified, decrypted artifact before execution. The endpoint
+        returns 501 rather than presenting a plan that cannot be resolved.
       tags:
         - backup-recovery
       x-merkle-sensitivity: high
@@ -1418,40 +1400,17 @@ paths:
                     Path to the `age` Recovery Key file if the Master Key
                     is unavailable (Disaster Recovery path).
       responses:
-        "200":
-          description: Restore Plan created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RestorePlan"
-        "400":
-          description: >
-            Snapshot file not found, corrupt, or decryption failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "503":
-          description: Agent is sealed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
+        "501":
+          description: Restore-plan capability is not safely configured.
 
   /v1/backup/restore:
     post:
       operationId: backup-recovery--execute-restore
       summary: Execute a Restore Plan
       description: >-
-        Applies a previously created Restore Plan identified by plan_id.
-        This operation is destructive. An Audit Entry with op: restore is
-        appended. Requires operator_confirmation (slash_command AND oob_ack).
-        Non-Claude-Code clients must present a signed config flag per ADR-0011
-        amendment.
-
-
-        The Vault Agent must be in Unsealed State. After restore the agent
-        re-derives Namespace DEKs from the restored Vault Root Key.
+        Temporarily unavailable. Execution requires a durable restore plan,
+        verified artifact integrity, and an atomic multi-secret storage port.
+        The endpoint returns 501 until those invariants are implemented.
       tags:
         - backup-recovery
       x-merkle-sensitivity: high
@@ -1485,46 +1444,8 @@ paths:
                     oob_ack:
                       type: boolean
       responses:
-        "200":
-          description: Restore completed successfully.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - restored
-                  - secrets_restored
-                  - namespaces_restored
-                properties:
-                  restored:
-                    type: boolean
-                    const: true
-                  secrets_restored:
-                    type: integer
-                  namespaces_restored:
-                    type: integer
-                  restored_at:
-                    type: string
-                    format: date-time
-        "400":
-          description: Plan ID not found or plan has expired.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "409":
-          description: >
-            Restore conflict that could not be resolved by the chosen mode.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "503":
-          description: Agent is sealed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
+        "501":
+          description: Restore capability is not safely configured.
 
   # ---------------------------------------------------------------------------
   # Diagnostics (ADR-0024 gap matrix)

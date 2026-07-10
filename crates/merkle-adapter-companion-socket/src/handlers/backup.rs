@@ -53,6 +53,18 @@ async fn default_namespace_id(ctx: &AppContext) -> Option<NamespaceId> {
         .map(|ns| ns.id)
 }
 
+/// Backup and restore deliberately fail closed until their two-recipient key
+/// provisioning and durable restore-plan storage are designed and wired.
+///
+/// The Master Key is symmetric and no corresponding `age` recipient exists in
+/// the current identity model.  Pretending the recovery recipient is both
+/// recipients produced backups that no documented recovery path could prove.
+/// Likewise, restore plans are not persisted, so an opaque plan id cannot be
+/// resolved safely after a request boundary.
+fn backup_recovery_available() -> bool {
+    false
+}
+
 /// `POST /v1/backup`
 ///
 /// Initiates an on-demand encrypted backup of the entire vault state.
@@ -61,6 +73,13 @@ pub async fn trigger_backup(
     State(ctx): State<Arc<AppContext>>,
     body: Option<Json<TriggerBackupRequest>>,
 ) -> impl IntoResponse {
+    if !backup_recovery_available() {
+        return not_implemented(
+            "Backup is unavailable until distinct master and recovery age recipients are configured.",
+        )
+        .into_response();
+    }
+
     // Resolve namespace to back up.
     let Some(namespace_id) = default_namespace_id(&ctx).await else {
         return not_implemented("trigger_backup: no namespace found; create a session first.")
@@ -204,6 +223,13 @@ pub async fn create_restore_plan(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<CreateRestorePlanRequest>,
 ) -> impl IntoResponse {
+    if !backup_recovery_available() {
+        return not_implemented(
+            "Restore planning is unavailable until encrypted artifacts and durable restore plans are safely configured.",
+        )
+        .into_response();
+    }
+
     let Some(namespace_id) = default_namespace_id(&ctx).await else {
         return Problem {
             kind: ProblemType::NamespaceNotFound,
@@ -299,6 +325,13 @@ pub async fn execute_restore(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<ExecuteRestoreRequest>,
 ) -> impl IntoResponse {
+    if !backup_recovery_available() {
+        return not_implemented(
+            "Restore is unavailable until a durable, verified restore-plan capability is configured.",
+        )
+        .into_response();
+    }
+
     // Gate: both operator confirmation flags required for restore.
     if !body.operator_confirmation.slash_command || !body.operator_confirmation.oob_ack {
         return Problem {

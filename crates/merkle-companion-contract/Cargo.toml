@@ -1,0 +1,17 @@
+[package]
+name = "merkle-companion-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Transport DTO contract for the Merkle Companion Socket API."
+
+[lints]
+workspace = true
+
+[dependencies]
+merkle-types = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

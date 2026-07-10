@@ -4,7 +4,10 @@
 //! enforces the two-flag operator confirmation model from ADR-0011:
 //!
 //! - `slash_command=true` required for all sensitivity levels.
-//! - `oob_ack=true` additionally required for `sensitivity=high`.
+//! - OOB-gated reveals are unavailable until a signed challenge resolution can
+//!   be verified by the agent.  The transport `oob_ack` boolean is retained
+//!   only for backwards-compatible deserialization; it is never trusted as an
+//!   authorization proof.
 //!
 //! The implementation validates the flags, resolves the secret sensitivity via
 //! `DescribeSecretCommand`, then calls `RevealSecretCommand` which handles the
@@ -23,9 +26,9 @@ use tracing::instrument;
 
 use crate::{
     AppContext, consumer_gate,
-    dto::{OobPendingResponse, RevealAuthorizationResponse, RevealRequest},
+    dto::{RevealAuthorizationResponse, RevealRequest},
     extensions::ExtractedPeerCred,
-    problem::{Problem, ProblemType, app_error_to_problem},
+    problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
 
 // ---------------------------------------------------------------------------
@@ -46,16 +49,6 @@ fn plaintext_to_json(plaintext: &[u8]) -> serde_json::Value {
     })
 }
 
-/// Build an `OobPendingResponse` for the 202 ACCEPTED path.
-fn oob_pending_response(oob_channel: OobChannel) -> OobPendingResponse {
-    OobPendingResponse {
-        oob_pending: true,
-        oob_channel,
-        expires_at: chrono::Utc::now() + chrono::Duration::seconds(120),
-        request_nonce: format!("{:016x}", rand_nonce()),
-    }
-}
-
 /// Derive the namespace DEK bytes from the HMAC key and the namespace UUID.
 async fn derive_dek(
     ctx: &AppContext,
@@ -69,17 +62,6 @@ async fn derive_dek(
     let ns_bytes: &[u8; 16] = ns_uuid.as_bytes();
     let dek_sig = ctx.crypto.blake3_keyed(&hmac_key, ns_bytes);
     Ok(*dek_sig.as_bytes())
-}
-
-/// Generate a pseudo-random nonce for OOB correlation (8 bytes as hex).
-///
-/// Uses the current system time as entropy; a real implementation would use
-/// `ctx.crypto.random_bytes_32()`. This is used only for the OOB-pending
-/// response which is a Phase 6 stub.
-fn rand_nonce() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::from(d.subsec_nanos()))
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +156,6 @@ pub async fn reveal(
         sensitivity,
         oob_channel,
         dek_bytes,
-        body.operator_confirmation.oob_ack,
     )
     .await
 }
@@ -189,7 +170,6 @@ async fn execute_reveal(
     sensitivity: Sensitivity,
     oob_channel: OobChannel,
     dek_bytes: [u8; 32],
-    oob_ack: bool,
 ) -> axum::response::Response {
     // Load the persisted namespace policy so reveal is governed by the
     // operator's real configuration — security profile, OOB threshold, required
@@ -211,19 +191,25 @@ async fn execute_reveal(
         .into_response();
     }
 
-    // Select an enrolled, non-revoked companion device that satisfies the
-    // required class, for the OOB challenge. When none qualifies and OOB is
-    // required, the command returns a pending/denied outcome mapped to 202.
-    let companion_device = match ctx.storage.list_companion_devices().await {
-        Ok(devices) => devices.into_iter().find(|d| {
-            !d.is_revoked() && d.meets_class_requirement(policy.device_policy.required_class)
-        }),
-        Err(e) => return app_error_to_problem(e.into()).into_response(),
-    };
+    let oob_required = sensitivity >= policy.reveal.require_oob_above
+        || policy.security_profile == SecurityProfile::Paranoid;
+    if oob_required {
+        // `oob_ack` is supplied by the transport and therefore cannot prove
+        // that an operator approved this request.  The production dispatcher
+        // cannot currently bind and verify a signed resolution either.  Do
+        // not turn this into a 202/polling fiction: fail closed until that
+        // protocol exists end-to-end.
+        return not_implemented(
+            "reveal requires a cryptographically verified OOB resolution; this capability is disabled until the challenge registry and signature verification are implemented",
+        )
+        .into_response();
+    }
 
     let domain_confirmation = DomainOperatorConfirmation {
         slash_command: true,
-        oob_ack,
+        // Compatibility input from `RevealRequest` is deliberately ignored.
+        // A boolean originating in a socket request is not an OOB proof.
+        oob_ack: false,
         signed_config_flag: None,
     };
 
@@ -236,7 +222,7 @@ async fn execute_reveal(
         oob_threshold: policy.reveal.require_oob_above,
         security_profile: policy.security_profile,
         dek_bytes,
-        companion_device,
+        companion_device: None,
         oob_channel,
         oob_timeout: Duration::from_secs(120),
         required_device_class: policy.device_policy.required_class,
@@ -253,16 +239,6 @@ async fn execute_reveal(
                     .into(),
             };
             (StatusCode::OK, Json(resp)).into_response()
-        }
-        Err(merkle_application::AppError::PolicyDenied(ref reason))
-            if reason.contains("oob") || reason.contains("OOB") || reason.contains("companion") =>
-        {
-            // OOB required but no device enrolled — return 202 pending.
-            (
-                StatusCode::ACCEPTED,
-                Json(oob_pending_response(oob_channel)),
-            )
-                .into_response()
         }
         Err(err) => app_error_to_problem(err).into_response(),
     }

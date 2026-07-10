@@ -32,12 +32,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use merkle_application::commands::{
     crypto_decrypt::CryptoDecryptCommand, crypto_sign::CryptoSignCommand,
     http_download::HttpDownloadCommand, http_request::HttpRequestCommand,
-    http_upload::HttpUploadCommand, port_forward::PortForwardCommand,
-    spawn_command::SpawnCommandCommand, ssh_copy::SshCopyCommand, ssh_exec::SshExecCommand,
+    http_upload::HttpUploadCommand, ssh_copy::SshCopyCommand, ssh_exec::SshExecCommand,
 };
-use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation;
 use merkle_ports::{HttpAuth, HttpRequestSpec};
-use merkle_types::{NamespaceId, Sensitivity};
+use merkle_types::{AuditOp, AuditOutcome, NamespaceId};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -48,8 +46,8 @@ use crate::{
         ProxyCryptoSignRequest, ProxyCryptoSignResponse, ProxyHttpDownloadRequest,
         ProxyHttpDownloadResponse, ProxyHttpRequestRequest, ProxyHttpRequestResponse,
         ProxyHttpUploadRequest, ProxyHttpUploadResponse, ProxyPortForwardRequest,
-        ProxyPortForwardResponse, ProxySpawnRequest, ProxySpawnResponse, ProxySshCopyRequest,
-        ProxySshCopyResponse, ProxySshExecRequest, ProxySshExecResponse, ProxySshShellRequest,
+        ProxySpawnRequest, ProxySshCopyRequest, ProxySshCopyResponse, ProxySshExecRequest,
+        ProxySshExecResponse, ProxySshShellRequest,
     },
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
@@ -82,6 +80,26 @@ async fn derive_dek(ctx: &AppContext, namespace_id: &NamespaceId) -> Result<[u8;
     let ns_bytes: &[u8; 16] = ns_uuid.as_bytes();
     let dek_sig = ctx.crypto.blake3_keyed(&hmac_key, ns_bytes);
     Ok(*dek_sig.as_bytes())
+}
+
+/// Record an attempted use of a capability that is intentionally disabled.
+///
+/// The audit happens before the 501 response and before any secret is looked
+/// up or decrypted. This keeps disabled proxy endpoints observable without
+/// granting their former ambient process-execution authority.
+async fn audit_disabled_capability(
+    ctx: &AppContext,
+    namespace_id: NamespaceId,
+    op: AuditOp,
+) -> Result<(), Problem> {
+    let hmac_key = ctx.require_hmac_key().await.map_err(app_error_to_problem)?;
+    let params =
+        merkle_domain_audit_compliance::AppendParams::new(op, AuditOutcome::Deny, namespace_id)
+            .denial_reason("capability_disabled_pending_security_controls")
+            .caller_program("merkle-agent");
+    merkle_application::commands::unseal_vault::audit_commit(ctx, params, &hmac_key)
+        .await
+        .map_err(app_error_to_problem)
 }
 
 /// Resolve a vault secret by handle and decrypt it to raw bytes.
@@ -287,48 +305,14 @@ pub async fn port_forward(
         Ok(id) => id,
         Err(p) => return p.into_response(),
     };
-    let dek = match derive_dek(&ctx, &namespace_id).await {
-        Ok(b) => b,
-        Err(p) => return p.into_response(),
-    };
-    let key_material = match resolve_key_bytes(&ctx, &namespace_id, &body.key_handle, &dek).await {
-        Ok(b) => b,
-        Err(p) => return p.into_response(),
-    };
-
-    // Parse ssh_target (host:port) into parts for PortForwardCommand.
-    let (remote_host, remote_port_str) =
-        body.target.rsplit_once(':').unwrap_or((&body.target, "22"));
-    let remote_host = remote_host.to_owned();
-    let remote_port: u16 = remote_port_str.parse().unwrap_or(22);
-
-    let cmd = PortForwardCommand {
-        namespace_id,
-        ssh_target: body.target.clone(),
-        key_material,
-        local_port: body.local_port,
-        remote_host,
-        remote_port,
-        // Socket callers are treated as having operator authority; set
-        // slash_command=true so that high-sensitivity keys are not blocked.
-        sensitivity: Sensitivity::Medium,
-        operator_confirmation: OperatorConfirmation {
-            slash_command: true,
-            oob_ack: false,
-            signed_config_flag: None,
-        },
-    };
-
-    match cmd.execute(&ctx).await {
-        Ok(out) => {
-            let resp = ProxyPortForwardResponse {
-                session_id: out.session_id.inner(),
-                local_addr: out.local_addr,
-            };
-            (StatusCode::CREATED, Json(resp)).into_response()
-        }
-        Err(err) => app_error_to_problem(err).into_response(),
+    if let Err(problem) = audit_disabled_capability(&ctx, namespace_id, AuditOp::PortForward).await
+    {
+        return problem.into_response();
     }
+    not_implemented(
+        "port_forward is disabled until the agent can enforce the key sensitivity, obtain a non-forgeable operator confirmation, and compensate child/key-file creation on every failure path",
+    )
+    .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -552,17 +536,10 @@ pub async fn http_upload(
 
 /// `POST /v1/proxy/spawn`
 ///
-/// Spawns `command` with `args` on the agent host. Each handle in
-/// `secret_handles` is decrypted and injected as an environment variable
-/// named after the secret's canonical name (`handle.secret_name()`).
-/// Additional `env` key-value pairs are also set.
-///
-/// Adaptor note: `SpawnCommandCommand` accepts a single handle + env-var name.
-/// This handler iterates over `secret_handles`, injecting each in a separate
-/// subprocess invocation would be incorrect. Instead it resolves all secrets
-/// into environment variables and uses `tokio::process::Command` directly,
-/// bypassing `SpawnCommandCommand` for the multi-secret case. The audit entry
-/// is emitted for the first handle only (Phase 6 limitation; tracked for F7).
+/// This capability is deliberately disabled. Its previous implementation
+/// accepted an arbitrary program and returned its output, allowing any secret
+/// injected through the environment to be exfiltrated through stdout/stderr.
+/// It is kept as a documented 501 endpoint until its execution policy exists.
 #[instrument(skip(ctx, body))]
 pub async fn spawn(
     State(ctx): State<Arc<AppContext>>,
@@ -573,113 +550,13 @@ pub async fn spawn(
         Err(p) => return p.into_response(),
     };
 
-    if body.command.trim().is_empty() {
-        return Problem {
-            kind: ProblemType::SchemaValidationFailed,
-            title: "command must not be empty".into(),
-            status: 400,
-            detail: "The `command` field is required and must be non-empty.".into(),
-            instance: None,
-            hint: None,
-            fields: vec![],
-        }
-        .into_response();
+    if let Err(problem) = audit_disabled_capability(&ctx, namespace_id, AuditOp::Spawn).await {
+        return problem.into_response();
     }
-
-    // Use SpawnCommandCommand for the single-handle case (canonical path).
-    // For zero or multiple handles, fall back to a direct tokio spawn with
-    // env vars resolved inline.
-    if body.secret_handles.len() == 1 {
-        let handle = &body.secret_handles[0];
-        let dek = match derive_dek(&ctx, &namespace_id).await {
-            Ok(b) => b,
-            Err(p) => return p.into_response(),
-        };
-        let env_var = handle
-            .secret_name()
-            .to_string()
-            .to_uppercase()
-            .replace('-', "_");
-        let mut argv = vec![body.command.clone()];
-        argv.extend(body.args.clone());
-
-        let cmd = SpawnCommandCommand {
-            namespace_id,
-            handle: handle.clone(),
-            env_var,
-            dek_bytes: dek,
-            argv,
-        };
-
-        return match cmd.execute(&ctx).await {
-            Ok(out) => {
-                let resp = ProxySpawnResponse {
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                    exit_code: out.exit_code,
-                };
-                (StatusCode::OK, Json(resp)).into_response()
-            }
-            Err(err) => app_error_to_problem(err).into_response(),
-        };
-    }
-
-    // Zero or multi-handle path: resolve all secrets, build env, spawn directly.
-    let dek = match derive_dek(&ctx, &namespace_id).await {
-        Ok(b) => b,
-        Err(p) => return p.into_response(),
-    };
-
-    let mut extra_env: Vec<(String, String)> = Vec::new();
-    for handle in &body.secret_handles {
-        let plaintext = match resolve_key_bytes(&ctx, &namespace_id, handle, &dek).await {
-            Ok(b) => b,
-            Err(p) => return p.into_response(),
-        };
-        let env_var = handle
-            .secret_name()
-            .to_string()
-            .to_uppercase()
-            .replace('-', "_");
-        let secret_val = String::from_utf8_lossy(&plaintext).trim().to_owned();
-        extra_env.push((env_var, secret_val));
-    }
-
-    let mut child_cmd = tokio::process::Command::new(&body.command);
-    child_cmd.args(&body.args);
-    // Never let the spawned child inherit the keystore passphrase that
-    // protects every secret at rest.
-    child_cmd.env_remove("MERKLE_KEYSTORE_PASSPHRASE");
-    for (k, v) in &body.env {
-        child_cmd.env(k, v);
-    }
-    for (k, v) in &extra_env {
-        child_cmd.env(k, v);
-    }
-    if let Some(ref wd) = body.working_dir {
-        child_cmd.current_dir(wd);
-    }
-
-    match child_cmd.output().await {
-        Ok(output) => {
-            let resp = ProxySpawnResponse {
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                exit_code: output.status.code().unwrap_or(-1),
-            };
-            (StatusCode::OK, Json(resp)).into_response()
-        }
-        Err(e) => Problem {
-            kind: ProblemType::SchemaValidationFailed,
-            title: "Spawn failed".into(),
-            status: 500,
-            detail: format!("Failed to spawn command: {e}"),
-            instance: None,
-            hint: None,
-            fields: vec![],
-        }
-        .into_response(),
-    }
+    not_implemented(
+        "spawn is disabled until a fail-closed command policy, non-exfiltrating output model, timeout/process isolation, and complete per-secret auditing are implemented",
+    )
+    .into_response()
 }
 
 // ---------------------------------------------------------------------------

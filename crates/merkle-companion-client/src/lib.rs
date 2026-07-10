@@ -17,7 +17,7 @@
 //! ## Re-exports
 //!
 //! All DTO types from
-//! [`merkle_adapter_companion_socket::dto`] are re-exported for consumer
+//! [`merkle_companion_contract`] are re-exported for consumer
 //! convenience so callers need not add `merkle-adapter-companion-socket` as a
 //! direct dependency.
 //!
@@ -35,10 +35,10 @@ pub mod transport;
 pub use client::{CompanionSocketClient, RevealOutcome};
 pub use error::{ClientError, ProblemDetail};
 
-/// Re-exported DTOs from [`merkle_adapter_companion_socket::dto`].
+/// Re-exported DTOs from [`merkle_companion_contract`].
 ///
 /// Consumers can import DTO types directly from this crate without depending on
 /// `merkle-adapter-companion-socket`.
 pub mod dto {
-    pub use merkle_adapter_companion_socket::dto::*;
+    pub use merkle_companion_contract::*;
 }

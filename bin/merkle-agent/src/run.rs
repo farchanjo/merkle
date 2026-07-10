@@ -72,8 +72,14 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
     let socket_path = cfg.companion_socket.path.clone();
     let socket_shutdown = shutdown.clone();
     let companion_ctx = Arc::clone(&app_ctx);
+    let companion_server = CompanionSocketServer::new(socket_path.clone(), companion_ctx);
+    let companion_listener = companion_server
+        .bind()
+        .context("failed to bind Companion Socket before readiness")?;
     let companion_handle = tokio::spawn(async move {
-        if let Err(e) = companion_socket_task(socket_path, companion_ctx, socket_shutdown).await {
+        if let Err(e) =
+            companion_socket_task(companion_server, companion_listener, socket_shutdown).await
+        {
             tracing::error!(error = %e, "companion socket task failed");
         }
     });
@@ -434,20 +440,12 @@ fn read_keystore_passphrase() -> anyhow::Result<secrecy::SecretString> {
 /// `CompanionSocketServer`. Cancellation is handled by dropping the serve
 /// future when `shutdown` fires.
 async fn companion_socket_task(
-    socket_path: std::path::PathBuf,
-    ctx: Arc<AppContext>,
+    server: CompanionSocketServer,
+    listener: tokio::net::UnixListener,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    // Ensure parent directory exists.
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create socket directory {}", parent.display()))?;
-    }
-
-    let server = CompanionSocketServer::new(socket_path, ctx);
-
     tokio::select! {
-        result = server.serve() => {
+        result = server.serve_listener(listener) => {
             result.context("companion socket server exited")?;
         }
         () = shutdown.cancelled() => {

@@ -4,6 +4,11 @@
 //! They are used exclusively by the HTTP layer; the application layer
 //! receives domain types, not DTOs.
 
+#![expect(
+    missing_docs,
+    reason = "Transport DTO fields mirror the versioned OpenAPI contract; the schema is the authoritative documentation."
+)]
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -313,7 +318,7 @@ pub struct RankedSecretDto {
 
 /// Encoding of the payload bytes in `value` / `new_value` fields.
 ///
-/// Mirrors `merkle_application::ValueFormat`.
+/// Encoding used by the Companion Socket payload value fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueFormatDto {
@@ -324,22 +329,13 @@ pub enum ValueFormatDto {
     Base64,
 }
 
-impl From<ValueFormatDto> for merkle_application::ValueFormat {
-    fn from(dto: ValueFormatDto) -> Self {
-        match dto {
-            ValueFormatDto::Utf8 => Self::Utf8,
-            ValueFormatDto::Base64 => Self::Base64,
-        }
-    }
-}
-
 /// Request body for `POST /v1/namespaces/{namespace_id}/secrets`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PutSecretRequest {
     pub name: String,
     pub category: String,
     /// The sensitive material — write-only; never returned in responses.
-    pub value: serde_json::Value,
+    pub value: String,
     /// How `value` is encoded. Defaults to `utf8`.
     #[serde(default)]
     pub value_format: ValueFormatDto,
@@ -421,7 +417,7 @@ pub struct ListSecretVersionsResponse {
 /// Request body for `POST /v1/namespaces/{namespace_id}/secrets/{handle_encoded}/rotate`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RotateSecretRequest {
-    pub new_value: serde_json::Value,
+    pub new_value: String,
     /// How `new_value` is encoded. Defaults to `utf8`.
     #[serde(default)]
     pub value_format: ValueFormatDto,

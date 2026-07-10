@@ -35,7 +35,7 @@ pub struct VaultPutInput {
     /// Unique name within the Namespace + category pair.
     pub name: String,
     /// Sensitive value — shape validated against the category schema.
-    pub value: serde_json::Value,
+    pub value: String,
     /// Optional custom CUE schema reference; omit to use the built-in schema.
     pub schema_id: Option<String>,
     /// Optional tags to associate with the Secret.
@@ -87,7 +87,7 @@ pub struct VaultRotateInput {
     /// Handle URI of the Secret to rotate.
     pub handle: String,
     /// New value — same schema as vault.put `value` for this category.
-    pub new_value: serde_json::Value,
+    pub new_value: String,
     /// Human-readable reason; recorded in the audit log.
     pub purpose: String,
 }
@@ -642,7 +642,7 @@ mod tests {
         let input = VaultPutInput {
             category: "token".into(),
             name: "api".into(),
-            value: serde_json::json!("v"),
+            value: "v".into(),
             schema_id: None,
             tags: Some(vec!["env:prod".into(), "team:core".into()]),
             sensitivity: Some("high".into()),

@@ -129,7 +129,7 @@ async fn tools_return_namespace_not_bound_before_bind() {
         .vault_put(Parameters(VaultPutInput {
             category: "token".to_owned(),
             name: "tok".to_owned(),
-            value: serde_json::json!("secret"),
+            value: "secret".into(),
             schema_id: None,
             tags: None,
             sensitivity: None,

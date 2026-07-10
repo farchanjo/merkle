@@ -29,7 +29,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod consumer_gate;
-pub mod dto;
+/// Public HTTP DTO contract shared with external clients.
+pub use merkle_companion_contract as dto;
 pub mod error;
 pub mod extensions;
 pub mod handlers;
@@ -98,15 +99,8 @@ impl CompanionSocketServer {
     /// Returns `Err` if the socket cannot be bound or if `axum::serve` exits
     /// with an I/O error.
     pub async fn serve(self) -> anyhow::Result<()> {
-        let listener = Self::bind_hardened(&self.socket_path)?;
-
-        info!(
-            socket = %self.socket_path.display(),
-            "companion socket listening"
-        );
-
-        let app = router::build(Arc::clone(&self.app_ctx));
-        serve_with_peer_cred(listener, app).await
+        let listener = self.bind()?;
+        self.serve_listener(listener).await
     }
 
     /// Bind the Unix socket with no window in which another user could connect
@@ -128,6 +122,22 @@ impl CompanionSocketServer {
     ///
     /// Returns `Err` if a stale socket cannot be removed, the parent directory
     /// cannot be created/hardened, or the bind fails.
+    pub fn bind(&self) -> anyhow::Result<UnixListener> {
+        Self::bind_hardened(&self.socket_path)
+    }
+
+    /// Serve an already-bound listener. Splitting bind from serve lets the
+    /// composition root report readiness only after the agent is actually
+    /// able to accept authenticated Companion Socket connections.
+    pub async fn serve_listener(self, listener: UnixListener) -> anyhow::Result<()> {
+        info!(
+            socket = %self.socket_path.display(),
+            "companion socket listening"
+        );
+        let app = router::build(Arc::clone(&self.app_ctx));
+        serve_with_peer_cred(listener, app).await
+    }
+
     fn bind_hardened(socket_path: &std::path::Path) -> anyhow::Result<UnixListener> {
         // Remove stale socket from previous run, if present.
         if socket_path.exists() {

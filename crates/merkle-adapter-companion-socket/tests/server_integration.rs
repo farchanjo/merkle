@@ -240,7 +240,7 @@ async fn put_secret(sock: &str, session_id: &str, name: &str) -> String {
         "name": name,
         "category": "generic",
         "sensitivity": "medium",
-        "value": { "token": "s3cr3t" },
+        "value": "s3cr3t",
         "tags": [],
         "expose": false
     });

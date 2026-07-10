@@ -26,6 +26,9 @@ members = [
     "crates/merkle-adapter-mcp",
     "crates/merkle-adapter-companion-socket",
 
+    # Transport contract shared by the Companion Socket server and its clients
+    "crates/merkle-companion-contract",
+
     # Companion Socket client (shared by CLI + MCP adapter)
     "crates/merkle-companion-client",
 
@@ -47,7 +50,7 @@ members = [
 [workspace.package]
 version      = "0.2.0"
 edition      = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 license      = "Apache-2.0"
 authors      = ["Merkle Contributors"]
 repository   = "https://github.com/farchanjo/merkle"
@@ -151,6 +154,7 @@ merkle-adapter-oob              = { path = "crates/merkle-adapter-oob" }
 merkle-adapter-mcp                   = { path = "crates/merkle-adapter-mcp" }
 merkle-adapter-companion-socket      = { path = "crates/merkle-adapter-companion-socket" }
 merkle-adapter-external-services     = { path = "crates/merkle-adapter-external-services" }
+merkle-companion-contract            = { path = "crates/merkle-companion-contract" }
 merkle-companion-client              = { path = "crates/merkle-companion-client" }
 merkle-application              = { path = "crates/merkle-application" }
 

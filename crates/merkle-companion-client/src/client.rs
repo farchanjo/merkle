@@ -50,7 +50,7 @@ fn enc(value: &str) -> impl std::fmt::Display + '_ {
     utf8_percent_encode(value, NON_ALPHANUMERIC)
 }
 
-use merkle_adapter_companion_socket::dto::{
+use merkle_companion_contract::{
     AgentStatusResponse, AuditQuery, AuditResponse, BackupSnapshotDto, CloseSessionResponse,
     CreateRestorePlanRequest, CreateSessionRequest, CreateSessionResponse, DeleteSecretRequest,
     DeleteSecretResponse, DoctorResponse, ExecuteRestoreRequest, ExecuteRestoreResponse,
@@ -250,18 +250,18 @@ impl CompanionSocketClient {
     ) -> Result<T, ClientError> {
         let (status, body_bytes) = Self::read_body(response).await?;
 
-        if status == hyper::StatusCode::SERVICE_UNAVAILABLE {
-            if let Ok(problem) = serde_json::from_slice::<ProblemDetail>(&body_bytes) {
-                if problem.problem_type.contains("sealed")
-                    || problem.title.to_lowercase().contains("sealed")
-                {
-                    return Err(ClientError::Sealed);
-                }
-                return Err(ClientError::Http {
-                    status: status.as_u16(),
-                    problem,
-                });
+        if status == hyper::StatusCode::SERVICE_UNAVAILABLE
+            && let Ok(problem) = serde_json::from_slice::<ProblemDetail>(&body_bytes)
+        {
+            if problem.problem_type.contains("sealed")
+                || problem.title.to_lowercase().contains("sealed")
+            {
+                return Err(ClientError::Sealed);
             }
+            return Err(ClientError::Http {
+                status: status.as_u16(),
+                problem,
+            });
         }
 
         if !status.is_success() {
@@ -490,7 +490,7 @@ impl CompanionSocketClient {
         namespace_id: Uuid,
         handle_encoded: &str,
         req: RollbackSecretRequest,
-    ) -> Result<merkle_adapter_companion_socket::dto::RollbackSecretResponse, ClientError> {
+    ) -> Result<merkle_companion_contract::RollbackSecretResponse, ClientError> {
         self.post(
             &format!("/v1/namespaces/{namespace_id}/secrets/{handle_encoded}/rollback"),
             &req,

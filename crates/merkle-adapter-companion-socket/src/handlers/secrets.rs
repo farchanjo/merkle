@@ -31,7 +31,7 @@ use crate::{
         DeleteSecretRequest, DeleteSecretResponse, ListSecretVersionsResponse, ListSecretsParams,
         ListSecretsResponse, PublicMetadataDto, PutSecretRequest, PutSecretResponse,
         RankedSecretDto, RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse,
-        SearchHighlightDto, SecretDto, SecretVersionDto, TagDto,
+        SearchHighlightDto, SecretDto, SecretVersionDto, TagDto, ValueFormatDto,
     },
     extensions::ExtractedPeerCred,
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
@@ -86,6 +86,15 @@ fn tags_from_dto(dtos: &[TagDto]) -> Vec<Tag> {
             Some(Tag { key, value })
         })
         .collect()
+}
+
+/// Translate the transport representation into the application input without
+/// making the public Companion Socket contract depend on the application crate.
+const fn value_format_from_dto(value_format: ValueFormatDto) -> merkle_application::ValueFormat {
+    match value_format {
+        ValueFormatDto::Utf8 => merkle_application::ValueFormat::Utf8,
+        ValueFormatDto::Base64 => merkle_application::ValueFormat::Base64,
+    }
 }
 
 /// Convert a `merkle_domain_secret_storage::Secret` into a `SecretDto`,
@@ -375,7 +384,7 @@ pub async fn put_secret(
     let handle = Handle::new(ns_label, category.clone(), secret_name);
     let sensitivity = body.sensitivity.unwrap_or(Sensitivity::Medium);
     let tags = tags_from_dto(&body.tags);
-    let plaintext = serde_json::to_vec(&body.value).unwrap_or_default();
+    let plaintext = body.value.into_bytes();
 
     let dek_bytes = match derive_dek_bytes(&ctx, &namespace_id).await {
         Ok(b) => b,
@@ -390,7 +399,7 @@ pub async fn put_secret(
         tags,
         expose_metadata: body.expose,
         plaintext,
-        value_format: body.value_format.into(),
+        value_format: value_format_from_dto(body.value_format),
         dek_version: 1,
         dek_bytes,
     };
@@ -575,13 +584,13 @@ pub async fn rotate_secret(
         Err(p) => return p.into_response(),
     };
 
-    let plaintext = serde_json::to_vec(&body.new_value).unwrap_or_default();
+    let plaintext = body.new_value.into_bytes();
 
     let cmd = RotateSecretCommand {
         namespace_id,
         handle: handle.clone(),
         plaintext,
-        value_format: body.value_format.into(),
+        value_format: value_format_from_dto(body.value_format),
         dek_version: 1,
         dek_bytes,
     };
