@@ -188,12 +188,12 @@ impl MerklePrompts {
         let text = format!(
             "Roll the merkle Secret at `{handle}` back to version `{version}`. Steps: \
              (1) invoke `vault.history` with arguments `{{ \"handle\": \"{handle}\" }}` \
-             and locate the entry for version `{version}`; (2) invoke `vault.rotate` with \
-             arguments `{{ \"handle\": \"{handle}\", \"new_value\": <historical_value>, \
-             \"purpose\": \"rollback to version {version}\", \"operator_confirmation\": \
-             true }}`. Report the new version metadata (created_at, version_number, \
-             audit_event_id). Operator Confirmation is mandatory — rollback overwrites \
-             the live value."
+             and locate the entry for version `{version}`; (2) invoke `vault.rollback` with \
+             arguments `{{ \"handle\": \"{handle}\", \"target_version\": {version}, \
+             \"purpose\": \"rollback to version {version}\" }}`. Report the new version \
+             metadata (active_version, rolled_back_at). Operator Confirmation is mandatory \
+             — it is injected via request `_meta` by the /merkle-rollback slash command; do \
+             not attempt to supply it as a tool argument."
         );
         Ok(Self::single_user_message(
             &format!("Run /merkle-rollback {handle} {version}."),
@@ -315,7 +315,8 @@ mod tests {
                 .expect("rollback prompt must resolve");
         let body = render_user_text(&result);
         assert!(body.contains("vault.history"));
-        assert!(body.contains("vault.rotate"));
+        assert!(body.contains("vault.rollback"));
+        assert!(body.contains("\"target_version\": 2"));
         assert!(body.contains("rollback to version 2"));
     }
 

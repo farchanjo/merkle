@@ -1,6 +1,6 @@
 //! Secret CRUD tools:
 //! vault.put, vault.get, vault.list, vault.describe,
-//! vault.rotate, vault.delete, vault.search, vault.history.
+//! vault.rotate, vault.rollback, vault.delete, vault.search, vault.history.
 //!
 //! All operations are forwarded to the Vault Agent Companion Socket via
 //! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
@@ -18,8 +18,8 @@ use uuid::Uuid;
 
 use crate::{MerkleMcpServer, errors::client_error_to_mcp};
 use merkle_companion_client::dto::{
-    DeleteSecretRequest, ListSecretsParams, OperatorConfirmationDeleteSecret, PutSecretRequest,
-    RotateSecretRequest, TagDto, ValueFormatDto,
+    DeleteSecretRequest, ListSecretsParams, OperatorConfirmation, OperatorConfirmationDeleteSecret,
+    PutSecretRequest, RollbackSecretRequest, RotateSecretRequest, TagDto, ValueFormatDto,
 };
 use merkle_types::Handle;
 
@@ -88,6 +88,20 @@ pub struct VaultRotateInput {
     pub handle: String,
     /// New value — same schema as vault.put `value` for this category.
     pub new_value: String,
+    /// Human-readable reason; recorded in the audit log.
+    pub purpose: String,
+}
+
+/// Input for vault.rollback — restore a historical version as a new active version.
+///
+/// Note: there is deliberately no `operator_confirmation` argument. Confirmation
+/// is sourced from the client-injected request `_meta` (MERK-001).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct VaultRollbackInput {
+    /// Handle URI of the Secret to roll back.
+    pub handle: String,
+    /// Historical version number to restore (copied into a new version).
+    pub target_version: u32,
     /// Human-readable reason; recorded in the audit log.
     pub purpose: String,
 }
@@ -425,6 +439,64 @@ impl MerkleMcpServer {
         )]))
     }
 
+    /// Roll a Secret back to a retained historical version by appending a new
+    /// version that copies the target blob (immutable history).
+    ///
+    /// Gated on operator confirmation from client-injected request `_meta`
+    /// (set by `/merkle-rollback`) — not a model-controlled tool argument
+    /// (MERK-001).
+    #[tool(
+        name = "vault.rollback",
+        description = "Roll a Secret back to a retained historical version by copying its blob into a new active version (immutable history). Requires operator confirmation via the /merkle-rollback slash command (injected into request _meta by the client, not a tool argument)."
+    )]
+    pub async fn vault_rollback(
+        &self,
+        Parameters(input): Parameters<VaultRollbackInput>,
+        meta: rmcp::model::Meta,
+    ) -> Result<CallToolResult, ErrorData> {
+        let handle = parse_handle(&input.handle)?;
+
+        if !crate::operator_confirmation_from_meta(&meta) {
+            return Err(ErrorData::invalid_params(
+                "vault.rollback requires an operator confirmation issued via the \
+                 /merkle-rollback slash command; refusing to roll back autonomously",
+                None,
+            ));
+        }
+
+        let namespace_id = {
+            let session = self.session.read().await;
+            resolve_namespace(&session)?
+        };
+
+        let resp = self
+            .client
+            .rollback_secret(
+                namespace_id,
+                &encode_handle(&handle),
+                RollbackSecretRequest {
+                    target_version: input.target_version,
+                    operator_confirmation: OperatorConfirmation {
+                        slash_command: true,
+                        oob_ack: false,
+                        oob_channel: None,
+                    },
+                    purpose: Some(input.purpose),
+                },
+            )
+            .await
+            .map_err(client_error_to_mcp)?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "handle": resp.handle.to_string(),
+                "active_version": resp.active_version,
+                "rolled_back_at": resp.rolled_back_at.to_rfc3339(),
+            })
+            .to_string(),
+        )]))
+    }
+
     /// Permanently delete a Secret and all its versions. Irreversible.
     ///
     /// Gated on an operator confirmation that the client injects into the
@@ -615,7 +687,7 @@ impl MerkleMcpServer {
 #[cfg(test)]
 mod tests {
     use super::{
-        VaultDeleteInput, VaultListInput, VaultPutInput, list_params_from_input,
+        VaultDeleteInput, VaultListInput, VaultPutInput, VaultRollbackInput, list_params_from_input,
         put_request_from_input,
     };
     use merkle_types::Sensitivity;
@@ -634,6 +706,21 @@ mod tests {
         let input: VaultDeleteInput = serde_json::from_value(json).expect("parse");
         assert_eq!(input.handle, "vault://default/token/api");
         assert_eq!(input.purpose, "cleanup");
+    }
+
+    /// MERK-001: same provenance rule for rollback — no tool-arg confirmation.
+    #[test]
+    fn model_supplied_operator_confirmation_is_not_a_rollback_input_field() {
+        let json = serde_json::json!({
+            "handle": "vault://default/token/api",
+            "target_version": 2,
+            "purpose": "undo bad rotate",
+            "operator_confirmation": true
+        });
+        let input: VaultRollbackInput = serde_json::from_value(json).expect("parse");
+        assert_eq!(input.handle, "vault://default/token/api");
+        assert_eq!(input.target_version, 2);
+        assert_eq!(input.purpose, "undo bad rotate");
     }
 
     /// BUG-10: vault.put must forward `tags` and `sensitivity` to the daemon.

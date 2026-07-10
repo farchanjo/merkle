@@ -13,11 +13,12 @@
 //! the Vault Agent's Companion Socket via [`CompanionSocketClient`], and returns
 //! the serialised outputs. No `AppContext` or domain layer is imported.
 //!
-//! ## Tools exposed (29 total)
+//! ## Tools exposed (31 total)
 //!
 //! Identity (3): `vault.unseal`, `vault.seal`, `vault.bind`
-//! Secrets (8): `vault.put`, `vault.get`, `vault.list`, `vault.describe`,
-//!               `vault.search`, `vault.rotate`, `vault.delete`, `vault.history`
+//! Secrets (9): `vault.put`, `vault.get`, `vault.list`, `vault.describe`,
+//!               `vault.search`, `vault.rotate`, `vault.rollback`, `vault.delete`,
+//!               `vault.history`
 //! Reveal (1): `vault.reveal`
 //! Use-token (4): `vault.use`, `vault.write_tempfile`, `vault.write_fifo`,
 //!                `vault.revoke_tempfile`
@@ -73,8 +74,8 @@ pub use prompts::MerklePrompts;
 pub use session::SessionState;
 
 /// `_meta` key the MCP client attaches to a `tools/call` request envelope when
-/// the call originates from a `/merkle-reveal` or `/merkle-delete` slash command
-/// issued by the human operator.
+/// the call originates from a `/merkle-reveal`, `/merkle-delete`, or
+/// `/merkle-rollback` slash command issued by the human operator.
 ///
 /// Security boundary (MERK-001): the LLM populates only the tool `arguments`
 /// object — which rmcp deserializes into the `Parameters<…>` extractor — and
@@ -84,7 +85,7 @@ pub use session::SessionState;
 /// the model.
 ///
 /// Exposed so the MCP client (and tests) can reference the exact key the
-/// `/merkle-reveal` and `/merkle-delete` slash commands must set.
+/// `/merkle-reveal`, `/merkle-delete`, and `/merkle-rollback` slash commands must set.
 pub const OPERATOR_CONFIRMATION_META_KEY: &str = "dev.fapp.merkle/operator_confirmation";
 
 /// Returns `true` only when the request `_meta` carries the client-injected
