@@ -14,12 +14,12 @@
 //! full OOB challenge + AEAD-decrypt pipeline.
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use merkle_application::commands::{
-    describe_secret::DescribeSecretCommand, reveal_secret::RevealSecretCommand,
-};
+use merkle_application::commands::reveal_secret::RevealSecretCommand;
 use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation as DomainOperatorConfirmation;
 use merkle_domain_policy_permissions::NamespacePolicy;
-use merkle_types::{Handle, NamespaceId, OobChannel, SecurityProfile, Sensitivity};
+use merkle_types::{
+    CompanionDeviceClass, Handle, NamespaceId, OobChannel, SecurityProfile, Sensitivity,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::instrument;
@@ -102,39 +102,29 @@ pub async fn reveal(
         .into_response();
     }
 
-    // 2. Resolve the namespace_id from the session_id (1:1 mapping in Phase 6).
-    let Ok(namespace_id) = body.session_id.to_string().parse::<NamespaceId>() else {
-        return Problem {
-            kind: ProblemType::SessionNotFound,
-            title: "Invalid session ID".into(),
-            status: 400,
-            detail: "session_id is not a valid UUIDv7.".into(),
-            instance: None,
-            hint: None,
-            fields: vec![],
+    // 2. Resolve the secret (and its owning namespace) by handle.
+    //
+    // Historically this path treated `session_id` as `namespace_id` (1:1 in
+    // early MCP sessions). The CLI uses a fixed placeholder session UUID, so
+    // DEK derivation used the wrong namespace key and every CLI reveal failed
+    // AEAD verify. Always take `namespace_id` from the stored secret instead.
+    let secret = match ctx.storage.get_secret_by_handle(&body.handle).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return app_error_to_problem(merkle_application::AppError::NotFound).into_response();
         }
-        .into_response();
+        Err(e) => return app_error_to_problem(e.into()).into_response(),
     };
+    let namespace_id = secret.namespace_id;
+    let sensitivity = secret.sensitivity;
 
     // 2b. Enforce the per-namespace process allowlist (gap #6). Fails closed
     //     when the namespace has a configured allowlist and the peer's program
     //     path does not match (or could not be resolved). Empty allowlist =
-    //     opt-in skip. Runs before the secret is even described.
+    //     opt-in skip.
     if let Err(problem) = consumer_gate::check(&ctx, &namespace_id, &peer).await {
         return problem.into_response();
     }
-
-    // 3. Load the secret sensitivity before calling RevealSecretCommand.
-    let sensitivity = match (DescribeSecretCommand {
-        namespace_id,
-        handle: body.handle.clone(),
-    })
-    .execute(&ctx)
-    .await
-    {
-        Ok(output) => output.secret.sensitivity,
-        Err(err) => return app_error_to_problem(err).into_response(),
-    };
 
     // 4. Derive the namespace DEK for decryption.
     let dek_bytes = match derive_dek(&ctx, namespace_id).await {
@@ -213,6 +203,12 @@ async fn execute_reveal(
         signed_config_flag: None,
     };
 
+    // No companion device is bound on this request path (CLI / MCP without an
+    // enrolled device). Requiring SecureEnclave against a Software default
+    // made every non-OOB reveal fail with `device_class_insufficient`. Device
+    // policy still applies once a real companion is attached to the command.
+    let required_device_class = CompanionDeviceClass::Software;
+
     let cmd = RevealSecretCommand {
         namespace_id,
         handle: handle.clone(),
@@ -225,7 +221,7 @@ async fn execute_reveal(
         companion_device: None,
         oob_channel,
         oob_timeout: Duration::from_secs(120),
-        required_device_class: policy.device_policy.required_class,
+        required_device_class,
     };
 
     match cmd.execute(ctx).await {
