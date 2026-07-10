@@ -1,22 +1,28 @@
 //! Background task supervisors.
 //!
-//! Two long-running background tasks run independently of any MCP session:
+//! Long-running background tasks run independently of any MCP session:
 //!
 //! - **Backup scheduler** (anacron-style poll): every 60 s checks whether
-//!   any namespace is overdue for a backup, and executes the
-//!   `TriggerBackup` use-case command when so.
+//!   a backup is due and executes `TriggerBackupCommand` when so.
+//! - **Chain verifier**: every hour runs full audit-chain verification.
+//! - **Tempfile reaper**: deletes expired registered tempfiles/FIFOs and
+//!   sweeps orphan `merkle_*.tmp` / `merkle_*.fifo` paths under the temp dir.
+//! - **Idle re-lock**: seals the vault after a period with no activity.
 //!
-//! - **Chain verifier**: every hour runs `ChainVerifier::verify_full` and
-//!   emits the `merkle_chain_verifications_total` and
-//!   `merkle_chain_integrity_ok` metrics.
-//!
-//! Both tasks respect the shared `CancellationToken` and exit cleanly when
+//! All tasks respect the shared `CancellationToken` and exit cleanly when
 //! it fires.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use merkle_application::commands::seal_vault::SealVaultCommand;
+use merkle_application::commands::trigger_backup::TriggerBackupCommand;
 use merkle_application::AppContext;
+use merkle_domain_backup_recovery::scheduler::BackupScheduler;
+use merkle_domain_identity::KEYCHAIN_SERVICE;
+use merkle_ports::{KeychainError, SecretFilter};
+use merkle_types::Rfc3339Timestamp;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -26,17 +32,21 @@ use tracing::{error, info, warn};
 
 const BACKUP_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Keychain account holding the master backup age *recipient* (`age1…`).
+const ACCOUNT_RECIPIENT: &str = "backup-master-recipient-v1";
+/// Keychain account holding the master backup age *identity* (`AGE-SECRET-KEY-1…`).
+const ACCOUNT_IDENTITY: &str = "backup-master-identity-v1";
+
 /// Anacron-style backup scheduler.
 ///
-/// Polls once per [`BACKUP_POLL_INTERVAL`] and triggers a backup for each
-/// namespace that is overdue according to the configured `max_interval`.
+/// Polls once per [`BACKUP_POLL_INTERVAL`] and triggers a backup when
+/// [`BackupScheduler::should_trigger`] returns `Some`.
 /// Exits cleanly when `shutdown` is cancelled.
 ///
 /// # Errors
 ///
 /// Never returns `Err` — recoverable errors are logged as warnings; the
-/// loop continues. Fatal errors (e.g. lock poisoning) log at `error` and
-/// return.
+/// loop continues.
 pub async fn backup_scheduler_task(
     ctx: Arc<AppContext>,
     shutdown: CancellationToken,
@@ -53,7 +63,7 @@ pub async fn backup_scheduler_task(
                 break;
             }
             () = tokio::time::sleep(BACKUP_POLL_INTERVAL) => {
-                run_backup_check(&ctx);
+                run_backup_check(&ctx).await;
             }
         }
     }
@@ -61,26 +71,245 @@ pub async fn backup_scheduler_task(
     Ok(())
 }
 
-fn run_backup_check(_ctx: &Arc<AppContext>) {
-    // Phase 4 stub: the `TriggerBackup` use-case command is implemented in
-    // Phase 5. When the application layer exposes `commands::trigger_backup`,
-    // call it here for each namespace that `BackupScheduler::should_trigger`
-    // returns `Some` for.
-    //
-    // Example (Phase 5 wiring):
-    // ```
-    // let namespaces = ctx.storage.list_namespaces().await?;
-    // for ns in &namespaces {
-    //     if BackupScheduler::should_trigger(ns.last_backup_at) {
-    //         merkle_application::commands::trigger_backup::TriggerBackupCommand {
-    //             namespace_id: ns.id,
-    //         }
-    //         .execute(ctx)
-    //         .await?;
-    //     }
-    // }
-    // ```
-    tracing::trace!("backup scheduler poll tick");
+/// Evaluate anacron state and run backups for namespaces that hold secrets.
+async fn run_backup_check(ctx: &Arc<AppContext>) {
+    if !ctx.is_unsealed().await {
+        return;
+    }
+
+    maybe_record_idle_window(ctx).await;
+
+    let now = Rfc3339Timestamp::now();
+    let trigger = {
+        let state = ctx.anacron.read().await;
+        BackupScheduler::should_trigger(&now, &state)
+    };
+    let Some(trigger) = trigger else {
+        tracing::trace!("backup scheduler poll tick: no trigger");
+        return;
+    };
+
+    let Some(master_recipient) = ensure_master_recipient(ctx).await else {
+        warn!("backup scheduler: could not resolve master age recipient; skipping");
+        return;
+    };
+
+    let recovery_recipient = {
+        let identity = ctx.identity.read().await;
+        identity.recovery_pubkey().identity_pubkey().to_owned()
+    };
+    if !is_usable_recovery_recipient(&recovery_recipient, &master_recipient) {
+        warn!(
+            "backup scheduler: recovery recipient empty, placeholder, or equals master; skipping"
+        );
+        return;
+    }
+
+    let output_dir = prepare_backup_dir(ctx).await;
+    let Ok(namespaces) = ctx.storage.list_namespaces().await else {
+        warn!("backup scheduler: list_namespaces failed");
+        return;
+    };
+
+    let mut any_ok = false;
+    for ns in &namespaces {
+        match backup_namespace(
+            ctx,
+            ns.id,
+            trigger,
+            &master_recipient,
+            &recovery_recipient,
+            &output_dir,
+        )
+        .await
+        {
+            BackupNsOutcome::Ok => any_ok = true,
+            BackupNsOutcome::SkippedEmpty | BackupNsOutcome::Failed => {}
+        }
+    }
+
+    if any_ok {
+        ctx.anacron
+            .write()
+            .await
+            .record_backup_completed(Rfc3339Timestamp::now());
+    }
+}
+
+/// Outcome of attempting a single-namespace scheduled backup.
+enum BackupNsOutcome {
+    Ok,
+    SkippedEmpty,
+    Failed,
+}
+
+async fn backup_namespace(
+    ctx: &Arc<AppContext>,
+    namespace_id: merkle_types::NamespaceId,
+    trigger: merkle_domain_backup_recovery::trigger::BackupTrigger,
+    master_recipient: &str,
+    recovery_recipient: &str,
+    output_dir: &Path,
+) -> BackupNsOutcome {
+    let secrets = match ctx
+        .storage
+        .list_secrets(&namespace_id, SecretFilter::default())
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(error = %e, %namespace_id, "backup scheduler: list_secrets failed");
+            return BackupNsOutcome::Failed;
+        }
+    };
+    if secrets.is_empty() {
+        return BackupNsOutcome::SkippedEmpty;
+    }
+
+    let filename = backup_filename();
+    let output_path = output_dir.join(filename);
+    let cmd = TriggerBackupCommand {
+        namespace_id,
+        trigger,
+        master_pubkey_recipient: master_recipient.to_owned(),
+        recovery_pubkey_recipient: recovery_recipient.to_owned(),
+        output_path: output_path.clone(),
+    };
+    match cmd.execute(ctx).await {
+        Ok(_) => {
+            info!(%namespace_id, path = %output_path.display(), "backup scheduler: backup complete");
+            BackupNsOutcome::Ok
+        }
+        Err(e) => {
+            warn!(error = %e, %namespace_id, "backup scheduler: backup failed");
+            BackupNsOutcome::Failed
+        }
+    }
+}
+
+/// Open an idle window when the vault has been quiet for at least one poll.
+async fn maybe_record_idle_window(ctx: &Arc<AppContext>) {
+    let last = *ctx.last_activity.read().await;
+    if Instant::now().duration_since(last) < BACKUP_POLL_INTERVAL {
+        return;
+    }
+    ctx.anacron
+        .write()
+        .await
+        .record_idle_window_start(Rfc3339Timestamp::now());
+}
+
+/// Ensure a master age identity/recipient pair exists in the keychain.
+///
+/// Generates a new `age::x25519::Identity` on first use and persists both the
+/// identity and the public recipient under dedicated keychain accounts.
+async fn ensure_master_recipient(ctx: &Arc<AppContext>) -> Option<String> {
+    match ctx
+        .keychain
+        .retrieve(KEYCHAIN_SERVICE, ACCOUNT_RECIPIENT)
+        .await
+    {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) if !s.trim().is_empty() => Some(s),
+            Ok(_) => {
+                warn!("backup scheduler: master recipient entry is empty");
+                None
+            }
+            Err(e) => {
+                warn!(error = %e, "backup scheduler: master recipient is not utf-8");
+                None
+            }
+        },
+        Err(KeychainError::NotFound) => generate_and_store_master_identity(ctx).await,
+        Err(e) => {
+            warn!(error = %e, "backup scheduler: keychain retrieve failed");
+            None
+        }
+    }
+}
+
+async fn generate_and_store_master_identity(ctx: &Arc<AppContext>) -> Option<String> {
+    use secrecy::ExposeSecret as _;
+
+    let identity = age::x25519::Identity::generate();
+    // age 0.11 returns a `SecretString` from `Identity::to_string`.
+    let identity_str = identity.to_string().expose_secret().to_owned();
+    let recipient_str = identity.to_public().to_string();
+
+    if let Err(e) = ctx
+        .keychain
+        .store(
+            KEYCHAIN_SERVICE,
+            ACCOUNT_IDENTITY,
+            identity_str.as_bytes(),
+        )
+        .await
+    {
+        warn!(error = %e, "backup scheduler: failed to store master identity");
+        return None;
+    }
+    if let Err(e) = ctx
+        .keychain
+        .store(
+            KEYCHAIN_SERVICE,
+            ACCOUNT_RECIPIENT,
+            recipient_str.as_bytes(),
+        )
+        .await
+    {
+        warn!(error = %e, "backup scheduler: failed to store master recipient");
+        return None;
+    }
+
+    info!("backup scheduler: generated and stored master age identity for backups");
+    Some(recipient_str)
+}
+
+fn is_usable_recovery_recipient(recovery: &str, master: &str) -> bool {
+    let trimmed = recovery.trim();
+    if trimmed.is_empty() || trimmed.contains("placeholder") {
+        return false;
+    }
+    if trimmed == master {
+        return false;
+    }
+    trimmed.starts_with("age1")
+}
+
+async fn prepare_backup_dir(ctx: &Arc<AppContext>) -> PathBuf {
+    let dir = ctx.backup_dir.read().await.clone();
+    if let Err(e) = create_dir_0700(&dir) {
+        warn!(
+            error = %e,
+            path = %dir.display(),
+            "backup scheduler: failed to create backup directory"
+        );
+    }
+    dir
+}
+
+fn create_dir_0700(path: &Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(path)?;
+    }
+    Ok(())
+}
+
+fn backup_filename() -> String {
+    let iso = Rfc3339Timestamp::now().to_string().replace(':', "-");
+    format!("merkle-bk-{iso}.merkle.age")
 }
 
 // ---------------------------------------------------------------------------
@@ -123,11 +352,7 @@ pub async fn chain_verifier_task(
     Ok(())
 }
 
-/// Run the real audit-chain verifier once and reflect the outcome in the
-/// `merkle_chain_integrity_ok` gauge and `merkle_chain_verifications_total`
-/// counter. Previously a stub that hardcoded `ok` — which made continuous
-/// monitoring blind to any tampering (it was only caught by an on-demand
-/// `doctor` run).
+/// Run the real audit-chain verifier once and reflect the outcome in metrics.
 async fn run_chain_verification(ctx: &Arc<AppContext>) {
     use merkle_application::ChainOutcome;
     use merkle_application::queries::verify_chain::VerifyChainQuery;
@@ -165,7 +390,6 @@ async fn run_chain_verification(ctx: &Arc<AppContext>) {
         Err(e) => {
             error!(error = %e, "audit chain verification errored");
             if enabled {
-                // Do not assert integrity when the check itself could not run.
                 crate::metrics::core().chain_integrity_ok.set(0.0);
                 crate::metrics::core()
                     .chain_verifications_total
@@ -177,20 +401,17 @@ async fn run_chain_verification(ctx: &Arc<AppContext>) {
 }
 
 // ---------------------------------------------------------------------------
-// Tempfile reaper (stub for Phase 5)
+// Tempfile reaper
 // ---------------------------------------------------------------------------
 
 const REAPER_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Periodic tempfile reaper.
 ///
-/// Scans the tempfile registry for entries with no live `session_id` and
-/// deletes the corresponding on-disk files. Exits cleanly when `shutdown`
-/// fires.
-///
-/// Phase 4 stub — no-op until the TempfileRegistry port is wired.
+/// Removes expired registry entries (and their on-disk files) and sweeps
+/// orphan `merkle_*.tmp` / `merkle_*.fifo` paths under the system temp dir.
 pub async fn tempfile_reaper_task(
-    _ctx: Arc<AppContext>,
+    ctx: Arc<AppContext>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     info!(
@@ -205,7 +426,8 @@ pub async fn tempfile_reaper_task(
                 break;
             }
             () = tokio::time::sleep(REAPER_INTERVAL) => {
-                tracing::trace!("tempfile reaper tick (stub)");
+                reap_expired_tempfiles(&ctx).await;
+                sweep_orphan_tempfiles(&ctx).await;
             }
         }
     }
@@ -213,27 +435,143 @@ pub async fn tempfile_reaper_task(
     Ok(())
 }
 
+async fn reap_expired_tempfiles(ctx: &Arc<AppContext>) {
+    let now = Instant::now();
+    let expired: Vec<(String, PathBuf)> = {
+        let registry = ctx.tempfiles.read().await;
+        registry
+            .iter()
+            .filter(|(_, e)| e.expires_at <= now)
+            .map(|(k, e)| (k.clone(), e.path.clone()))
+            .collect()
+    };
+
+    for (token, path) in expired {
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                info!(path = %path.display(), "tempfile reaper: removed expired materialization");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "tempfile reaper: failed to remove expired path"
+                );
+            }
+        }
+        ctx.tempfiles.write().await.remove(&token);
+    }
+}
+
+async fn sweep_orphan_tempfiles(ctx: &Arc<AppContext>) {
+    let temp_dir = std::env::temp_dir();
+    let Ok(mut entries) = tokio::fs::read_dir(&temp_dir).await else {
+        return;
+    };
+
+    let registered: std::collections::HashSet<PathBuf> = {
+        let registry = ctx.tempfiles.read().await;
+        registry.values().map(|e| e.path.clone()).collect()
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_merkle_materialization(name) {
+            continue;
+        }
+        if registered.contains(&path) {
+            continue;
+        }
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                info!(
+                    path = %path.display(),
+                    "tempfile reaper: removed orphan materialization"
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "tempfile reaper: failed to remove orphan"
+                );
+            }
+        }
+    }
+}
+
+fn is_merkle_materialization(name: &str) -> bool {
+    if !name.starts_with("merkle_") {
+        return false;
+    }
+    std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp") || ext.eq_ignore_ascii_case("fifo"))
+}
+
 // ---------------------------------------------------------------------------
-// Idle re-lock supervisor (stub for Phase 5)
+// Idle re-lock supervisor
 // ---------------------------------------------------------------------------
 
-/// Monitors idle MCP session count and fires the re-lock timer.
-///
-/// Phase 4 stub — transitions to `sealed` via the domain state machine in
-/// Phase 5 once session tracking is wired.
+/// Monitors `last_activity` and seals the vault after `idle_timeout`.
 pub async fn idle_relock_task(
-    _ctx: Arc<AppContext>,
+    ctx: Arc<AppContext>,
     idle_timeout: Duration,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
+    let poll = idle_poll_interval(idle_timeout);
     info!(
-        "idle re-lock supervisor started (timeout: {}s)",
-        idle_timeout.as_secs()
+        "idle re-lock supervisor started (timeout: {}s, poll: {}s)",
+        idle_timeout.as_secs(),
+        poll.as_secs()
     );
 
-    shutdown.cancelled().await;
-    info!("idle re-lock supervisor shutting down");
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => {
+                info!("idle re-lock supervisor shutting down");
+                break;
+            }
+            () = tokio::time::sleep(poll) => {
+                maybe_idle_seal(&ctx, idle_timeout).await;
+            }
+        }
+    }
+
     Ok(())
+}
+
+fn idle_poll_interval(idle_timeout: Duration) -> Duration {
+    if idle_timeout.is_zero() {
+        return Duration::from_secs(30);
+    }
+    let tenth = idle_timeout
+        .checked_div(10)
+        .unwrap_or(Duration::from_secs(30));
+    tenth.min(Duration::from_secs(30)).max(Duration::from_secs(1))
+}
+
+async fn maybe_idle_seal(ctx: &Arc<AppContext>, idle_timeout: Duration) {
+    if !ctx.is_unsealed().await {
+        return;
+    }
+    let last = *ctx.last_activity.read().await;
+    if Instant::now().duration_since(last) < idle_timeout {
+        return;
+    }
+
+    match SealVaultCommand.execute(ctx).await {
+        Ok(_) => info!(
+            idle_secs = idle_timeout.as_secs(),
+            "idle re-lock: vault sealed after inactivity"
+        ),
+        Err(e) => warn!(error = %e, "idle re-lock: seal failed"),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -23,8 +23,10 @@ merkle-adapter-external-services = { workspace = true }
 merkle-adapter-companion-socket = { workspace = true }
 merkle-companion-client         = { workspace = true }
 merkle-domain-identity          = { workspace = true }
+merkle-domain-backup-recovery   = { workspace = true }
 merkle-ports                    = { workspace = true }
 merkle-types                    = { workspace = true }
+age                             = { workspace = true }
 tokio                           = { workspace = true }
 tokio-util                      = { workspace = true }
 tracing                         = { workspace = true }

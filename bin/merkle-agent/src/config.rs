@@ -41,6 +41,10 @@
 //! [security]
 //! security_profile = "balanced"
 //!
+//! [backup]
+//! enabled   = true
+//! directory = "~/.local/share/merkle/backups"
+//!
 //! [logging]
 //! level  = "info"
 //! format = "text"
@@ -86,9 +90,51 @@ pub struct AgentConfig {
     #[serde(default)]
     pub security: SecurityConfig,
 
+    /// Scheduled backup settings.
+    #[serde(default)]
+    pub backup: BackupConfig,
+
     /// Logging settings.
     #[serde(default)]
     pub logging: LoggingConfig,
+}
+
+// ---------------------------------------------------------------------------
+// BackupConfig
+// ---------------------------------------------------------------------------
+
+/// Anacron-style scheduled backup settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupConfig {
+    /// When `false`, the backup scheduler task is not spawned.
+    #[serde(default = "default_backup_enabled")]
+    pub enabled: bool,
+
+    /// Directory for `merkle-bk-*.merkle.age` artifacts.
+    ///
+    /// Defaults to `$XDG_DATA_HOME/merkle/backups` (or
+    /// `$HOME/.local/share/merkle/backups`). Overridable at runtime via
+    /// `MERKLE_BACKUP_DIR`.
+    #[serde(default = "default_backup_directory")]
+    pub directory: PathBuf,
+}
+
+fn default_backup_enabled() -> bool {
+    true
+}
+
+fn default_backup_directory() -> PathBuf {
+    xdg_data_home().join("merkle/backups")
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_backup_enabled(),
+            directory: default_backup_directory(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +622,7 @@ mod tests {
             metrics: MetricsConfig::default(),
             oob: OobConfig::default(),
             security: SecurityConfig::default(),
+            backup: BackupConfig::default(),
             logging: LoggingConfig::default(),
         };
         assert!(cfg.metrics.enabled);
@@ -584,6 +631,12 @@ mod tests {
         assert_eq!(cfg.security.security_profile, SecurityProfile::Balanced);
         assert_eq!(cfg.keystore.backend, KeystoreBackend::Auto);
         assert!(cfg.keystore.file_path.is_none());
+        assert!(cfg.backup.enabled);
+        assert!(
+            cfg.backup.directory.ends_with("merkle/backups"),
+            "dir={}",
+            cfg.backup.directory.display()
+        );
     }
 
     #[test]

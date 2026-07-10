@@ -84,14 +84,19 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5b. Backup scheduler
-    let backup_ctx = Arc::clone(&app_ctx);
-    let backup_shutdown = shutdown.clone();
-    let backup_handle = tokio::spawn(async move {
-        if let Err(e) = backup_scheduler_task(backup_ctx, backup_shutdown).await {
-            tracing::error!(error = %e, "backup scheduler task failed");
-        }
-    });
+    // 5b. Backup scheduler (optional via [backup] enabled)
+    let backup_handle = if cfg.backup.enabled {
+        let backup_ctx = Arc::clone(&app_ctx);
+        let backup_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(e) = backup_scheduler_task(backup_ctx, backup_shutdown).await {
+                tracing::error!(error = %e, "backup scheduler task failed");
+            }
+        })
+    } else {
+        info!("backup scheduler disabled by config");
+        tokio::spawn(async {})
+    };
 
     // 5c. Chain verifier
     let verifier_ctx = Arc::clone(&app_ctx);
@@ -240,6 +245,13 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
     ctx.restore_audit_chain()
         .await
         .context("failed to restore audit chain head from pinned_head")?;
+
+    // Prefer MERKLE_BACKUP_DIR when set; otherwise the configured [backup] path.
+    let backup_dir = std::env::var("MERKLE_BACKUP_DIR").map_or_else(
+        |_| cfg.backup.directory.clone(),
+        std::path::PathBuf::from,
+    );
+    ctx.set_backup_dir(backup_dir).await;
 
     info!("application context ready");
     Ok(ctx)
