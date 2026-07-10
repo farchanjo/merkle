@@ -525,9 +525,9 @@ async fn test_delete_secret_without_slash_command_returns_403() {
     assert_eq!(json["type"], "operator_confirmation_required");
 }
 
-/// 10. `POST /v1/namespaces/{ns}/secrets/{h}/rollback` returns 501 (Phase 6.B stub).
+/// 10. `POST /v1/namespaces/{ns}/secrets/{h}/rollback` without slash_command → 403.
 #[tokio::test]
-async fn test_rollback_secret_returns_501_stub() {
+async fn test_rollback_secret_requires_slash_command() {
     let ctx = make_app_ctx().await;
     let (_dir, sock) = spawn_server(ctx).await;
     unseal(&sock).await;
@@ -540,17 +540,66 @@ async fn test_rollback_secret_returns_501_stub() {
     let rb_body = json!({
         "target_version": 1,
         "operator_confirmation": {
-            "slash_command": true,
+            "slash_command": false,
             "oob_ack": false
         }
     });
     let (status, body) = http(&sock, "POST", &path, Some(rb_body)).await;
     assert_eq!(
         status,
-        StatusCode::NOT_IMPLEMENTED,
-        "expected 501 Phase 6.B stub, body: {}",
+        StatusCode::FORBIDDEN,
+        "expected 403 without slash_command, body: {}",
         String::from_utf8_lossy(&body)
     );
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+    assert_eq!(json["type"], "operator_confirmation_required");
+}
+
+/// 10b. `POST …/rollback` with slash_command rolls back to a retained version.
+#[tokio::test]
+async fn test_rollback_secret_happy_path() {
+    let ctx = make_app_ctx().await;
+    let (_dir, sock) = spawn_server(ctx).await;
+    unseal(&sock).await;
+    let session_id = create_session(&sock).await;
+    let handle = put_secret(&sock, &session_id, "rollback-happy").await;
+
+    let encoded_handle = handle.replace("://", "%3A%2F%2F").replace('/', "%2F");
+
+    // Rotate once so version 1 is historical and version 2 is active.
+    let rotate_path = format!("/v1/namespaces/{session_id}/secrets/{encoded_handle}/rotate");
+    let rotate_body = json!({
+        "new_value": "rotated-value",
+        "value_format": "utf8",
+        "purpose": "setup for rollback test"
+    });
+    let (status, body) = http(&sock, "POST", &rotate_path, Some(rotate_body)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "rotate setup failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let rollback_path = format!("/v1/namespaces/{session_id}/secrets/{encoded_handle}/rollback");
+    let rb_body = json!({
+        "target_version": 1,
+        "operator_confirmation": {
+            "slash_command": true,
+            "oob_ack": false
+        }
+    });
+    let (status, body) = http(&sock, "POST", &rollback_path, Some(rb_body)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 rollback, body: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+    assert_eq!(json["active_version"], 3);
+    assert!(json["rolled_back_at"].is_string());
+    assert_eq!(json["handle"], handle);
 }
 
 /// 11. `POST /v1/reveal` with slash_command=true but unsealed + no secret → 412 (VaultSealed) or 404 (HandleNotFound).

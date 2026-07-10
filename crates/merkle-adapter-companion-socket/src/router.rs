@@ -1,13 +1,13 @@
 //! axum `Router` wiring all companion socket endpoints.
 //!
 //! Also defines the `peer_cred_check` middleware that runs before every
-//! handler.
+//! handler and the activity-touch middleware that refreshes idle timers.
 
 use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::Request,
+    extract::{Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -21,11 +21,13 @@ use crate::{
 
 /// Build the axum `Router` for all companion socket endpoints.
 ///
-/// Layers applied (outer to inner):
+/// Layers applied (outer → inner on the request path):
 /// 1. `TraceLayer` — structured HTTP access logging via `tracing`.
 /// 2. `peer_cred_check` — rejects any connection whose UID doesn't match the
 ///    agent process UID before the handler runs.
+/// 3. `touch_activity` — refreshes idle / anacron activity after auth succeeds.
 pub fn build(ctx: Arc<AppContext>) -> Router {
+    let activity_ctx = Arc::clone(&ctx);
     Router::new()
         // Agent / sealing
         .route("/v1/agent/init", post(handlers::agent::init))
@@ -127,8 +129,23 @@ pub fn build(ctx: Arc<AppContext>) -> Router {
             post(handlers::proxy::crypto_decrypt),
         )
         .with_state(ctx)
+        // Inner → outer: activity runs only after peer_cred accepts the call.
+        .layer(middleware::from_fn_with_state(
+            activity_ctx,
+            touch_activity_middleware,
+        ))
         .layer(middleware::from_fn(peer_cred_check))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Refresh vault activity timestamps after peer-cred auth succeeds.
+async fn touch_activity_middleware(
+    State(ctx): State<Arc<AppContext>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    ctx.touch_activity().await;
+    next.run(req).await
 }
 
 /// Middleware: verify the peer credentials injected by the accept loop before

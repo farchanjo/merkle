@@ -3,7 +3,7 @@
 //! **Driving-port adapter** — Companion Socket: the single inbound driving
 //! port for the Vault Agent domain.
 //!
-//! Exposes 19 HTTP/1.1 endpoints over a Unix domain socket (or Windows named
+//! Exposes 35 HTTP/1.1 operations over a Unix domain socket (or Windows named
 //! pipe stub), routing requests to the `merkle-application` command handlers.
 //! Callers are authenticated by platform peer-credential check before any
 //! handler body executes.
@@ -50,7 +50,7 @@ pub use merkle_application::AppContext;
 
 /// The Companion Socket HTTP server.
 ///
-/// Binds to a Unix domain socket path and serves all 19 endpoints defined in
+/// Binds to a Unix domain socket path and serves all companion-socket endpoints defined in
 /// `companion-socket.yaml`. Incoming connections are authenticated by peer
 /// credential before routing begins.
 ///

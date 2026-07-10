@@ -17,7 +17,8 @@ use axum::{
 use merkle_application::commands::{
     delete_secret::DeleteSecretCommand, describe_secret::DescribeSecretCommand,
     list_secrets::ListSecretsCommand, put_secret::PutSecretCommand,
-    rotate_secret::RotateSecretCommand, search_secrets::SearchSecretsCommand,
+    rollback_secret::RollbackSecretCommand, rotate_secret::RotateSecretCommand,
+    search_secrets::SearchSecretsCommand,
 };
 use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation as DomainOperatorConfirmation;
 use merkle_types::{Handle, NamespaceId, Sensitivity, Tag};
@@ -30,11 +31,12 @@ use crate::{
     dto::{
         DeleteSecretRequest, DeleteSecretResponse, ListSecretVersionsResponse, ListSecretsParams,
         ListSecretsResponse, PublicMetadataDto, PutSecretRequest, PutSecretResponse,
-        RankedSecretDto, RollbackSecretRequest, RotateSecretRequest, RotateSecretResponse,
-        SearchHighlightDto, SecretDto, SecretVersionDto, TagDto, ValueFormatDto,
+        RankedSecretDto, RollbackSecretRequest, RollbackSecretResponse, RotateSecretRequest,
+        RotateSecretResponse, SearchHighlightDto, SecretDto, SecretVersionDto, TagDto,
+        ValueFormatDto,
     },
     extensions::ExtractedPeerCred,
-    problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
+    problem::{Problem, ProblemType, app_error_to_problem},
 };
 
 // ---------------------------------------------------------------------------
@@ -615,35 +617,28 @@ pub async fn rotate_secret(
 
 /// `POST /v1/namespaces/{namespace_id}/secrets/{handle_encoded}/rollback`
 ///
-/// Rollback re-promotes an older version to the current active version.
-/// The application layer does not yet expose a dedicated `RollbackSecretCommand`;
-/// this is a Phase 6 concern tracked in FIXME(F6.B). For now the endpoint
-/// returns 501 with a structured Problem+JSON body indicating which feature
-/// is pending — preserving the 501 contract for unimplemented commands.
-#[instrument(skip(_ctx))]
+/// Rollback appends a new version that copies the historical target blob
+/// (immutable version history). Requires `operator_confirmation.slash_command`.
+#[instrument(skip(ctx, peer, body))]
 pub async fn rollback_secret(
-    State(_ctx): State<Arc<AppContext>>,
+    State(ctx): State<Arc<AppContext>>,
     Path((ns_raw, handle_enc)): Path<(Uuid, String)>,
+    ExtractedPeerCred(peer): ExtractedPeerCred,
     Json(body): Json<RollbackSecretRequest>,
 ) -> impl IntoResponse {
-    // Validate path params eagerly so the caller knows the resource exists.
-    let Ok(_namespace_id) = ns_raw.to_string().parse::<NamespaceId>() else {
+    let Ok(namespace_id) = ns_raw.to_string().parse::<NamespaceId>() else {
         return invalid_ns_id_problem().into_response();
     };
-    let Ok(_handle) = parse_handle_encoded(&handle_enc) else {
-        return Problem {
-            kind: ProblemType::HandleNotFound,
-            title: "Invalid handle URI".into(),
-            status: 400,
-            detail: format!("'{handle_enc}' is not a valid vault:// URI."),
-            instance: None,
-            hint: None,
-            fields: vec![],
-        }
-        .into_response();
+
+    if let Err(problem) = consumer_gate::check(&ctx, &namespace_id, &peer).await {
+        return problem.into_response();
+    }
+
+    let handle = match parse_handle_encoded(&handle_enc) {
+        Ok(h) => h,
+        Err(p) => return p.into_response(),
     };
 
-    // Confirm operator confirmation gate is respected even on a 501.
     if !body.operator_confirmation.slash_command {
         return Problem {
             kind: ProblemType::OperatorConfirmationRequired,
@@ -652,20 +647,38 @@ pub async fn rollback_secret(
             detail: "operator_confirmation.slash_command must be true for rollback operations."
                 .into(),
             instance: None,
-            hint: None,
+            hint: Some(
+                "Issue `/merkle-rollback` in Claude Code to authorize this rollback.".into(),
+            ),
             fields: vec![],
         }
         .into_response();
     }
 
-    // FIXME(F6.B): Implement RollbackSecretCommand in merkle-application.
-    // The rollback operation requires re-promoting a deprecated version to
-    // active, which needs a new port mutation in Storage. Wire this up once
-    // Storage::rollback_secret_version is implemented.
-    not_implemented(
-        "rollback_secret: RollbackSecretCommand not yet implemented in application layer (Phase 6.B)",
-    )
-    .into_response()
+    let domain_confirmation = DomainOperatorConfirmation {
+        slash_command: body.operator_confirmation.slash_command,
+        oob_ack: body.operator_confirmation.oob_ack,
+        signed_config_flag: None,
+    };
+
+    let cmd = RollbackSecretCommand {
+        namespace_id,
+        handle: handle.clone(),
+        target_version: body.target_version,
+        operator_confirmation: domain_confirmation,
+    };
+
+    match cmd.execute(&ctx).await {
+        Ok(output) => {
+            let resp = RollbackSecretResponse {
+                handle,
+                active_version: output.active_version,
+                rolled_back_at: chrono::Utc::now(),
+            };
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(err) => app_error_to_problem(err).into_response(),
+    }
 }
 
 #[cfg(test)]
