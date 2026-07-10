@@ -687,8 +687,8 @@ impl MerkleMcpServer {
 #[cfg(test)]
 mod tests {
     use super::{
-        VaultDeleteInput, VaultListInput, VaultPutInput, VaultRollbackInput, list_params_from_input,
-        put_request_from_input,
+        VaultDeleteInput, VaultListInput, VaultPutInput, VaultRollbackInput,
+        list_params_from_input, put_request_from_input,
     };
     use merkle_types::Sensitivity;
 

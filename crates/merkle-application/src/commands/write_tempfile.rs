@@ -176,9 +176,9 @@ fn tempfile_expires_at() -> Result<Rfc3339Timestamp, AppError> {
             "write_tempfile: expiry timestamp overflow".into(),
         ));
     };
-    dt.to_rfc3339().parse().map_err(|e| {
-        AppError::Domain(format!("write_tempfile: invalid expiry timestamp: {e}"))
-    })
+    dt.to_rfc3339()
+        .parse()
+        .map_err(|e| AppError::Domain(format!("write_tempfile: invalid expiry timestamp: {e}")))
 }
 
 /// Build the temporary file path from the opaque token.

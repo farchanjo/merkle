@@ -247,10 +247,8 @@ async fn build_app_context(cfg: &AgentConfig) -> anyhow::Result<Arc<AppContext>>
         .context("failed to restore audit chain head from pinned_head")?;
 
     // Prefer MERKLE_BACKUP_DIR when set; otherwise the configured [backup] path.
-    let backup_dir = std::env::var("MERKLE_BACKUP_DIR").map_or_else(
-        |_| cfg.backup.directory.clone(),
-        std::path::PathBuf::from,
-    );
+    let backup_dir = std::env::var("MERKLE_BACKUP_DIR")
+        .map_or_else(|_| cfg.backup.directory.clone(), std::path::PathBuf::from);
     ctx.set_backup_dir(backup_dir).await;
 
     info!("application context ready");

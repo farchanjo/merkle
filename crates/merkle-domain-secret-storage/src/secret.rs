@@ -680,10 +680,8 @@ mod tests {
         .expect("valid");
 
         let policy = RetentionPolicy::default();
-        s.rotate(make_version(&handle, 2), &policy)
-            .expect("rotate");
-        s.rotate(make_version(&handle, 3), &policy)
-            .expect("rotate");
+        s.rotate(make_version(&handle, 2), &policy).expect("rotate");
+        s.rotate(make_version(&handle, 3), &policy).expect("rotate");
 
         let active = s.rollback_to(2, &policy).expect("rollback");
         assert_eq!(active.version_no, 4);
