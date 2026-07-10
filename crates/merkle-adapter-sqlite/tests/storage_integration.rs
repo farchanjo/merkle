@@ -728,6 +728,39 @@ async fn ranked_search(
 // description-match for the same query term.
 // ---------------------------------------------------------------------------
 
+/// Hyphenated secret names must be searchable without FTS5 "no such column"
+/// errors. Sanitizer wraps bare hyphenated tokens as phrase queries.
+#[tokio::test]
+async fn hyphenated_name_search_does_not_error_and_matches() {
+    let db = open_memory().await;
+    let ns = make_namespace("hyphen-ns");
+    db.put_namespace(&ns).await.expect("put_namespace");
+    let ns_id = ns.id;
+
+    let handle = make_handle("hyphen-ns", "token", "bug-hunt-test");
+    let secret = make_secret_with_description(
+        ns_id,
+        handle,
+        "hyphenated search repro",
+        CategoryName::Token,
+    );
+    db.put_secret(&secret).await.expect("put_secret");
+
+    // Raw hyphenated query previously raised: no such column: hunt
+    let result = ranked_search(&db, &ns_id, "bug-hunt-test", 10, 0).await;
+    assert_eq!(result.total, 1, "hyphenated name must match");
+    assert_eq!(
+        result.items[0].secret.handle.secret_name().to_string(),
+        "bug-hunt-test"
+    );
+
+    let by_prefix = ranked_search(&db, &ns_id, "api-key", 10, 0).await;
+    assert_eq!(
+        by_prefix.total, 0,
+        "unrelated hyphenated query must be empty, not an error"
+    );
+}
+
 /// ADR-0027 §Validation 2: name-match secrets rank above description-match
 /// secrets. Three secrets have "github" in `name`; seven have it only in
 /// `description`.  The first three results must be the name-match secrets.

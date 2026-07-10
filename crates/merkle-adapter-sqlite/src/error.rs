@@ -23,6 +23,11 @@ impl From<AdapterError> for StorageError {
             AdapterError::Sqlx(sqlx::Error::Database(db)) if db.message().contains("UNIQUE") => {
                 StorageError::Conflict(db.message().to_owned())
             }
+            // FTS5 MATCH syntax / unknown-column errors are caller input, not
+            // backend corruption — surface as Constraint so HTTP maps to 400.
+            AdapterError::Sqlx(sqlx::Error::Database(db)) if is_fts5_query_error(db.message()) => {
+                StorageError::Constraint(format!("invalid FTS5 query: {}", db.message()))
+            }
             AdapterError::Sqlx(sqlx::Error::Database(db)) => {
                 StorageError::Backend(Box::new(sqlx::Error::Database(db)))
             }
@@ -31,4 +36,13 @@ impl From<AdapterError> for StorageError {
             AdapterError::Parse(msg) => StorageError::Constraint(msg),
         }
     }
+}
+
+/// True when a SQLite error message indicates a bad FTS5 MATCH expression
+/// (unknown column filter, syntax error near operator, etc.).
+fn is_fts5_query_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("fts5")
+        || lower.contains("no such column")
+        || lower.contains("syntax error near")
 }

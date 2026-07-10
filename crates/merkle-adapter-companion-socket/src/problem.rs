@@ -256,6 +256,21 @@ pub fn app_error_to_problem(err: merkle_application::AppError) -> Problem {
             hint: None,
             fields: vec![],
         },
+        // Constraint = bad caller input (parse / FTS5 MATCH syntax), not
+        // storage corruption — keep it in the 400 class.
+        AppError::Storage(merkle_ports::StorageError::Constraint(msg)) => Problem {
+            kind: ProblemType::SchemaValidationFailed,
+            title: "Invalid input".into(),
+            status: 400,
+            detail: msg,
+            instance: None,
+            hint: Some(
+                "Check the search query syntax. Hyphenated names are accepted; \
+                 unknown FTS5 column filters (e.g. col:term) are rejected."
+                    .into(),
+            ),
+            fields: vec![],
+        },
         AppError::Storage(e) => Problem {
             kind: ProblemType::VaultStateCorrupted,
             title: "Storage error".into(),

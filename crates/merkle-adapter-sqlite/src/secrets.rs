@@ -13,6 +13,71 @@ use crate::error::AdapterError;
 use crate::mappers::{id_to_blob, row_to_secret, row_to_secret_version, uuid_to_blob};
 
 // ---------------------------------------------------------------------------
+// FTS5 query sanitisation
+// ---------------------------------------------------------------------------
+
+/// Sanitize a user-facing FTS5 `MATCH` expression so hyphenated tokens
+/// (common secret names like `api-key`, `bug-hunt-test`) do not trip the
+/// FTS5 unary-`NOT` / column-filter parser.
+///
+/// Bare tokens containing `-` are wrapped in double quotes (phrase query).
+/// Already-quoted spans, column filters (`name:…`), parentheses, and
+/// whitespace are preserved. Without this, SQLite returns
+/// `no such column: <suffix>` for everyday queries such as `api-key`.
+pub(crate) fn sanitize_fts5_query(query: &str) -> String {
+    let mut out = String::with_capacity(query.len().saturating_add(8));
+    let mut rest = query;
+    while !rest.is_empty() {
+        let first = rest
+            .chars()
+            .next()
+            .expect("rest non-empty; next char always present");
+        if first.is_whitespace() || matches!(first, ':' | '(' | ')') {
+            out.push(first);
+            rest = &rest[first.len_utf8()..];
+            continue;
+        }
+        // Quoted phrase: copy through the closing quote ("" is an escape).
+        if first == '"' {
+            out.push('"');
+            rest = &rest[1..];
+            while !rest.is_empty() {
+                if rest.starts_with("\"\"") {
+                    out.push_str("\"\"");
+                    rest = &rest[2..];
+                    continue;
+                }
+                let ch = rest
+                    .chars()
+                    .next()
+                    .expect("rest non-empty inside quoted span");
+                out.push(ch);
+                rest = &rest[ch.len_utf8()..];
+                if ch == '"' {
+                    break;
+                }
+            }
+            continue;
+        }
+        // Bare token: consume until whitespace or a structural separator.
+        let end = rest
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace() || matches!(*c, ':' | '(' | ')'))
+            .map_or(rest.len(), |(i, _)| i);
+        let token = &rest[..end];
+        rest = &rest[end..];
+        if token.contains('-') && !token.contains('"') {
+            out.push('"');
+            out.push_str(token);
+            out.push('"');
+        } else {
+            out.push_str(token);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -286,7 +351,7 @@ pub(crate) async fn list_secrets(
     let mut q = sqlx::query(&sql).bind(ns_blob);
 
     if let Some(ref fts) = filter.fts_query {
-        q = q.bind(fts.clone());
+        q = q.bind(sanitize_fts5_query(fts));
     }
     if let Some(ref pattern) = filter.name_pattern {
         // Escape LIKE metacharacters in the literal text BEFORE translating the
@@ -447,11 +512,13 @@ pub(crate) async fn search_secrets(
     params: RankedSearchParams,
 ) -> Result<RankedSearchResult, StorageError> {
     let ns_blob = id_to_blob!(namespace_id);
+    // Hyphenated secret names are the common case — sanitize before MATCH.
+    let fts_query = sanitize_fts5_query(&params.fts_query);
 
     // Count total matches for has_more / total fields.
     let count_row = sqlx::query(COUNT_SQL)
         .bind(&ns_blob)
-        .bind(&params.fts_query)
+        .bind(&fts_query)
         .fetch_one(pool)
         .await
         .map_err(AdapterError::Sqlx)
@@ -466,7 +533,7 @@ pub(crate) async fn search_secrets(
 
     let rows = sqlx::query(RANKED_SQL)
         .bind(&ns_blob)
-        .bind(&params.fts_query)
+        .bind(&fts_query)
         .bind(i64::from(params.limit))
         .bind(i64::from(params.offset))
         .fetch_all(pool)
@@ -585,4 +652,42 @@ pub(crate) async fn check_fts5_consistency(pool: &SqlitePool) -> Result<(), Stor
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod sanitize_fts5_tests {
+    use super::sanitize_fts5_query;
+
+    #[test]
+    fn wraps_hyphenated_bare_token() {
+        assert_eq!(sanitize_fts5_query("bug-hunt"), "\"bug-hunt\"");
+        assert_eq!(sanitize_fts5_query("api-key"), "\"api-key\"");
+        assert_eq!(sanitize_fts5_query("smoke-api-key"), "\"smoke-api-key\"");
+    }
+
+    #[test]
+    fn leaves_plain_tokens_alone() {
+        assert_eq!(sanitize_fts5_query("token"), "token");
+        assert_eq!(sanitize_fts5_query("bug hunt"), "bug hunt");
+    }
+
+    #[test]
+    fn preserves_column_filter_and_quotes_hyphen_suffix() {
+        assert_eq!(sanitize_fts5_query("name:smoke-api"), "name:\"smoke-api\"");
+        assert_eq!(sanitize_fts5_query("name:smoke"), "name:smoke");
+    }
+
+    #[test]
+    fn preserves_already_quoted_phrases() {
+        assert_eq!(sanitize_fts5_query("\"bug-hunt\""), "\"bug-hunt\"");
+        assert_eq!(
+            sanitize_fts5_query("foo \"bar-baz\" qux"),
+            "foo \"bar-baz\" qux"
+        );
+    }
+
+    #[test]
+    fn wraps_only_hyphenated_token_in_multiword_query() {
+        assert_eq!(sanitize_fts5_query("foo bar-baz"), "foo \"bar-baz\"");
+    }
 }
