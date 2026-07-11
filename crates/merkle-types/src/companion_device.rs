@@ -26,10 +26,11 @@ use crate::ParseError;
 /// let c: CompanionDeviceClass = "secure_enclave".parse().unwrap();
 /// assert_eq!(c.to_string(), "secure_enclave");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CompanionDeviceClass {
     /// OS keychain only — no hardware boundary, no per-challenge user presence.
+    #[default]
     Software,
     /// Secure Enclave / TPM 2.0 / ARM TrustZone — biometric or PIN gate per signing.
     SecureEnclave,
