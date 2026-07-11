@@ -235,3 +235,73 @@ See [ADR-0026](0026-idempotent-bind-and-session-state-atomicity.md) for the
 full root-cause analysis, the idempotent fix to `BindNamespaceCommand`, and
 the two-phase commit restructuring of `vault_bind` that eliminates the
 half-bound state.
+
+
+## Amendment — 2026-07-10 — Proxy I/O executes in the agent; gap matrix closed
+
+### Supersedes Note 2 and PR3/PR4 as originally written
+
+**Note 2** (proxy I/O inside `merkle-mcp` via `/v1/key-material/*`) and **PR4**
+(`/v1/key-material/*` for client-side execution) are **superseded**. The
+implemented architecture places all proxy execution inside `merkle-agent`:
+
+| Surface | Path / name |
+|---|---|
+| Socket | `POST /v1/proxy/ssh/{exec,copy,port-forward,shell}` |
+| Socket | `POST /v1/proxy/http/{request,download,upload}` |
+| Socket | `POST /v1/proxy/spawn` |
+| Socket | `POST /v1/proxy/crypto/{sign,decrypt}` |
+| Use tokens | `POST /v1/use-tokens/*` (mint, tempfile, fifo, revoke) |
+| Doctor | `GET /v1/agent/doctor` |
+| Rollback | `POST /v1/namespaces/{id}/secrets/{handle}/rollback` |
+| Rebaseline | `POST /v1/audit/rebaseline` (CLI/socket only; not MCP) |
+
+MCP tools are thin clients over `merkle-companion-client` (+ DTO crate
+`merkle-companion-contract`). The adapter does **not** link
+`merkle-application` or domain crates for proxy I/O.
+
+### Why agent-side proxy
+
+* Single place for SSRF / DNS-rebind policy (ADR-0030), peer-cred, audit, and
+  idle activity touch.
+* Avoids shipping key material to every MCP window process for SSH/HTTP.
+* Preserves ADR-0002 single-writer vault ownership inside the agent.
+
+### MCP naming and counts (current)
+
+* Tool identifiers use underscore form: `vault_unseal`, `vault_bind`,
+  `vault_put`, … `vault_doctor`, `vault_rollback` (**31 tools** + **4 prompts**
+  per ADR-0028). Dotted names (`vault.list`) are obsolete on the adapter.
+* Companion Socket: **33 path groups / 35 HTTP operations** (OpenAPI
+  `companion-socket.yaml` + `router.rs`).
+
+### Spawn capability
+
+`POST /v1/proxy/spawn` / `vault_spawn` is **fail-closed** until executable
+allowlist and non-exfiltration controls land: the use case always audits deny
+and returns policy denial / HTTP 501. Documented intentionally; not a silent
+stub.
+
+### Shared contract crate
+
+DTOs mirroring the OpenAPI schema live in `merkle-companion-contract` and are
+re-exported by the socket adapter and companion client. OpenAPI remains the
+human/source contract; the crate prevents client/server drift.
+
+### Migration plan status
+
+| PR | Original intent | Status |
+|---|---|---|
+| PR1 | Extract companion client | Done |
+| PR2 | Bind reconcile + doctor + migrate tools | Done (see also ADR-0026) |
+| PR3 | use-token endpoints | Done as `/v1/use-tokens/*` |
+| PR4 | key-material + client-side proxy I/O | **Superseded** by agent `/v1/proxy/*` |
+| PR5 | `bin/merkle-mcp`; remove agent mcp_task | Done |
+| PR6 | Drop application/domain from MCP adapter | Done |
+
+### Cross-references
+
+* ADR-0002 topology
+* ADR-0030 HTTP destination policy
+* ADR-0028 prompts / `vault_*` names
+* OpenAPI `docs/arch/integrations/openapi/companion-socket.yaml`
