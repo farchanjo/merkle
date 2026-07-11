@@ -65,9 +65,11 @@ pub fn build(ctx: Arc<AppContext>) -> Router {
             "/v1/sessions/{session_id}",
             delete(handlers::sessions::close_session),
         )
-        // Companion devices (ADR-0020). Pairing (POST) is a separate OOB
-        // enrollment ceremony and is intentionally not exposed here.
-        .route("/v1/devices", get(handlers::devices::list_devices))
+        // Companion devices (ADR-0020). POST pairs/enrolls; GET lists; DELETE revokes.
+        .route(
+            "/v1/devices",
+            get(handlers::devices::list_devices).post(handlers::devices::pair_device),
+        )
         .route(
             "/v1/devices/{device_id}",
             delete(handlers::devices::revoke_device),

@@ -245,6 +245,39 @@ pub struct RevokeDeviceResponse {
     pub revoked_at: DateTime<Utc>,
 }
 
+/// Request body for `POST /v1/devices` (device pair / enroll).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairDeviceRequest {
+    /// Optional human-readable device name (audit metadata only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Hardware assurance class (defaults to software when omitted).
+    #[serde(default)]
+    pub class: CompanionDeviceClass,
+    /// Optional Ed25519 public key as lowercase hex (64 chars). Generated when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ed25519_pubkey: Option<String>,
+    /// Optional X25519 public key as lowercase hex (64 chars). Generated when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x25519_pubkey: Option<String>,
+}
+
+/// Response body for `POST /v1/devices`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairDeviceResponse {
+    pub device_id: Uuid,
+    pub class: CompanionDeviceClass,
+    pub ed25519_pubkey: String,
+    pub x25519_pubkey: String,
+    pub enrolled_at: DateTime<Utc>,
+    /// One-time display code for operator confirmation UX (not a secret key).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_code: Option<String>,
+    /// Optional echo of the supplied name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Secrets
 // ---------------------------------------------------------------------------
