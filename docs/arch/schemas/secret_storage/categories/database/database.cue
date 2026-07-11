@@ -16,21 +16,16 @@ package database_category
 
 // #PublicMeta holds non-sensitive database connection metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	engine:         #DbEngine
-	host:           string
-	port:           int
-	database:       string
-	user:           string
-	ssl_mode:       #SslMode
-	schema_default?: string
+	part1: #PublicMetaPart1
 	replica_role:   #ReplicaRole
 }
 
+
 // #PrivateBlob holds sensitive database credentials encrypted inside the private blob.
 #PrivateBlob: {
-	password?:         string
-	client_cert_blob?: bytes
-	client_key_blob?:  bytes
+	password?: #Password
+	client_cert_blob?: #ClientCertBlob
+	client_key_blob?: #ClientKeyBlob
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

@@ -336,3 +336,10 @@ fatigue.
 
 - [ADR-0009: Merkle style audit hash chain](../adr/0009-merkle-style-audit-hash-chain.md)
 - Schema: [audit_entry.cue](../schemas/audit_compliance/audit_entry.cue)
+
+## Schema contracts
+
+See also the [schema index](../schemas/README.md).
+
+- [`schemas/audit_compliance/audit_entry.cue`](../schemas/audit_compliance/audit_entry.cue)
+- [`schemas/audit_compliance/audit_value_objects.cue`](../schemas/audit_compliance/audit_value_objects.cue)

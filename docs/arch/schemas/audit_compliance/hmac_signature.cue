@@ -11,7 +11,7 @@ package audit_compliance
 // key_version allows key rotation without invalidating older signatures.
 #HmacSignature: {
 	algo:        #HmacAlgo
-	key_version: int & >=1
+	key_version: #KeyVersion
 	// value is the hex-encoded MAC output.
-	value:       string
+	value: #Value
 }

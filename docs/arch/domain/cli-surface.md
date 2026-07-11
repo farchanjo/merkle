@@ -2,46 +2,46 @@
 
 ## Purpose
 
-Documents the operator-facing `merkle` CLI as a driving adapter over the
-Companion Socket. The CLI never opens the keystore or SQLite directly.
+Operator CLI over the Companion Socket.
+
+## Overview
+
+merkle never opens keystore or SQLite; all work is socket-backed.
 
 ## Binary
 
-* Package: `bin/merkle-cli`
-* Install name: `merkle`
-* Transport: HTTP/1.1 over Unix domain socket (`MERKLE_SOCKET` / XDG default)
+bin/merkle-cli installs as merkle.
 
 ## Command groups
 
-| Command | Role |
+init, unseal, seal, status, doctor, bind, put, list, get, describe, search,
+rotate, rollback, delete, reveal, audit, backup, restore, device,
+verify-recovery-key.
+
+## Stable Exit Codes
+
+| Code | Meaning |
 |---|---|
-| `init` | Bootstrap ceremony (ADR-0021); prints recovery key once |
-| `unseal` / `seal` / `status` | Lifecycle |
-| `doctor` | Multi-check diagnostics (sealed-safe where possible) |
-| `bind` | Namespace bind (cwd-aware) |
-| `put` / `list` / `get` / `describe` / `search` | Secrets public surface |
-| `rotate` / `rollback` / `delete` | Version lifecycle (rollback = append-copy, ADR-0014) |
-| `reveal` | Explicit plaintext (operator confirmation) |
-| `audit` / `audit rebaseline` | Query + trusted baseline (rebaseline not MCP) |
-| `backup` / `restore` | Dual-recipient backups |
-| `device` | Companion device list/revoke |
-| `verify-recovery-key` | Recovery key check |
+| 0 | Success |
+| 1 | Runtime failure |
+| 2 | Usage error |
+| 3 | Policy denied |
+| 4 | Not found |
+| 5 | Infrastructure error |
 
-Nested: `backup`, `restore`, and `device` expose subcommands.
+## --json Contract
 
-## Output
-
-* Human-readable by default for status/doctor.
-* Machine-oriented JSON where flags allow (see CLI help).
+When --json is supported: single JSON object on stdout; non-zero exit codes
+from Stable Exit Codes; no secret plaintext except explicit reveal commands.
 
 ## Invariants
 
-1. Same-UID peer-cred to the agent; no trusted client headers.
-2. Destructive/sensitive paths require operator confirmation at the agent.
-3. Secrets are not echoed to logs; handles and public metadata only.
-4. CLI is interchangeable with MCP for socket-backed ops (ADR-0024).
+Same-UID peer-cred; operator confirmation for sensitive paths; no secret logs.
 
 ## Observability
 
-CLI failures surface agent problem details; use `merkle doctor` for aggregate
-health. Metrics remain on the agent, not the CLI process.
+merkle doctor and agent metrics.
+
+## Schema contracts
+
+[schema index](../schemas/README.md).

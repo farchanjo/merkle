@@ -16,39 +16,39 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
         # ─── External software systems ────────────────────────────────────────
 
         llmClient = softwareSystem "LLM Client" "MCP-aware host that submits tool calls to the Merkle MCP Server. Examples: Claude Code, Cursor, any MCP-capable IDE or agent runtime. Never receives plaintext of protected Secrets." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         osKeychain = softwareSystem "OS Keychain" "Operating-system-managed credential store abstracted by the Rust keyring crate. Concrete backends: macOS Security framework (Keychain), Linux Secret Service or KWallet, Windows Credential Manager. Stores the Master Key under service identifier dev.fapp.merkle." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         sshTarget = softwareSystem "SSH Target" "Remote host that accepts SSH connections proxied by the SSH Bridge inside the Vault Agent. Credentials are never exposed to the LLM transport." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         httpService = softwareSystem "HTTP Service" "Remote HTTP API that accepts requests proxied by the HTTP Bridge inside the Vault Agent. Auth headers, cookies, and body secrets are injected inside the agent." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         cloudProviderApi = softwareSystem "Cloud Provider API" "External cloud control-plane API (AWS, GCP, Azure, etc.) accessed via cloud-category Secrets through the External Service Adapter." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         processSpawnTarget = softwareSystem "Process Spawn Target" "Arbitrary child process launched with environment variables drawn from Secrets via vault.spawn. Captures filtered stdout and stderr." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         driveSyncTarget = softwareSystem "Drive Sync Target" "Cloud or local sync destination for vault Backups: Google Drive, iCloud, Dropbox, or Syncthing. Receives age-encrypted .merkle.age files." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         remoteAuditWebhook = softwareSystem "Remote Audit Webhook" "Optional external receiver for HMAC-signed Audit Entry streams. Receives events authenticated with the per-vault HMAC key when remote sync is enabled." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         companionDevice = softwareSystem "Companion Device" "Pre-paired secondary device that authenticates OOB Confirmation challenges via Ed25519 signature. Enrolled via merkle device pair. The Ed25519 identity key is persisted in the OS Keychain under service identifier merkle-companion-<device-id>. Multiple devices may be enrolled. Operates off-box or as a separate process. See ADR-0011 Amendment." {
-            tags "External"
+            tags "External", "Layer:Infrastructure"
         }
 
         # ─── Merkle Vault — system in focus ───────────────────────────────────
@@ -62,21 +62,21 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Driving-port adapters ────────────────────────────────────
 
                 companionSocketPort = component "Companion Socket Port" "Driving-port adapter. The SINGLE inbound driving port for the Vault Agent domain. Exposes a Unix domain socket (or Windows named pipe) that resolves Use Tokens to plaintext. Authenticates callers by PID and process name against the Allowed Consumers list. MCP Adapter and CLI Adapter are external clients that consume this port; they do not bypass it." "Rust / tokio::net::UnixListener" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivingPort"
                     }
                 }
 
                 mcpPortAdapter = component "MCP Port Adapter" "Adapter component bridging MCP Server external Container calls to the Companion Socket Port driving port. Translates MCP tool calls received over stdio into JSON-RPC messages and forwards them to the Companion Socket Port inside the Vault Agent. External to the domain core but wired through companionSocketPort as its sole entry." "Rust / rmcp SDK, JSON-RPC over Unix socket" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivingAdapter"
                     }
                 }
 
                 cliPortAdapter = component "CLI Port Adapter" "Adapter component bridging Merkle CLI external Container calls to the Companion Socket Port driving port. Translates CLI subcommands into JSON-RPC messages and forwards them to the Companion Socket Port inside the Vault Agent. External to the domain core but wired through companionSocketPort as its sole entry." "Rust / clap, JSON-RPC over Unix socket" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivingAdapter"
                     }
@@ -85,7 +85,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Identity and Sealing bounded context ─────────────────────
 
                 identityAndSealingDomain = component "Identity And Sealing Domain" "Bounded context owning the unseal protocol and key hierarchy. Manages Master Key, Vault Root Key, Namespace DEK, and the Recovery Key lifecycle. Transitions the agent between Sealed State and Unsealed State. Implements the Unseal Protocol: fetch Master Key from OS Keychain, decrypt Vault Root Key, hold in mlocked protected memory." "Rust / Domain core (AggregateRoot: VaultIdentity, DomainService: UnsealService)" {
-                    tags "Domain"
+                    tags "Domain", "Layer:Domain"
                     properties {
                         "ddd-role" "AggregateRoot"
                     }
@@ -94,7 +94,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Secret Storage bounded context ────────────────────────────
 
                 secretStorageDomain = component "Secret Storage Domain" "Bounded context owning the Secret aggregate lifecycle: create, read, rotate, delete, and version management. Manages Namespaces (UUIDv7, Namespace binding by cwd hash or .merklerc override), Categories, Sensitivity levels, Tags, Public Metadata, Private Blob encryption, and the FTS5 Index over public metadata. Full-text search is ranked by weighted BM25 (ADR-0027 weight vector: name=10.0, tags=5.0, description=3.0, category=2.0, namespace_label=1.0); results expose score, bm25_rank, and highlight snippets. Enforces retain_count from the Namespace Policy." "Rust / Domain core (AggregateRoot: Secret, Entity: SecretVersion, ValueObject: Handle, DomainService: NamespaceBindingService)" {
-                    tags "Domain"
+                    tags "Domain", "Layer:Domain"
                     properties {
                         "ddd-role" "AggregateRoot"
                     }
@@ -103,7 +103,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Access Mediation bounded context ──────────────────────────
 
                 accessMediationDomain = component "Access Mediation Domain" "Bounded context owning Proxy Tool execution, Use Token issuance (TTL 60s), and the Reveal workflow. Implements vault.ssh.*, vault.http.*, vault.spawn, and vault.write_tempfile. Resolves Handles to Private Blobs inside the agent, executes the external operation, and returns only filtered results. Manages Tempfile and FIFO lifecycle. Requires Operator Confirmation and OOB Confirmation for high-sensitivity Reveals." "Rust / Domain core (DomainService: ProxyExecutor, DomainService: UseTokenRegistry, DomainService: RevealService)" {
-                    tags "Domain"
+                    tags "Domain", "Layer:Domain"
                     properties {
                         "ddd-role" "DomainService"
                     }
@@ -113,21 +113,21 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # Option 1 applied: split into three discrete components per W4.C finding A.
 
                 auditWriter = component "Audit Writer" "DomainService within the Audit and Compliance bounded context. Emits Audit Entries for every Secret operation: unseal, put, get, use, reveal, rotate, delete, restore. Computes BLAKE3 content hash, chains to previous entry hash (Merkle-style Hash Chain), and optionally appends HMAC Signature for remote sync. Emits Cross-Env Warning when Secrets tagged with different env:* values are accessed in the same session." "Rust / Domain core (DomainService: AuditWriter)" {
-                    tags "Domain" "DomainService"
+                    tags "Domain", "Layer:Domain" "DomainService"
                     properties {
                         "ddd-role" "DomainService"
                     }
                 }
 
                 chainVerifier = component "Chain Verifier" "DomainService within the Audit and Compliance bounded context. Recomputes the Hash Chain end-to-end: reads all Audit Entries in insertion order, recomputes BLAKE3 content hashes, and validates each previous_hash link. Reports any mutation, reordering, gap, or removal as a ChainIntegrityViolation. Invoked by the Doctor command and on Restore. See ADR-0015." "Rust / Domain core (DomainService: ChainVerifier)" {
-                    tags "Domain" "DomainService"
+                    tags "Domain", "Layer:Domain" "DomainService"
                     properties {
                         "ddd-role" "DomainService"
                     }
                 }
 
                 auditQueryModel = component "Audit Query Model" "ReadModel within the Audit and Compliance bounded context. Provides read-only projections over the Audit Entry ledger: list by session, filter by op / namespace / time range, fetch single entry by id, and stream entries for remote sync webhook delivery. Never mutates the ledger. Public surface consumed by CLI Adapter (merkle doctor) and the Remote Audit Webhook sync path." "Rust / Domain core (ReadModel: AuditQueryModel)" {
-                    tags "Domain"
+                    tags "Domain", "Layer:Domain"
                     properties {
                         "ddd-role" "ReadModel"
                     }
@@ -136,7 +136,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Backup and Recovery bounded context ───────────────────────
 
                 backupRecoveryDomain = component "Backup And Recovery Domain" "Bounded context owning Backup creation, scheduling, and Restore. Encrypts backups with age using two recipients (Master public key + Recovery Public Key). Filename: merkle-bk-<utc-iso8601>.merkle.age. Triggers: Anacron Trigger (1h/24h), Change-Triggered Backup (10 mutations), Idle-Triggered Backup (10 min idle), Sleep Hook, and on-shutdown. Implements Restore modes: overwrite, merge, newest-wins. Implements Disaster Recovery when Master Key is unavailable." "Rust / Domain core (DomainService: BackupScheduler, DomainService: RestoreService, AggregateRoot: BackupManifest)" {
-                    tags "Domain"
+                    tags "Domain", "Layer:Domain"
                     properties {
                         "ddd-role" "AggregateRoot"
                     }
@@ -145,7 +145,7 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Policy and Permissions bounded context ────────────────────
 
                 policyPermissionsDomain = component "Policy And Permissions Domain" "Bounded context owning Namespace Policy evaluation, Rate Limit enforcement, Reveal Policy decisions, Cross-Namespace Access control, Allowed Consumers validation, and Security Profile application. Governs all operations in Secret Storage and Access Mediation. Built-in Security Profiles: relaxed, balanced, paranoid." "Rust / Domain core (AggregateRoot: NamespacePolicy, ValueObject: RateLimit, ValueObject: RevealPolicy, DomainService: PolicyEvaluator)" {
-                    tags "Domain"
+                    tags "Domain", "Layer:Domain"
                     properties {
                         "ddd-role" "AggregateRoot"
                     }
@@ -154,49 +154,49 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
                 # ── Driven-port adapters ─────────────────────────────────────
 
                 storageAdapter = component "Storage Adapter" "Driven-port adapter. Wraps SQLite in WAL mode. Implements per-blob XChaCha20-Poly1305 AEAD encryption on the private_blob column with per-secret 24-byte Nonces. Maintains FTS5 virtual table secrets_fts over public metadata columns (name, tags, description, category, namespace_label) with weighted BM25 ranking (ADR-0027); INSERT, UPDATE, and DELETE triggers keep the index in strong consistency with the secrets table. Ranked queries use bm25(secrets_fts, 10.0, 5.0, 3.0, 2.0, 1.0) and expose score, bm25_rank, and highlight() / snippet() results. Enforces append-only discipline on audit tables via SQLite triggers. Stores Vault Root Key wrapped twice: by Master Key and by Recovery Public Key." "Rust / rusqlite, SQLite WAL, FTS5 with porter unicode61 tokenizer" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivenAdapter"
                     }
                 }
 
                 keychainAdapter = component "Keychain Adapter" "Driven-port adapter. Abstracts the OS Keychain via the Rust keyring crate. Stores and retrieves the Master Key using Service Identifier dev.fapp.merkle. Falls back to Argon2id key derivation when no OS Keychain is available." "Rust / keyring crate, macOS Security framework / Linux Secret Service / Windows Credential Manager" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivenAdapter"
                     }
                 }
 
                 cryptoAdapter = component "Crypto Adapter" "Driven-port adapter. Implements XChaCha20-Poly1305 AEAD (RFC 8439 extended-nonce variant) for per-blob encryption. Implements Argon2id (RFC 9106) KDF for passphrase-derived keys. Implements age encryption for Backups and Recovery Key. Implements BLAKE3 for Hash Chain content hashing. Manages Nonce generation." "Rust / chacha20poly1305, argon2, age, blake3 crates" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivenAdapter"
                     }
                 }
 
                 oobNotifierAdapter = component "OOB Notifier Adapter" "Driven-port adapter. Delivers OOB Confirmation requests through channels distinct from the MCP transport: desktop notifications (macOS/Linux/Windows native), terminal prompt on the agent TTY, or localhost-only browser confirmation page. Subscribed to by enrolled Companion Devices via the OOB endpoint exposed on the Vault Agent host." "Rust / notify-rust, platform notification APIs" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivenAdapter"
                     }
                 }
 
                 externalServiceAdapter = component "External Service Adapter" "Driven-port adapter. Contains SSH Bridge (russh crate or isolated ssh-mcp subprocess), HTTP Bridge (reqwest), Process Spawn, and Cloud Provider API client. All inject credential material inside the agent and return only filtered results." "Rust / russh, reqwest, tokio::process" {
-                    tags "Adapter"
+                    tags "Adapter", "Layer:Adapter"
                     properties {
                         "ddd-role" "DrivenAdapter"
                     }
                 }
 
                 backupScheduler = component "Backup Scheduler" "DomainService: BackupScheduler. Implements the anacron-style scheduling loop (1h/24h intervals), change counter, idle timer, Sleep Hook listener, and on-shutdown trigger. Delegates backup creation to Backup And Recovery Domain. Reads max_interval, change_threshold, and idle_timeout from Namespace Policy." "Rust / Tokio timers, platform sleep hooks (macOS IOKit, Linux logind, Windows PowerBroadcast)" {
-                    tags "DomainService"
+                    tags "DomainService", "Layer:Domain"
                     properties {
                         "ddd-role" "DomainService"
                     }
                 }
 
                 auditChainVerifier = component "Audit Chain Verifier" "DomainService: AuditChainVerifier. Implements Chain Verifier: reads all Audit Entries in sequence, recomputes the Hash Chain end-to-end, and reports any mutation, reordering, or removal. Invoked by the Doctor command and on Restore." "Rust / Domain service wrapper" {
-                    tags "DomainService"
+                    tags "DomainService", "Layer:Domain"
                     properties {
                         "ddd-role" "DomainService"
                     }
@@ -206,19 +206,19 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
             # ── MCP Server ───────────────────────────────────────────────────
 
             mcpServer = container "MCP Server" "Short-lived process spawned per client window. Acts as the MCP Adapter: translates MCP tool calls received over stdio into JSON-RPC messages forwarded to the Vault Agent over the Companion Socket. Exposes vault.list, vault.describe, vault.use, vault.reveal, vault.put, vault.rotate, vault.delete, vault.bind, and all Proxy Tool entrypoints." "Rust 2024 edition, rmcp Rust MCP SDK" {
-                tags "External"
+                tags "External", "Layer:Infrastructure"
             }
 
             # ── CLI ───────────────────────────────────────────────────────────
 
             merkleCli = container "Merkle CLI" "Command-line interface for vault administration. Implements: merkle init, merkle unseal, merkle seal, merkle put, merkle get, merkle rotate, merkle delete, merkle list, merkle backup, merkle restore, merkle doctor, and merkle verify-chain. Communicates with the Vault Agent over the Companion Socket." "Rust 2024 edition, clap" {
-                tags "External"
+                tags "External", "Layer:Infrastructure"
             }
 
             # ── Data stores ───────────────────────────────────────────────────
 
             sqliteDatabase = container "SQLite Database" "File-backed embedded relational database. WAL mode for concurrent reads. Stores Secrets with per-blob XChaCha20-Poly1305 encryption on private_blob columns. Stores Namespace records, Secret Versions, Use Token registry, wrapped Vault Root Key (dual-wrapped: Master Key + Recovery Public Key), and Namespace Policies. FTS5 Index on public metadata. Audit Entry table is append-only (enforced by SQLite triggers)." "SQLite WAL, per-blob XChaCha20-Poly1305 AEAD" {
-                tags "Database"
+                tags "Database", "Layer:Domain"
             }
 
             auditLogFile = container "Audit Log File" "Append-only JSONL file on disk. Primary persistence for Audit Entries. Each entry stores timestamp, session id, namespace id, op, Handle, purpose, outcome, caller pid, content hash, and previous hash (Hash Chain). Write-only file handle enforced at the OS level." "JSONL, append-only, BLAKE3 Hash Chain"
@@ -260,28 +260,28 @@ workspace "Merkle Architecture Model" "Local-first MCP vault that mediates betwe
         # ─── Relationships: domain-to-domain (cross-context) ──────────────────
         # Relationship type tags follow context-map.md edge table.
         # C/S = Customer-Supplier; CF = Conformist; SK = Shared Kernel.
-        # Format: tags "type,direction" where upstream/downstream is from context-map.md.
+        # Format: tags "type,direction", "Layer:Domain" where upstream/downstream is from context-map.md.
 
         merkleVault.vaultAgent.identityAndSealingDomain -> merkleVault.vaultAgent.secretStorageDomain "Provides unwrapped Namespace DEKs to" "In-process Rust trait call" {
-            tags "C/S,upstream"
+            tags "C/S,upstream", "Layer:Domain"
         }
         merkleVault.vaultAgent.secretStorageDomain -> merkleVault.vaultAgent.accessMediationDomain "Provides resolved Private Blob to" "In-process Rust trait call" {
-            tags "C/S,upstream"
+            tags "C/S,upstream", "Layer:Domain"
         }
         merkleVault.vaultAgent.accessMediationDomain -> merkleVault.vaultAgent.auditWriter "Emits Audit Entry on every operation to" "In-process Rust trait call" {
-            tags "C/S,downstream"
+            tags "C/S,downstream", "Layer:Domain"
         }
         merkleVault.vaultAgent.secretStorageDomain -> merkleVault.vaultAgent.backupRecoveryDomain "Provides vault state snapshot to" "In-process Rust trait call" {
-            tags "C/S,upstream"
+            tags "C/S,upstream", "Layer:Domain"
         }
         merkleVault.vaultAgent.policyPermissionsDomain -> merkleVault.vaultAgent.accessMediationDomain "Governs Proxy Tool execution and Reveal decisions via" "In-process Rust trait call" {
-            tags "C/S,upstream"
+            tags "C/S,upstream", "Layer:Domain"
         }
         merkleVault.vaultAgent.policyPermissionsDomain -> merkleVault.vaultAgent.secretStorageDomain "Governs Namespace Policy and retention via" "In-process Rust trait call" {
-            tags "C/S,upstream"
+            tags "C/S,upstream", "Layer:Domain"
         }
         merkleVault.vaultAgent.auditQueryModel -> merkleVault.vaultAgent.accessMediationDomain "References mediated access session context for cross-env warning projection (read-only; NOTE: context-map.md edge 7 — actual data flow is AccessMediation to AuditWriter; this arrow is a read-only read-model query)" "In-process Rust trait call" {
-            tags "CF,chain-validation-readonly"
+            tags "CF,chain-validation-readonly", "Layer:Domain"
         }
         merkleVault.vaultAgent.backupRecoveryDomain -> merkleVault.vaultAgent.backupScheduler "Receives trigger signals from" "In-process Rust trait call"
         merkleVault.vaultAgent.backupScheduler -> merkleVault.vaultAgent.policyPermissionsDomain "Reads max_interval, change_threshold, and idle_timeout from Namespace Policy via" "In-process Rust trait call"

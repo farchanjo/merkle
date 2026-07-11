@@ -10,25 +10,20 @@ package cert_category
 
 // #PublicMeta holds non-sensitive certificate metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	subject_cn:          string
-	subject_o?:          string
-	issuer_cn:           string
-	issuer_o?:           string
-	san:                 [...string]
-	not_before:          string // RFC 3339 timestamp
-	not_after:           string // RFC 3339 timestamp
-	serial:              string & =~"^[0-9a-fA-F:]+$"
-	fingerprint_sha256:  string & =~"^SHA256:.+$"
+	part1: #PublicMetaPart1
+	serial: #Serial
+	fingerprint_sha256: #FingerprintSha256
 	key_algo:            "RSA" | "EC" | "Ed25519"
-	key_bits?:           int
-	chain_certs:         [...string]
-	usage:               [...#KeyUsage]
+	key_bits?: #KeyBits
+	chain_certs: #ChainCerts
+	usage: #Usage
 }
+
 
 // #PrivateBlob holds sensitive certificate material encrypted inside the private blob.
 #PrivateBlob: {
-	private_key:       bytes
-	p12_passphrase?:   string
+	private_key: #PrivateKey
+	p12_passphrase?: #P12Passphrase
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

@@ -4,13 +4,13 @@ Client-perspective walkthrough of the first-run experience from
 installation through a working MCP session. This document covers
 what the operator sees and does; the corresponding server-side
 procedure (service registration, binary installation) is documented
-in `operations/deployment.md`.
+in [deployment](../operations/deployment.md).
 
 ## 1. Prerequisites
 
 Before running `merkle init`:
 
-- Merkle binary is installed and on `$PATH` (see `operations/deployment.md`
+- Merkle binary is installed and on `$PATH` (see [deployment](../operations/deployment.md)
   Section 1 for distribution-channel instructions).
 - An OS keychain backend is available:
   - macOS: login keychain unlocked.
@@ -211,12 +211,12 @@ Expected response includes `"sealed": false` if the agent is running
 and Unsealed. If `"sealed": true`, run `merkle unseal` in a terminal.
 
 For full slash command configuration (Operator Confirmation flows),
-see `integrations/claude-code-wiring.md`.
+see [claude-code-wiring](claude-code-wiring.md).
 
 ## 8. References
 
-- `operations/deployment.md` — installation and service registration.
-- `integrations/claude-code-wiring.md` — slash commands and Operator
+- [deployment](../operations/deployment.md) — installation and service registration.
+- [claude-code-wiring](claude-code-wiring.md) — slash commands and Operator
   Confirmation flows.
 - Glossary: `../glossary.md` (Master Key, Recovery Key, Namespace,
   OOB Confirmation, Sealed State, Unsealed State, Companion Socket,

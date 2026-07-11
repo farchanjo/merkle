@@ -1,4 +1,4 @@
-// DDD role: Entity
+// DDD role: ValueObject
 
 package identity_and_sealing
 
@@ -19,20 +19,6 @@ import "time"
 //
 // The salt is per-derivation, stored alongside these parameters.  It
 // must be exactly 32 bytes, represented as URL-safe base64 (43 chars).
-#Argon2idParams: {
-	// m_cost is the memory cost in KiB.  Minimum floor: 65536 (64 MiB).
-	m_cost: int & >=65536
-
-	// t_cost is the number of iterations.  Minimum floor: 3.
-	t_cost: int & >=3
-
-	// p_cost is the degree of parallelism (lanes).  Minimum floor: 1.
-	p_cost: int & >=1
-
-	// salt is the per-derivation random salt, encoded as URL-safe base64.
-	// Must be exactly 43 characters (32 bytes base64url without padding).
-	salt: =~ "^[A-Za-z0-9_-]{43}$"
-}
 
 // #MasterKey represents one version of the 32-byte symmetric key at the top
 // of the key hierarchy.  It is referenced by the OS keychain using service_id
@@ -42,7 +28,7 @@ import "time"
 // re-wraps all downstream key material.
 #MasterKey: {
 	// version is a monotonically increasing counter, starting at 1.
-	version: int & >=1
+	version: #Version
 
 	// service_id is the fixed keychain service identifier for Merkle.
 	service_id: "dev.fapp.merkle"

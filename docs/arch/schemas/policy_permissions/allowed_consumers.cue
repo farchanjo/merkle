@@ -8,5 +8,5 @@ package policy_permissions
 // Pattern constraint: lowercase alphanumerics, hyphens, and glob wildcards (* ?) only.
 // Examples: "ssh", "curl", "my-app-*", "vault-*".
 #AllowedConsumers: {
-	globs: [...(string & =~"^[a-z0-9*?-]+$")]
+	globs: #Globs
 }

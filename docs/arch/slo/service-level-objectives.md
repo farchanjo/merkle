@@ -2,88 +2,96 @@
 
 ## Purpose
 
-Service-level objectives for the Merkle vault agent, companion socket, and MCP
-adapter. Indicator and objective YAML files live under this directory tree.
+Service-level objectives for the Merkle vault agent, companion socket, and MCP adapter.
 
 ## Scope
 
-Applies to local-first single-operator deployments and CI dogfood agents. Multi-
-tenant SaaS is out of scope.
+Local-first single-operator deployments and CI dogfood agents.
 
 ## Services
 
-| Service | Definition | Descriptor |
-|---|---|---|
-| vault-agent | Long-running merkle-agent daemon | `services/vault-agent.yaml` |
-| companion-socket | HTTP/1.1 over Unix domain socket | `services/companion-socket.yaml` |
-| mcp-adapter | merkle-mcp stdio process | `services/mcp-adapter.yaml` |
+| Service | Descriptor |
+|---|---|
+| vault-agent | [services/vault-agent.yaml](services/vault-agent.yaml) |
+| companion-socket | [services/companion-socket.yaml](services/companion-socket.yaml) |
+| mcp-adapter | [services/mcp-adapter.yaml](services/mcp-adapter.yaml) |
 
 ## Indicators
 
-| Indicator file | Measures |
-|---|---|
-| `indicators/agent-availability.yaml` | Agent up / socket accept |
-| `indicators/unseal-success-rate.yaml` | Unseal ceremony success |
-| `indicators/audit-chain-integrity.yaml` | Chain verify outcomes |
-| `indicators/companion-socket-connect-rate.yaml` | Client connect success |
-| `indicators/vault-list-latency-p95.yaml` | List latency |
-| `indicators/vault-reveal-latency-p95.yaml` | Reveal latency |
-| `indicators/vault-use-latency-p95.yaml` | Use-token latency |
-| `indicators/vault-ssh-exec-overhead-p95.yaml` | SSH proxy overhead |
-| `indicators/backup-freshness-rpo.yaml` | Backup age vs RPO |
-| `indicators/restore-rto.yaml` | Restore duration |
-| `indicators/restore-success-rate.yaml` | Restore success |
-| `indicators/durability-invariants-ok.yaml` | Durability checks |
-| `indicators/vault-audit-query-availability.yaml` | Audit query serve rate |
+- [indicators/agent-availability.yaml](indicators/agent-availability.yaml)
+- [indicators/audit-chain-integrity.yaml](indicators/audit-chain-integrity.yaml)
+- [indicators/backup-freshness-rpo.yaml](indicators/backup-freshness-rpo.yaml)
+- [indicators/companion-socket-connect-rate.yaml](indicators/companion-socket-connect-rate.yaml)
+- [indicators/durability-invariants-ok.yaml](indicators/durability-invariants-ok.yaml)
+- [indicators/restore-rto.yaml](indicators/restore-rto.yaml)
+- [indicators/restore-success-rate.yaml](indicators/restore-success-rate.yaml)
+- [indicators/unseal-success-rate.yaml](indicators/unseal-success-rate.yaml)
+- [indicators/vault-audit-query-availability.yaml](indicators/vault-audit-query-availability.yaml)
+- [indicators/vault-list-latency-p95.yaml](indicators/vault-list-latency-p95.yaml)
+- [indicators/vault-reveal-latency-p95.yaml](indicators/vault-reveal-latency-p95.yaml)
+- [indicators/vault-ssh-exec-overhead-p95.yaml](indicators/vault-ssh-exec-overhead-p95.yaml)
+- [indicators/vault-use-latency-p95.yaml](indicators/vault-use-latency-p95.yaml)
 
 ## Objectives
 
-Each objective YAML under `objectives/` binds an indicator to a target window
-(for example availability ratio or latency percentile). Alert policies under
-`alerting/` attach multi-window burn alerts where defined.
+- [objectives/slo-agent-availability.yaml](objectives/slo-agent-availability.yaml)
+- [objectives/slo-audit-chain-integrity.yaml](objectives/slo-audit-chain-integrity.yaml)
+- [objectives/slo-backup-freshness-rpo.yaml](objectives/slo-backup-freshness-rpo.yaml)
+- [objectives/slo-companion-socket-connect-rate.yaml](objectives/slo-companion-socket-connect-rate.yaml)
+- [objectives/slo-durability-crash.yaml](objectives/slo-durability-crash.yaml)
+- [objectives/slo-durability-graceful.yaml](objectives/slo-durability-graceful.yaml)
+- [objectives/slo-restore-rto.yaml](objectives/slo-restore-rto.yaml)
+- [objectives/slo-restore-success-rate.yaml](objectives/slo-restore-success-rate.yaml)
+- [objectives/slo-unseal-success-rate.yaml](objectives/slo-unseal-success-rate.yaml)
+- [objectives/slo-vault-audit-query-availability.yaml](objectives/slo-vault-audit-query-availability.yaml)
+- [objectives/slo-vault-list-latency-p95.yaml](objectives/slo-vault-list-latency-p95.yaml)
+- [objectives/slo-vault-reveal-latency-p95.yaml](objectives/slo-vault-reveal-latency-p95.yaml)
+- [objectives/slo-vault-ssh-exec-overhead-p95.yaml](objectives/slo-vault-ssh-exec-overhead-p95.yaml)
+- [objectives/slo-vault-use-latency-p95.yaml](objectives/slo-vault-use-latency-p95.yaml)
 
-## Objectives catalog
+## SLO-agent-availability
 
-| Objective | Indicator intent |
-|---|---|
-| slo-agent-availability | Agent remains reachable |
-| slo-unseal-success-rate | Unseal succeeds for valid operators |
-| slo-audit-chain-integrity | Chain verification remains healthy |
-| slo-companion-socket-connect-rate | Socket connects succeed |
-| slo-vault-list-latency-p95 | List stays interactive |
-| slo-vault-reveal-latency-p95 | Reveal path bounded |
-| slo-vault-use-latency-p95 | Use path bounded |
-| slo-vault-ssh-exec-overhead-p95 | Proxy overhead bounded |
-| slo-backup-freshness-rpo | Backups meet RPO |
-| slo-restore-rto | Restores meet RTO |
-| slo-restore-success-rate | Restores succeed |
-| slo-durability-graceful | Graceful shutdown durability |
-| slo-durability-crash | Crash durability |
-| slo-vault-audit-query-availability | Audit query available |
+Target: agent and socket remain reachable.
+Indicator: [indicators/agent-availability.yaml](indicators/agent-availability.yaml)
 
-## Error budget
+## SLO-unseal-success-rate
 
-* Prefer fail-closed security over burning budget on open SSRF or auth holes.
-* Idle re-lock seals are not availability errors for the sealed state.
-* Rebaseline-related doctor notes are operator-managed (ADR-0029).
+Target: valid unseal ceremonies succeed.
+Indicator: [indicators/unseal-success-rate.yaml](indicators/unseal-success-rate.yaml)
+
+## SLO-audit-chain-integrity
+
+Target: chain verification remains healthy when unsealed.
+Indicator: [indicators/audit-chain-integrity.yaml](indicators/audit-chain-integrity.yaml)
+
+## SLO-latency
+
+- [indicators/vault-list-latency-p95.yaml](indicators/vault-list-latency-p95.yaml)
+- [indicators/vault-reveal-latency-p95.yaml](indicators/vault-reveal-latency-p95.yaml)
+- [indicators/vault-use-latency-p95.yaml](indicators/vault-use-latency-p95.yaml)
+- [indicators/vault-ssh-exec-overhead-p95.yaml](indicators/vault-ssh-exec-overhead-p95.yaml)
+
+## SLO-backup-and-restore
+
+- [indicators/backup-freshness-rpo.yaml](indicators/backup-freshness-rpo.yaml)
+- [indicators/restore-rto.yaml](indicators/restore-rto.yaml)
+- [indicators/restore-success-rate.yaml](indicators/restore-success-rate.yaml)
+
+## Error Budget Policy
+
+Prefer fail-closed security over open SSRF or auth holes. Idle re-lock seals
+are not availability errors. Rebaseline notes are operator-managed (ADR-0029).
+Alerts live under [alerting/](alerting/).
 
 ## Measurement
 
-Local Prometheus scrape when metrics are enabled. Datasource:
-`datasources/local-metrics.yaml`. Field catalog in
-`operations/observability.md`.
+Prometheus when enabled. Datasource [datasources/local-metrics.yaml](datasources/local-metrics.yaml).
+Catalog [../operations/observability.md](../operations/observability.md).
 
 ## Alerting
 
-Alert conditions under `alerting/` cover fast-burn availability, latency, audit
-chain broken, backup overdue, OOB notifier down, and unseal failure.
+Conditions under [alerting/](alerting/).
 
 ## Review cadence
 
-Review objectives when shipping ADR-level transport or crypto changes, or when
-dogfood metrics show sustained budget burn.
-
-## Related
-
-* `service-levels.md` narrative
-* ADR-0010 backups, ADR-0009 audit, ADR-0030 SSRF, ADR-0031 idle
+Review on ADR-level transport or crypto changes.

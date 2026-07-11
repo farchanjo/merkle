@@ -9,16 +9,16 @@ package key_category
 #PublicMeta: {
 	key_kind:      "rsa" | "ed25519" | "x25519" | "symmetric" | "secp256k1" | "ed448" | "age"
 	purpose:       "signing" | "encryption" | "kdf" | "hmac" | "age" | "jwt"
-	algo:          string
-	public_key?:   bytes
-	fingerprint:   string
-	bits?:         int
-	created_with?: string
+	algo: #Algo
+	public_key?: #PublicKey
+	fingerprint: #Fingerprint
+	bits?: #Bits
+	created_with?: #CreatedWith
 }
 
 // #PrivateBlob holds the raw key material encrypted inside the private blob.
 #PrivateBlob: {
-	private_material: bytes
+	private_material: #PrivateMaterial
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

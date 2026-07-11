@@ -2,57 +2,63 @@
 
 ## Purpose
 
-Index of operational concerns for running Merkle in developer and production-like
-environments. Detailed procedures live in sibling documents.
+Operational index for Merkle agent, CLI, and MCP.
 
 ## Overview
 
-Merkle runs as a long-lived per-user agent with thin CLI and MCP clients. Operators
-install signed binaries, start the LaunchAgent (or equivalent), unseal when needed,
-and use doctor/status for health.
+Long-lived agent; thin CLI and MCP clients over the Companion Socket.
+
+## Environment Variables
+
+| Variable | Role |
+|---|---|
+| MERKLE_SOCKET | Socket path override |
+| MERKLE_CONFIG | Config path override |
+| MERKLE_KEYSTORE_PASSPHRASE | File keystore passphrase |
+| MERKLE_KEYSTORE_PATH | File keystore path |
+| MERKLE_RECOVERY_RECIPIENT | age recipient at startup |
+| MERKLE__STORAGE__DATABASE_URL | SQLite URL |
+| MERKLE__COMPANION_SOCKET__PATH | Socket via config overlay |
+| MERKLE__KEYSTORE__BACKEND | os, file, or auto |
+| MERKLE__METRICS__ENABLED | Metrics toggle |
+
+## Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Runtime failure |
+| 2 | Usage error |
+| 3 | Policy denied |
+| 4 | Not found |
+| 5 | Storage or keychain error |
 
 ## Scope
 
 | Area | Document |
 |---|---|
-| Install / upgrade / channels | [deployment.md](deployment.md) |
-| Seal, unseal, idle re-lock, lifecycle | [lifecycle.md](lifecycle.md) |
-| Logs, metrics, doctor | [observability.md](observability.md) |
-| Incident and recovery procedures | [runbook.md](runbook.md) |
-| macOS deploy runbook | [../runbooks/deploy.md](../runbooks/deploy.md) |
+| Install | [deployment.md](deployment.md) |
+| Lifecycle | [lifecycle.md](lifecycle.md) |
+| Logs | [observability.md](observability.md) |
+| Incidents | [runbook.md](runbook.md) |
+| Deploy | [../runbooks/deploy.md](../runbooks/deploy.md) |
 
 ## Operator surfaces
 
-* CLI binary `merkle`
-* MCP adapter `merkle-mcp`
-* Companion Socket (sole inbound port)
-* LaunchAgent label `dev.fapp.merkle.agent` on macOS
+merkle CLI, merkle-mcp, Companion Socket, LaunchAgent.
 
 ## Health model
 
-1. Process up under the service manager.
-2. Socket reachable (`merkle status`).
-3. Unsealed when work requires it (idle re-lock may seal — ADR-0031).
-4. Audit intact (`merkle doctor`, ADR-0009 / ADR-0029).
-5. Backups fresh (ADR-0010, SLO RPO).
+Process up; socket reachable; unsealed when needed; audit intact; backups fresh.
 
 ## Security ops defaults
 
-* Mode 0600 on socket, keystore, materializations.
-* Peer-cred same-UID; optional allowed_consumers globs (ADR-0015 A6).
-* Non-loopback metrics require auth_token.
-* Never store passphrases in service unit files.
+Mode 0600 materials; peer-cred; metrics auth_token off-loopback.
 
 ## Observability
 
-See [observability.md](observability.md) and the strategy under
-`doc/arch/observability/observability.md`.
+See [observability.md](observability.md).
 
 ## Runbooks
 
-* Deploy: `doc/arch/runbooks/deploy.md`
-* General incident: [runbook.md](runbook.md)
-
-## Related ADRs
-
-0002, 0009, 0010, 0015, 0021, 0029, 0030, 0031, 0032
+[deploy.md](../runbooks/deploy.md) and [runbook.md](runbook.md).

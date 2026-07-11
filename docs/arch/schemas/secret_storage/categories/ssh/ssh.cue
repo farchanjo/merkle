@@ -7,23 +7,18 @@ package ssh_category
 
 // #PublicMeta holds non-sensitive SSH connection metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	host:              string
-	port:              int & >=1 & <=65535 | *22
-	user:              string
-	auth_method:       "key" | "password"
-	key_type?:         "rsa" | "ed25519" | "ecdsa" | "dsa"
-	fingerprint:       string & =~"^SHA256:.+$"
-	key_bits?:         int
-	known_hosts_fp?:   string
-	jump_host_handle?: string
-	proxy_command?:    string
+	part1: #PublicMetaPart1
+	known_hosts_fp?: #KnownHostsFp
+	jump_host_handle?: #JumpHostHandle
+	proxy_command?: #ProxyCommand
 }
+
 
 // #PrivateBlob holds sensitive SSH material encrypted inside the private blob.
 #PrivateBlob: {
-	private_key?:  bytes
-	passphrase?:   string
-	password?:     string
+	private_key?: #PrivateKey
+	passphrase?: #Passphrase
+	password?: #Password
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

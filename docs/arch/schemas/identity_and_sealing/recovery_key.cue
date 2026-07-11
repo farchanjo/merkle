@@ -1,4 +1,4 @@
-// DDD role: Entity
+// DDD role: ValueObject
 
 package identity_and_sealing
 

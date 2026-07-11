@@ -113,3 +113,11 @@ docs/arch/
 8. `threat-model/*.md` — adversary view.
 9. `slo/*.md`, `operations/*.md`, `integrations/*.md` — operational
    plane.
+
+## Schema index
+
+See [schemas/README.md](schemas/README.md) for the full CUE catalog.
+
+## Functional overview
+
+See [functional/product-overview.md](functional/product-overview.md).

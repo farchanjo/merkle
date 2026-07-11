@@ -1,4 +1,4 @@
-// DDD role: Entity
+// DDD role: ValueObject
 
 package identity_and_sealing
 
@@ -16,13 +16,13 @@ import "time"
 // previous pair with rotated_at.  The transition is atomic.
 #VaultRootKey: {
 	// version is a monotonically increasing counter, starting at 1.
-	version: int & >=1
+	version: #Version
 
 	// wrapped_by identifies the key that was used to encrypt this blob.
 	wrapped_by: "master" | "recovery"
 
 	// wrapped_blob is the AEAD ciphertext (nonce || ciphertext || tag).
-	wrapped_blob: bytes
+	wrapped_blob: #WrappedBlob
 
 	// algorithm is the AEAD cipher; always XChaCha20-Poly1305 in Merkle 0.x.
 	algorithm: "XChaCha20-Poly1305"

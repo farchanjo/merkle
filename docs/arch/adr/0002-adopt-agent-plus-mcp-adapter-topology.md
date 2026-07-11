@@ -176,3 +176,8 @@ ADR-0024 documents the corrective migration plan: extracting a
 `CompanionSocketClient` crate, refactoring the MCP adapter to use it, and
 introducing a new thin `bin/merkle-mcp` binary that satisfies the external-
 client relationship prescribed by this ADR.
+
+## Related
+
+- [Product overview](../functional/product-overview.md)
+- [Schema index](../schemas/README.md)

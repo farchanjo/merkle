@@ -113,7 +113,7 @@ through to the passphrase fallback.
 On Windows the `keyring` crate uses the `wincred` API
 (`CredWrite`, `CredRead`, `CredDelete` from `advapi32.dll`). Credentials
 are stored as `CRED_TYPE_GENERIC` items under the target name
-`dev.fapp.merkle/<account>`.
+keychain service dev.fapp.merkle with account name.
 
 The `CredentialBlob` field holds the raw 32-byte Master Key. Size is
 within the 512-byte limit for generic credentials. The

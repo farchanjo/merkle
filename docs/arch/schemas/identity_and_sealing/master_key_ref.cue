@@ -7,5 +7,5 @@ package identity_and_sealing
 #MasterKeyRef: {
 	service_id: "dev.fapp.merkle"
 	account:    =~ "^master-v\\d+$"
-	version:    int & >=1
+	version: #Version
 }

@@ -20,7 +20,7 @@ package identity_and_sealing
 	// file_path overrides the default keystore file location.
 	// Resolved only when backend == "file" or when "auto" falls back to file.
 	// Default: ~/.local/share/merkle/keystore.age (or $MERKLE_KEYSTORE_PATH).
-	file_path?: string
+	file_path?: #FilePath
 
 	// auto_threshold controls when the "auto" backend switches to file.
 	// "always"          — always prefer OS; never fall back (equivalent to "os").

@@ -25,7 +25,7 @@ package access_mediation
 
 	// authorized_at is the RFC 3339 timestamp when the operator acknowledged
 	// the challenge. Present only when outcome is "approved".
-	authorized_at?: string & =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+	authorized_at?: #AuthorizedAt
 
 	// outcome + device_signature are expressed as a disjunction to enforce the
 	// invariant: outcome == "expired" => device_signature is absent.

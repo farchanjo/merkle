@@ -681,5 +681,5 @@ may observe inconsistent state between the old and new key epochs.
 - `key_rotation_failed` — emitted if the rotation transaction rolls back; includes the error code and the epoch at which failure occurred.
 
 Cross-reference:
-[0005-argon2id-kdf-for-passphrase-unsealing.md](../adr/0005-argon2id-kdf-for-passphrase-unsealing.md),
+[0005-argon2id-kdf-for-passphrase-fallback.md](../adr/0005-argon2id-kdf-for-passphrase-fallback.md),
 [0011-slash-only-reveal-with-oob-for-high-sensitivity.md](../adr/0011-slash-only-reveal-with-oob-for-high-sensitivity.md).

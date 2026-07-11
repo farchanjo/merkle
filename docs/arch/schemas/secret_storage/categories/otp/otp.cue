@@ -7,18 +7,18 @@ package otp_category
 
 // #PublicMeta holds non-sensitive OTP metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	service:  string
-	account:  string
+	service: #Service
+	account: #Account
 	algo:     "SHA1" | "SHA256" | "SHA512"
 	digits:   6 | 8
 	period:   int | *30
-	issuer?:  string
+	issuer?: #Issuer
 }
 
 // #PrivateBlob holds the TOTP seed encrypted inside the private blob.
 // seed must be a valid base32-encoded string as per RFC 4648.
 #PrivateBlob: {
-	seed: string // base32-encoded shared secret
+	seed: #Seed // base32-encoded shared secret
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

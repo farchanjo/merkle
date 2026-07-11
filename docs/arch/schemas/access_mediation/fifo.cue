@@ -20,6 +20,8 @@ import "time"
 //
 // path MUST point to a named pipe (mkfifo) under XDG_RUNTIME_DIR.
 #Fifo: {
+	id: #Identity
+
 	// id is the UUIDv7 primary key for this FIFO record.
 	id: =~ "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 

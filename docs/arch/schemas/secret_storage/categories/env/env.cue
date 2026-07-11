@@ -8,8 +8,8 @@ package env_category
 // #PublicMeta holds non-sensitive env metadata visible in vault.list and vault.describe.
 #PublicMeta: {
 	// keys lists the environment variable names without their values.
-	keys:    [...string]
-	profile: string
+	keys: #Keys
+	profile: #Profile
 	shape:   "dotenv" | "json" | "toml"
 }
 

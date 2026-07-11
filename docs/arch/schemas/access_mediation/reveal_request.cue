@@ -25,31 +25,11 @@ import "time"
 //   "operator" — reveal invoked directly by the human via CLI
 //   "cli"      — reveal called by a local script or automation
 #RevealRequest: {
-	// id is the UUIDv7 primary key; immutable after creation.
-	id: =~ "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+	id: #Identity
 
-	// handle is the Secret's opaque URI being requested for reveal.
-	handle: =~ "^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/[a-z][a-z0-9-]{1,62}[a-z0-9]$"
-
-	// requester identifies who initiated the reveal request.
-	requester: "llm" | "operator" | "cli"
-
-	// operator_confirmation records the two-flag confirmation state.
-	// See #OperatorConfirmation for the authorization rules.
-	operator_confirmation: #OperatorConfirmation
-
-	// reason is the caller-supplied justification for the reveal.
-	reason: string & len(reason) >= 1
-
-	// requested_at is the RFC 3339 timestamp when the request was created.
-	requested_at: time.Time
-
-	// decided_at is set when outcome transitions out of "pending".
-	decided_at?: time.Time
-
-	// outcome is the current decision state of this request.
+	id: #Identity
+part1: #RevealRequestPart1
 	outcome: "approved" | "denied" | "pending"
-
-	// denial_reason explains why a "denied" outcome was reached.
-	denial_reason?: string
+	denial_reason?: #DenialReason
 }
+

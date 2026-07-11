@@ -28,14 +28,14 @@ package identity_and_sealing
 	// On Windows, this requires the SE_LOCK_MEMORY_NAME privilege.
 	// true  — memory pages are locked; key material cannot be swapped to disk.
 	// false — mlock call failed; key material may reside in swap.
-	mlock_succeeded: bool
+	mlock_succeeded: #MlockSucceeded
 
 	// entropy_seeded records whether the platform entropy source was
 	// successfully seeded before any cryptographic operation.  This gates
 	// nonce generation, salt generation, and key generation.
 	// true  — OsRng initialised without error.
 	// false — OsRng failed to read from the OS entropy source (getrandom/CryptGenRandom).
-	entropy_seeded: bool
+	entropy_seeded: #EntropySeeded
 
 	// keychain_reachable records whether the OS keychain backend responded
 	// to a probe call before the unseal sequence started.
@@ -44,5 +44,5 @@ package identity_and_sealing
 	// false — the keychain API returned an OS error, a daemon timeout, or
 	//         the crate could not find a suitable backend (no Secret Service,
 	//         no Keychain.framework, no Windows Credential Store).
-	keychain_reachable: bool
+	keychain_reachable: #KeychainReachable
 }

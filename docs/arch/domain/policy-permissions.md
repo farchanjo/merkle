@@ -362,3 +362,10 @@ process name.
 - Policy: [sensitivity_oob.rego](../policies/sensitivity_oob.rego)
 - Policy: [tag_validation.rego](../policies/tag_validation.rego)
 - Policy: [unseal_required.rego](../policies/unseal_required.rego)
+
+## Schema contracts
+
+See also the [schema index](../schemas/README.md).
+
+- [`schemas/policy_permissions/namespace_policy.cue`](../schemas/policy_permissions/namespace_policy.cue)
+- [`schemas/policy_permissions/namespace_policy_vos.cue`](../schemas/policy_permissions/namespace_policy_vos.cue)

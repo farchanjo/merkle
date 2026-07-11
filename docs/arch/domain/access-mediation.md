@@ -406,3 +406,12 @@ a malicious process with appropriate privileges.
 - [ADR-0011: Slash only reveal with oob for high sensitivity](../adr/0011-slash-only-reveal-with-oob-for-high-sensitivity.md)
 - Policy: [sensitivity_oob.rego](../policies/sensitivity_oob.rego)
 - Policy: [unseal_required.rego](../policies/unseal_required.rego)
+
+## Schema contracts
+
+See also the [schema index](../schemas/README.md).
+
+- [`schemas/access_mediation/companion_socket_session.cue`](../schemas/access_mediation/companion_socket_session.cue)
+- [`schemas/access_mediation/use_token.cue`](../schemas/access_mediation/use_token.cue)
+- [`schemas/access_mediation/reveal_request.cue`](../schemas/access_mediation/reveal_request.cue)
+- [`schemas/access_mediation/operator_confirmation.cue`](../schemas/access_mediation/operator_confirmation.cue)

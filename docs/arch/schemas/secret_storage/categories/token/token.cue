@@ -7,18 +7,18 @@ package token_category
 
 // #PublicMeta holds non-sensitive token metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	service:         string
+	service: #Service
 	token_type:      "bearer" | "basic" | "apikey" | "jwt"
 	header_name:     string | *"Authorization"
-	scope:           [...string]
-	expires_at?:     string // ISO-8601 timestamp
-	revocation_url?: string
-	prefix?:         string
+	scope: #Scope
+	expires_at?: #ExpiresAt // ISO-8601 timestamp
+	revocation_url?: #RevocationUrl
+	prefix?: #Prefix
 }
 
 // #PrivateBlob holds the raw token value encrypted inside the private blob.
 #PrivateBlob: {
-	value: string
+	value: #Value
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

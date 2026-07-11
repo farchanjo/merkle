@@ -12,6 +12,8 @@ import "time"
 // corresponding ciphertexts permanently unrecoverable at namespace granularity,
 // without affecting other namespaces.
 #NamespaceDek: {
+	id: #Identity
+
 	// id is a UUIDv7 that uniquely identifies this DEK record.
 	id: =~ "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 
@@ -19,12 +21,12 @@ import "time"
 	namespace_id: =~ "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 
 	// version is a monotonically increasing counter within the namespace.
-	version: int & >=1
+	version: #Version
 
 	// wrapped_by_vault_root is the DEK ciphertext produced by encrypting
 	// the 32-byte raw key material with the active Vault Root Key
 	// (XChaCha20-Poly1305, 24-byte nonce prepended).
-	wrapped_by_vault_root: bytes
+	wrapped_by_vault_root: #WrappedByVaultRoot
 
 	// created_at is the RFC 3339 timestamp when this DEK version was generated.
 	created_at: time.Time

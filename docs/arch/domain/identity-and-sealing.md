@@ -385,3 +385,11 @@ agent shutdown and on explicit `seal` commands.
 - Schema: [sealed_state.cue](../schemas/identity_and_sealing/sealed_state.cue)
 - Policy: [unseal_required.rego](../policies/unseal_required.rego)
 - Feature: [unseal.feature](../specs/features/unseal.feature)
+
+## Schema contracts
+
+See also the [schema index](../schemas/README.md).
+
+- [`schemas/identity_and_sealing/vault_identity.cue`](../schemas/identity_and_sealing/vault_identity.cue)
+- [`schemas/identity_and_sealing/keystore_config.cue`](../schemas/identity_and_sealing/keystore_config.cue)
+- [`schemas/identity_and_sealing/master_key_ref.cue`](../schemas/identity_and_sealing/master_key_ref.cue)

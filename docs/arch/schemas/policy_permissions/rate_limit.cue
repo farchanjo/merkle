@@ -12,6 +12,6 @@ package policy_permissions
 // The enforcement window is rolling (not fixed-bucket).
 #RateLimit: {
 	class:          #RateLimitClass
-	max_count:      int & >=1
-	window_seconds: int & >=1
+	max_count: #MaxCount
+	window_seconds: #WindowSeconds
 }

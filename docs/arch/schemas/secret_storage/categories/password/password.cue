@@ -7,18 +7,18 @@ package password_category
 
 // #PublicMeta holds non-sensitive password metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	url?:           string
-	username:       string
-	service_name:   string
-	notes_public?:  string
+	url?: #Url
+	username: #Username
+	service_name: #ServiceName
+	notes_public?: #NotesPublic
 	// last4_password exposes the trailing four characters of the password for quick identification.
-	last4_password?: string & =~"^.{4}$"
+	last4_password?: #Last4Password
 }
 
 // #PrivateBlob holds sensitive password material encrypted inside the private blob.
 #PrivateBlob: {
-	password:    string
-	totp_seed?:  string
+	password: #Password
+	totp_seed?: #TotpSeed
 	otp_algo?:   "SHA1" | "SHA256" | "SHA512"
 	otp_digits?: 6 | 8
 	otp_period?: int | *30

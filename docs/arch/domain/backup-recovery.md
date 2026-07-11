@@ -351,3 +351,10 @@ guard.
 
 - [ADR-0006: Age encryption for backups and recovery](../adr/0006-age-encryption-for-backups-and-recovery.md)
 - [ADR-0010: Anacron style backup triggers](../adr/0010-anacron-style-backup-triggers.md)
+
+## Schema contracts
+
+See also the [schema index](../schemas/README.md).
+
+- [`schemas/backup_recovery/backup.cue`](../schemas/backup_recovery/backup.cue)
+- [`schemas/backup_recovery/restore_plan.cue`](../schemas/backup_recovery/restore_plan.cue)

@@ -1,43 +1,29 @@
 # mcp-vault — Agent Context
 
-Canonical, machine-readable map of this repository for AI agents and
-automation. Keep this file dense, factual, and path-anchored.
+Canonical map for AI agents. Dense, factual, path-anchored.
 
 ## Project
 
-Merkle (workspace name mcp-vault) is a local-first MCP secret vault.
-Authoritative architectural contract: `docs/arch/` (ADRs, CUE, Rego, Gherkin,
-OpenAPI, domain, threat model, SLOs). Speckit control plane: `doc/arch/`
-(speckit.toml, constitution, governance, sdd/). Technical slices are symlinked
-from `docs/arch/` into `doc/arch/`.
+Merkle local-first MCP vault. Architecture: docs/arch. Speckit plane: doc/arch
+(with symlinks to docs/arch). Dual-tree is intentional.
 
 ## Spec-first protocol
 
-spec-first: `doc/arch` (with symlinks into `docs/arch`) is the validated
-control-plane view; behavioral truth for architecture is `docs/arch`. Always:
-
-1. `speckit status`
-2. `speckit next`
-3. Read the named spec artifact
-4. Change spec and code together
-5. `speckit validate`
-
-Never invent control-plane state by hand-editing databases under `doc/.specify`.
-Use the installed `speckit` binary on the operator PATH.
+spec-first: read docs/arch and doc/arch before code. Never hand-edit
+doc/.specify databases. Use the installed speckit binary.
 
 ## Architecture
 
-```
-Claude Code --stdio JSON-RPC--> merkle-mcp --HTTP/UDS--> merkle-agent
-Operator ----------------------> merkle CLI -----------> merkle-agent
-```
-
-Hexagonal crates: `merkle-types`, domain BCs, `merkle-ports`, `merkle-application`, `merkle-adapter-companion-socket`, `merkle-adapter-crypto`, `merkle-adapter-external-services`, `merkle-adapter-keychain`, `merkle-adapter-mcp`, `merkle-adapter-oob`, `merkle-adapter-sqlite`, `merkle-companion-client`, `merkle-companion-contract`, `merkle-bdd`, `merkle-e2e`, `merkle-domain-access-mediation`, `merkle-domain-audit-compliance`, `merkle-domain-backup-recovery`, `merkle-domain-identity`, `merkle-domain-policy-permissions`, `merkle-domain-secret-storage`. ADRs of record include 0002, 0009, 0011, 0015, 0021,
-0024, 0026, and 0028 through 0032.
+Hexagonal: merkle-types, domain crates, merkle-ports, adapters
+(merkle-adapter-companion-socket, merkle-adapter-crypto,
+merkle-adapter-external-services, merkle-adapter-keychain, merkle-adapter-mcp,
+merkle-adapter-oob, merkle-adapter-sqlite), merkle-application,
+merkle-companion-client, merkle-companion-contract, merkle-bdd, merkle-e2e,
+merkle-domain-access-mediation, merkle-domain-audit-compliance,
+merkle-domain-backup-recovery, merkle-domain-identity,
+merkle-domain-policy-permissions, merkle-domain-secret-storage.
 
 ## Commands
-
-Speckit leaf commands (complete catalog for agent coverage):
 
 ```text
 speckit analyze
@@ -145,11 +131,6 @@ speckit validate
 speckit verify
 speckit version
 speckit workflow render
-```
-
-Make targets used in this repo:
-
-```text
 make check
 make test
 make lint
@@ -158,34 +139,16 @@ make doctor-full
 make deploy
 make build
 make build-release
-make sign
-make install
-make kickstart
 ```
 
 ## Conventions or constraints
 
-* en-US for all persisted artifacts; Angular commits with subject at most 72 chars.
-* Never put secrets in chat, logs, or tool arguments.
-* MCP operator confirmation uses the meta key
-  dev.fapp.merkle operator_confirmation equal to JSON boolean true (MERK-001).
-* HTTP proxy uses DestinationPolicy strict mode and connect-time DNS revalidation (ADR-0030).
-* Empty allowed_consumers skips the process gate (ADR-0015 Amendment 6).
-* Do not weaken workspace lints or release panic=abort without operator permission.
-* Guard: `doc/arch/speckit.toml` guard mode enforce is the write gate.
-  Use `speckit on` and `speckit off`. Prefer `specScopeGlobs` or the sdd directory under doc/arch (feature workdirs).
+en-US. Angular subjects <=72 chars. No secrets in chat. MERK-001 meta
+confirmation. Guard enforce in doc/arch/speckit.toml. Contracts: exit code and
+--json on gates. Config families include hygiene and privacy via config list.
 
 ## Guard
 
-The guard (`speckit guard check`, lock via `speckit on` / `speckit off`) mediates
-writes against active spec scope (`doc/arch/**`, active sdd feature dirs, and
-configured `specScopeGlobs`). Enforce mode is the default expectation when locked.
+speckit guard check, speckit on, speckit off. Scope: doc/arch and feature workdirs.
 
-## Contracts and config families
-
-* Prefer `speckit ... --json` for machine-readable output in automation.
-* Treat non-zero **exit code** from `speckit validate` as a hard gate (exit 0 only
-  when findings are absent or fully waived).
-* Config families operators may touch via `speckit config`: guard, git, project,
-  semantic, context, hygiene, privacy, stats, dedupe, and related embedded keys.
-  See `speckit config list` and `doc/arch/speckit.toml`.
+Config families: adr, guard, git, project, semantic, context, hygiene, privacy, stats, dedupe.

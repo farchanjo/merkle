@@ -17,23 +17,23 @@ package policy_permissions
 
 // #AccessLimits encodes the default sliding-window rate limits for the Namespace.
 #AccessLimits: {
-	max_reads_per_min:        int & >=1 | *5
-	max_resolutions_per_min:  int & >=1 | *30
+	max_reads_per_min: #MaxReadsPerMin
+	max_resolutions_per_min: #MaxResolutionsPerMin
 }
 
 // #TagsRules constrains which tag key:value pairs are valid in the Namespace.
 #TagsRules: {
 	// required lists tag keys that every Secret in the Namespace must carry.
-	required:         [...string]
+	required: #Required
 	// forbidden_values lists tag values that are never permitted.
-	forbidden_values: [...string]
+	forbidden_values: #ForbiddenValues
 }
 
 // #CrossNamespace governs whether and which cross-namespace reads are permitted.
 #CrossNamespace: {
 	allowed:          bool | *false
 	// allowed_imports lists the namespace labels from which secrets may be read.
-	allowed_imports:  [...string]
+	allowed_imports: #AllowedImports
 }
 
 // #Retention defines the Version pruning policy for the Namespace.

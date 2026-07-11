@@ -13,16 +13,16 @@ package secret_storage
 // substitution.
 #PrivateBlob: {
 	// ciphertext is the AEAD output: nonce prepended, tag appended.
-	ciphertext: bytes
+	ciphertext: #Ciphertext
 
 	// nonce is the 24-byte random value used for this encryption.
 	// A fresh nonce MUST be generated for every write (including rotation).
-	nonce: bytes & {len(nonce) == 24}
+	nonce: #Nonce
 
 	// algorithm is always XChaCha20-Poly1305 in Merkle 0.x.
 	algorithm: "XChaCha20-Poly1305"
 
 	// dek_version identifies which Namespace DEK was used for encryption.
 	// Required for re-wrapping when the DEK is rotated.
-	dek_version: int & >=1
+	dek_version: #DekVersion
 }

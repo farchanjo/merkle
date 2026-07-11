@@ -135,7 +135,7 @@ Example: /merkle-rollback vault://prod/token/github-ci 2
 
 Maps to: `vault_rollback { handle, target_version }` with operator
 confirmation injected only via MCP `_meta` key
-`dev.fapp.merkle/operator_confirmation` = JSON boolean `true` (MERK-001;
+meta key dev.fapp.merkle operator_confirmation = JSON boolean `true` (MERK-001;
 never a tool argument). The agent append-copies the historical blob into a
 **new** monotonic version (`version_no = max+1`); it does not re-activate
 the historical version in place (ADR-0014 amendment). Audit records

@@ -402,3 +402,10 @@ become stale.
 - Policy: [tag_validation.rego](../policies/tag_validation.rego)
 - Policy: [sensitivity_oob.rego](../policies/sensitivity_oob.rego)
 - Feature: [put_secret.feature](../specs/features/put_secret.feature)
+
+## Schema contracts
+
+See also the [schema index](../schemas/README.md).
+
+- [`schemas/secret_storage/secret.cue`](../schemas/secret_storage/secret.cue)
+- [`schemas/secret_storage/secret_id.cue`](../schemas/secret_storage/secret_id.cue)

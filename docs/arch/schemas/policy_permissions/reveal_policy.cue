@@ -11,7 +11,7 @@ package policy_permissions
 // #Sensitivity used here is the canonical alias defined in sensitivity_alias.cue
 // (sourced from secret_storage.#Sensitivity). Do NOT redefine #Sensitivity locally.
 #RevealPolicy: {
-	allowed:             bool
+	allowed: #Allowed
 	require_oob_above:   #Sensitivity | *"high"
 	slash_only:          bool | *true
 }

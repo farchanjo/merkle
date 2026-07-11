@@ -10,26 +10,26 @@ package gpg_category
 
 // #SubkeyInfo describes a single GPG subkey within a keyring.
 #SubkeyInfo: {
-	id:    string
-	algo:  string
-	usage: string
+	id: #Identity
+	algo: #Algo
+	usage: #Usage
 }
 
 // #PublicMeta holds non-sensitive GPG key metadata visible in vault.list and vault.describe.
 #PublicMeta: {
-	key_id:      string & =~"^[0-9A-F]{16,40}$"
-	fingerprint: string & =~"^[0-9A-F]{40}$"
-	uid:         [...string]
+	key_id: #KeyId
+	fingerprint: #Fingerprint
+	uid: #Uid
 	algo:        #GpgAlgo
-	created:     string // RFC 3339 timestamp
-	expires?:    string // RFC 3339 timestamp
-	subkeys:     [...#SubkeyInfo]
+	created: #Created // RFC 3339 timestamp
+	expires?: #Expires // RFC 3339 timestamp
+	subkeys: #Subkeys
 }
 
 // #PrivateBlob holds the GPG secret key material encrypted inside the private blob.
 #PrivateBlob: {
-	secret_key_blob: bytes
-	passphrase?:     string
+	secret_key_blob: #SecretKeyBlob
+	passphrase?: #Passphrase
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.

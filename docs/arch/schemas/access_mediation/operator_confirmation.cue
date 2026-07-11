@@ -22,11 +22,11 @@ package access_mediation
 #OperatorConfirmation: {
 	// slash_command is true when the client verified a /merkle-reveal slash
 	// command was issued by the human operator.
-	slash_command: bool
+	slash_command: #SlashCommand
 
 	// oob_ack is true when an OOB Confirmation was acknowledged outside the
 	// MCP transport channel.
-	oob_ack: bool
+	oob_ack: #OobAck
 
 	// oob_channel identifies which OOB mechanism was used.
 	// Must be present when oob_ack is true.

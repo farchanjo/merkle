@@ -22,29 +22,29 @@ package secret_storage
 // may contain credentials or key material.
 #PublicMetadata: {
 	// tags mirrors the Secret.tags list for convenient filtering in list views.
-	tags?: [...#Tag]
+	tags?: #Tags
 
 	// description is a free-form human-readable description of the Secret.
 	// It is indexed by the FTS5 full-text search engine (ADR-0013, ADR-0027)
 	// with weight 3.0.  MUST NOT contain credentials, keys, or any plaintext
 	// material derived from the Secret value.
-	description?: string
+	description?: #Description
 
 	// notes_public is free-form operator commentary that the LLM may read.
 	// Must never contain credentials or key material.
-	notes_public?: string
+	notes_public?: #NotesPublic
 
 	// prefix is the visible prefix of the secret value, e.g. the first 4
 	// characters of a token, useful for disambiguation.
 	// Example: "ghp_" for a GitHub PAT.
-	prefix?: string
+	prefix?: #Prefix
 
 	// last4 is the last four characters of the secret value.
 	// Useful for identifying which card/token the LLM is operating on.
-	last4?: string
+	last4?: #Last4
 
 	// fingerprint is a public digest identifying the key material without
 	// revealing it.  Format is key-type-specific (e.g., SSH key fingerprint
 	// in "SHA256:<base64>" notation, or a PGP key ID).
-	fingerprint?: string
+	fingerprint?: #Fingerprint
 }

@@ -15,12 +15,14 @@ import "time"
 //   "expired"      — expires_at elapsed; vault background job retired the version
 //   "compromised"  — operator explicitly marked the version as compromised
 #SecretVersion: {
+	id: #Identity
+
 	// secret_id is the UUIDv7 of the parent Secret; never changes.
 	secret_id: #SecretId
 
 	// version is the 1-based revision counter; matches the Secret.version at
 	// the time this snapshot was taken.
-	version: int & >=1
+	version: #Version
 
 	// private_blob is the encrypted material as it existed at this version.
 	private_blob: #PrivateBlob

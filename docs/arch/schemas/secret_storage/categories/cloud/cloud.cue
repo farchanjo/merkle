@@ -11,22 +11,22 @@ package cloud_category
 // #PublicMeta holds non-sensitive cloud account metadata visible in vault.list and vault.describe.
 #PublicMeta: {
 	provider:       #CloudProvider
-	account_id:     string
-	region_default?: string
-	profile:        string
-	role_arn?:      string
+	account_id: #AccountId
+	region_default?: #RegionDefault
+	profile: #Profile
+	role_arn?: #RoleArn
 	mfa_required:   bool | *false
 	// key_id_public is the non-secret portion of an access key pair (e.g., AWS access key ID).
-	key_id_public?:  string
+	key_id_public?: #KeyIdPublic
 }
 
 // #PrivateBlob holds sensitive cloud credentials encrypted inside the private blob.
 #PrivateBlob: {
-	access_key_secret?:      string
-	service_account_json?:   bytes
-	client_secret?:          string
-	session_token?:          string
-	expires_at?:             string // ISO-8601 timestamp
+	access_key_secret?: #AccessKeySecret
+	service_account_json?: #ServiceAccountJson
+	client_secret?: #ClientSecret
+	session_token?: #SessionToken
+	expires_at?: #ExpiresAt // ISO-8601 timestamp
 }
 
 // #FtsIndexedFields lists the public metadata field names submitted to the FTS5 index.
