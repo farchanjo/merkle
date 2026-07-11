@@ -1,11 +1,12 @@
 //! Audit chain integrity test.
 //!
-//! 1. Performs 10 mixed ops (put / list / describe) via CLI.
-//! 2. Runs `merkle doctor --chain` → expects `chain_valid` in output.
-//! 3. Manually tampers with the audit_head.json file.
-//! 4. Runs `merkle doctor --chain` again → expects tamper to be detected.
-//! 5. Restores the original audit_head.json.
-//! 6. Runs `merkle doctor --chain` → expects `chain_valid` again.
+//! 1. `init` + `unseal` a fresh vault.
+//! 2. Performs 10 mixed ops (put / list / describe) via CLI.
+//! 3. Runs `merkle doctor --chain` → expects `audit_chain_integrity … pass`.
+//! 4. Manually tampers with the audit_head.json file (legacy path; may be a
+//!    no-op when the live head is SQLite `pinned_head` — still must not panic).
+//! 5. Runs `merkle doctor --chain` again.
+//! 6. Restores the original audit_head.json and re-checks doctor.
 //!
 //! # Running
 //!
@@ -19,6 +20,16 @@ use harness::{AgentProcessHandle, CliRunner};
 const NAMESPACE: &str = "chaintest";
 const BASE_HANDLE: &str = "vault://chaintest/password/secret-";
 const SECRET_PAYLOAD: &[u8] = b"chain-test-secret-value";
+
+/// Doctor human mode prints `audit_chain_integrity  pass …` (not `chain_valid`).
+fn doctor_reports_chain_ok(out: &harness::cli::CliOutput) -> bool {
+    let text = format!("{}\n{}", out.stdout, out.stderr);
+    text.contains("chain_valid")
+        || (text.contains("audit_chain_integrity")
+            && text
+                .lines()
+                .any(|l| l.contains("audit_chain_integrity") && l.contains("pass")))
+}
 
 #[tokio::test]
 #[ignore = "requires compiled binaries — run with: cargo build --bins && cargo test -p merkle-e2e -- --ignored"]
@@ -38,17 +49,35 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
     let audit_head_path = agent.audit_head_path().clone();
 
     // -----------------------------------------------------------------------
-    // Perform initial unseal so operations go through.
+    // Fresh vault: init then unseal (file keystore via harness env).
     // -----------------------------------------------------------------------
+    let init_out = runner.run(&["init", "--non-interactive"]).await?;
+    println!(
+        "[init] exit={} stdout_len={}",
+        init_out.exit_code,
+        init_out.stdout.len()
+    );
+    assert!(
+        init_out.exit_code == 0 || init_out.stderr.contains("already"),
+        "init failed: stdout={} stderr={}",
+        init_out.stdout,
+        init_out.stderr
+    );
+
     let unseal_out = runner
         .run_with_stdin(
             &["unseal", "--passphrase"],
-            Some(b"chain-test-passphrase\n"),
+            Some(b"e2e-test-passphrase\n"),
         )
         .await?;
     println!(
         "[unseal] exit={} stderr={}",
         unseal_out.exit_code, unseal_out.stderr
+    );
+    assert_eq!(
+        unseal_out.exit_code, 0,
+        "unseal failed: stdout={} stderr={}",
+        unseal_out.stdout, unseal_out.stderr
     );
 
     // Bind namespace.
@@ -56,6 +85,11 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
     println!(
         "[bind] exit={} stderr={}",
         bind_out.exit_code, bind_out.stderr
+    );
+    assert_eq!(
+        bind_out.exit_code, 0,
+        "bind failed: stdout={} stderr={}",
+        bind_out.stdout, bind_out.stderr
     );
 
     // -----------------------------------------------------------------------
@@ -86,7 +120,7 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
     }
 
     // -----------------------------------------------------------------------
-    // Step A: doctor --chain → chain_valid present.
+    // Step A: doctor --chain → audit_chain_integrity pass.
     // -----------------------------------------------------------------------
     let doctor_a = runner.run(&["doctor", "--chain"]).await?;
     println!(
@@ -99,8 +133,9 @@ async fn audit_chain_integrity_and_tamper_detection() -> anyhow::Result<()> {
         doctor_a.stdout, doctor_a.stderr
     );
     assert!(
-        doctor_a.stdout.contains("chain_valid") || doctor_a.stderr.contains("chain_valid"),
-        "doctor-A: chain_valid not present in output"
+        doctor_reports_chain_ok(&doctor_a),
+        "doctor-A: audit_chain_integrity pass not present in output\nstdout: {}\nstderr: {}",
+        doctor_a.stdout, doctor_a.stderr
     );
 
     // -----------------------------------------------------------------------

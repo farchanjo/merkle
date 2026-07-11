@@ -37,6 +37,16 @@ fn tolerate(out: &harness::cli::CliOutput) -> bool {
         || out.stderr.contains("Device not configured")
 }
 
+/// Doctor human mode prints `audit_chain_integrity  pass …` (not `chain_valid`).
+fn doctor_reports_chain_ok(out: &harness::cli::CliOutput) -> bool {
+    let text = format!("{}\n{}", out.stdout, out.stderr);
+    text.contains("chain_valid")
+        || (text.contains("audit_chain_integrity")
+            && text
+                .lines()
+                .any(|l| l.contains("audit_chain_integrity") && l.contains("pass")))
+}
+
 const NAMESPACE: &str = "acme-prod";
 const SECRET_HANDLE: &str = "vault://acme-prod/password/db-admin";
 const SECRET_PAYLOAD: &[u8] = br#""s3cr3t-db-passw0rd""#;
@@ -337,10 +347,11 @@ async fn happy_path_full_lifecycle() -> anyhow::Result<()> {
         "step 10: doctor failed (not a stub — real endpoint)\nstdout: {}\nstderr: {}",
         doctor_out.stdout, doctor_out.stderr
     );
-    // The response contains "chain_valid" (true or false depending on audit log state).
+    // Doctor human output reports the check as `audit_chain_integrity  pass …`
+    // (legacy JSON field `chain_valid` is no longer printed in Human mode).
     assert!(
-        doctor_out.stdout.contains("chain_valid") || doctor_out.stderr.contains("chain_valid"),
-        "step 10: doctor --chain did not include chain_valid\nstdout: {}\nstderr: {}",
+        doctor_reports_chain_ok(&doctor_out),
+        "step 10: doctor --chain did not report audit_chain_integrity pass\nstdout: {}\nstderr: {}",
         doctor_out.stdout,
         doctor_out.stderr
     );
