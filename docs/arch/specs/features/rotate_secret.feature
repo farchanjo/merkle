@@ -1,6 +1,6 @@
 Feature: Rotating a Secret's material
 
-  The vault.rotate MCP Tool replaces the active Private Blob of a Secret with new
+  The vault_rotate MCP Tool replaces the active Private Blob of a Secret with new
   material, increments the Secret Version, and retains previous versions up to the
   retain_count limit declared in the Namespace Policy (default retain_count=3).
   Versions beyond the retain_count are pruned. A Rollback to a previous Secret Version
@@ -21,7 +21,7 @@ Feature: Rotating a Secret's material
       | 1       | 2026-02-01T00:00:00Z    |
 
   Scenario: Rotate an ssh Secret and retain previous versions up to retain_count=3
-    When the operator calls vault.rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material
+    When the operator calls vault_rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material
     Then the Vault Agent creates Secret Version 4 with the new Private Blob encrypted with the Namespace DEK
     And Versions 1, 2, and 3 are retained in the database as historical Secret Versions
     And the active version is set to Version 4
@@ -48,7 +48,7 @@ Feature: Rotating a Secret's material
     Then the Vault Agent rejects it with error "operator_confirmation_required"
 
   Scenario: Rotate triggers a pre-snapshot Backup before applying changes
-    When the operator calls vault.rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material
+    When the operator calls vault_rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material
     Then before writing the new Secret Version, the Vault Agent initiates a Backup of the current vault state
     And the Backup is encrypted with two age recipients: Master public key and Recovery Public Key
     And the Backup file is written to the configured target directory as "merkle-bk-<utc-iso8601>.merkle.age"
@@ -58,14 +58,14 @@ Feature: Rotating a Secret's material
   Scenario: Secrets approaching expires_at emit warning seven days before expiry
     Given a Secret with Handle "vault://acme-backend/cert/api-tls" has expires_at "2026-05-29T00:00:00Z"
     And the current date is "2026-05-22T00:00:00Z"
-    When the operator calls vault.list or vault.describe for namespace "acme-backend"
+    When the operator calls vault_list or vault_describe for namespace "acme-backend"
     Then the MCP response includes a warning for "vault://acme-backend/cert/api-tls" with message "expires_in_7_days"
     And the warning is also recorded as an Audit Entry with op "expiry_warning" and handle "vault://acme-backend/cert/api-tls"
     And the Secret is still accessible and not automatically revoked
 
   Scenario: Rotation fails when the Vault Agent is in Sealed State
     Given the Vault Agent is in Sealed State
-    When the LLM calls vault.rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material
+    When the LLM calls vault_rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material
     Then the Vault Agent rejects the request with error "agent_sealed"
     And no rotation is performed
     And no Backup is triggered
@@ -74,7 +74,7 @@ Feature: Rotating a Secret's material
   Scenario: RotateSecret preserves AD binding across versions
     Given the Vault Agent is in Unsealed State
     And a Secret at handle "vault://acme/password/api-key" exists with Version 1 encrypted using Associated Data "vault://acme/password/api-key"
-    When the operator calls vault.rotate with handle "vault://acme/password/api-key" and new key material
+    When the operator calls vault_rotate with handle "vault://acme/password/api-key" and new key material
     Then the new SecretVersion has its Private Blob encrypted via XChaCha20-Poly1305 with Associated Data equal to the Handle URI bytes "vault://acme/password/api-key"
     And the new version's associated_data matches the handle column of the same row
     And the previous Version 1 remains decryptable using Associated Data "vault://acme/password/api-key"

@@ -1,6 +1,6 @@
 Feature: TCP port-forward via SSH tunnel
 
-  The vault.ssh.port_forward MCP Tool establishes a long-lived TCP tunnel
+  The vault_ssh_port_forward MCP Tool establishes a long-lived TCP tunnel
   using an SSH subprocess that binds a local port and forwards connections
   to a remote host:port pair. The SSH private key never crosses the MCP
   transport; it is materialised in a mode-0600 tempfile inside the agent

@@ -15,7 +15,7 @@ Feature: Backup and Restore lifecycle
     And the Namespace Policy declares max_interval=86400 (24 hours) and change_threshold=10
 
   Scenario: Manual backup writes an encrypted file to the configured target directory
-    When the operator calls vault.backup with mode "manual"
+    When the operator calls vault_backup with mode "manual"
     Then the Vault Agent serializes the full vault state including all Secrets and Audit Log entries
     And the serialized payload is encrypted using age with recipients: Master public key and Recovery Public Key
     And the Backup file is written to "/Users/farchanjo/.local/share/merkle/backups/merkle-bk-<utc-iso8601>.merkle.age"
@@ -36,7 +36,7 @@ Feature: Backup and Restore lifecycle
 
   Scenario: Change-triggered Backup fires after the configured number of mutations
     Given the change counter has accumulated 9 mutations since the last Backup
-    When the operator calls vault.put to create a new Secret, making the 10th mutation
+    When the operator calls vault_put to create a new Secret, making the 10th mutation
     Then the change counter reaches the change_threshold of 10
     And the Vault Agent initiates a Change-Triggered Backup without operator action
     And the Backup file is written to the configured target directory
@@ -47,7 +47,7 @@ Feature: Backup and Restore lifecycle
     Given a Backup file "merkle-bk-2026-05-20T12:00:00Z.merkle.age" exists in the target directory
     And the Backup contains Secret "vault://acme-backend/ssh/bastion-prod" at Version 2 with updated_at "2026-05-19T00:00:00Z"
     And the local vault contains the same Secret at Version 3 with updated_at "2026-05-21T00:00:00Z"
-    When the operator calls vault.restore with file "merkle-bk-2026-05-20T12:00:00Z.merkle.age" and mode "merge"
+    When the operator calls vault_restore with file "merkle-bk-2026-05-20T12:00:00Z.merkle.age" and mode "merge"
     Then the Vault Agent validates the Backup HMAC before applying any changes
     And the Vault Agent determines the local Version 3 is newer than the Backup Version 2
     And the merge mode preserves the local Version 3 for "vault://acme-backend/ssh/bastion-prod"
@@ -56,7 +56,7 @@ Feature: Backup and Restore lifecycle
 
   Scenario: Restore preview shows a diff of changes before the operator applies them
     Given a Backup file "merkle-bk-2026-05-18T08:00:00Z.merkle.age" exists in the target directory
-    When the operator calls vault.restore with that file and flag "preview=true"
+    When the operator calls vault_restore with that file and flag "preview=true"
     Then the Vault Agent decrypts the Backup and computes the diff against the current vault state
     And the MCP response contains a list of changes with fields: handle, action, local_version, backup_version
     And the action field is one of "add", "overwrite", "skip", or "conflict"
@@ -67,7 +67,7 @@ Feature: Backup and Restore lifecycle
 
   Scenario: HMAC verification fails on a tampered backup file
     Given a Backup file "merkle-bk-2026-05-20T12:00:00Z.merkle.age" exists but has been modified after creation
-    When the operator calls vault.restore with that file
+    When the operator calls vault_restore with that file
     Then the Vault Agent computes the HMAC Signature over the decrypted payload
     And the computed HMAC does not match the stored HMAC Signature in the file header
     And the Vault Agent rejects the restore with error "backup_integrity_check_failed"

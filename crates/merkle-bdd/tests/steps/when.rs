@@ -132,7 +132,7 @@ async fn when_second_unseal_request(world: &mut MerkleWorld) {
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_lines)]
-#[when("the operator calls vault.put with the following parameters")]
+#[when("the operator calls vault_put with the following parameters")]
 async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
     let ns_id = world
         .session_namespace_id
@@ -287,7 +287,7 @@ async fn when_vault_put_with_params(world: &mut MerkleWorld, step: &Step) {
 // ListSecrets
 // ---------------------------------------------------------------------------
 
-#[when("the operator calls vault.list with no filters")]
+#[when("the operator calls vault_list with no filters")]
 async fn when_vault_list_no_filters(world: &mut MerkleWorld) {
     let ns_id = world.session_namespace_id.expect("namespace must be bound");
     let cmd = ListSecretsCommand {
@@ -302,7 +302,7 @@ async fn when_vault_list_no_filters(world: &mut MerkleWorld) {
     }
 }
 
-#[when(expr = "the operator calls vault.list with filter {string}")]
+#[when(expr = "the operator calls vault_list with filter {string}")]
 async fn when_vault_list_with_filter(world: &mut MerkleWorld, filter: String) {
     let ns_id = world.session_namespace_id.expect("namespace must be bound");
 
@@ -334,7 +334,7 @@ async fn when_vault_list_with_filter(world: &mut MerkleWorld, filter: String) {
     }
 }
 
-#[when(expr = "the operator calls vault.list with query {string}")]
+#[when(expr = "the operator calls vault_list with query {string}")]
 async fn when_vault_list_with_query(world: &mut MerkleWorld, query: String) {
     let ns_id = world.session_namespace_id.expect("namespace must be bound");
     let cmd = ListSecretsCommand {
@@ -349,7 +349,7 @@ async fn when_vault_list_with_query(world: &mut MerkleWorld, query: String) {
     }
 }
 
-#[when(expr = "the operator calls vault.list with {string} and no cursor")]
+#[when(expr = "the operator calls vault_list with {string} and no cursor")]
 async fn when_vault_list_with_limit(world: &mut MerkleWorld, limit_str: String) {
     let ns_id = world.session_namespace_id.expect("namespace must be bound");
     let limit = limit_str.trim_start_matches("limit=").parse::<u32>().ok();
@@ -373,7 +373,7 @@ async fn when_vault_list_with_limit(world: &mut MerkleWorld, limit_str: String) 
 // RotateSecret
 // ---------------------------------------------------------------------------
 
-#[when(expr = "the operator calls vault.rotate with handle {string} and new key material")]
+#[when(expr = "the operator calls vault_rotate with handle {string} and new key material")]
 async fn when_vault_rotate(world: &mut MerkleWorld, handle_str: String) {
     let ns_id = world.session_namespace_id.expect("namespace must be bound");
     let handle: Handle = handle_str.parse().expect("valid handle");
@@ -408,7 +408,7 @@ async fn when_anacron_trigger(_world: &mut MerkleWorld) {
     // Anacron scheduling is scaffolded.
 }
 
-#[when(expr = "the operator calls vault.put to create a new Secret, making the {int}th mutation")]
+#[when(expr = "the operator calls vault_put to create a new Secret, making the {int}th mutation")]
 async fn when_nth_mutation(world: &mut MerkleWorld, _nth: u32) {
     world.mutation_counter += 1;
 }
@@ -417,17 +417,17 @@ async fn when_nth_mutation(world: &mut MerkleWorld, _nth: u32) {
 // Restore
 // ---------------------------------------------------------------------------
 
-#[when(expr = "the operator calls vault.restore with file {string} and mode {string}")]
+#[when(expr = "the operator calls vault_restore with file {string} and mode {string}")]
 async fn when_vault_restore(_world: &mut MerkleWorld, _file: String, _mode: String) {
     // Restore is scaffolded.
 }
 
-#[when(expr = "the operator calls vault.restore with that file and flag {string}")]
+#[when(expr = "the operator calls vault_restore with that file and flag {string}")]
 async fn when_vault_restore_preview(_world: &mut MerkleWorld, _flag: String) {
     // Preview restore is scaffolded.
 }
 
-#[when("the operator calls vault.restore with that file")]
+#[when("the operator calls vault_restore with that file")]
 async fn when_vault_restore_hmac_check(world: &mut MerkleWorld) {
     // HMAC tamper detection: a tampered file is always rejected.
     world.last_error = Some("backup_integrity_check_failed".into());
@@ -442,7 +442,7 @@ async fn when_operator_confirms(_world: &mut MerkleWorld, _confirmation: String)
 // Audit chain verification
 // ---------------------------------------------------------------------------
 
-#[when("the operator calls merkle doctor or vault.audit.verify")]
+#[when("the operator calls merkle doctor or vault_audit_verify")]
 async fn when_verify_chain(world: &mut MerkleWorld) {
     use merkle_application::queries::verify_chain::VerifyChainQuery;
     match VerifyChainQuery.execute(&world.app_ctx).await {
@@ -487,7 +487,7 @@ async fn when_query_audit(world: &mut MerkleWorld, _op: String) {
     }
 }
 
-#[when("the operator calls vault.audit.query with filters")]
+#[when("the operator calls vault_audit_query with filters")]
 async fn when_vault_audit_query(world: &mut MerkleWorld, #[allow(unused_variables)] step: &Step) {
     let query = merkle_domain_audit_compliance::AuditQuery::default();
     match world.app_ctx.storage.read_audit(&query).await {
@@ -578,12 +578,12 @@ async fn when_second_access(_world: &mut MerkleWorld) {
     // Cross-env warning is scaffolded.
 }
 
-#[when(expr = "the operator calls vault.restore with the returned next_cursor and {string}")]
+#[when(expr = "the operator calls vault_restore with the returned next_cursor and {string}")]
 async fn when_vault_restore_next_cursor(_world: &mut MerkleWorld, _cursor_limit: String) {
     // Pagination is scaffolded.
 }
 
-#[when(expr = "the operator calls vault.list with the returned next_cursor and {string}")]
+#[when(expr = "the operator calls vault_list with the returned next_cursor and {string}")]
 async fn when_vault_list_next_cursor(_world: &mut MerkleWorld, _limit: String) {
     // Pagination is scaffolded.
 }
@@ -604,7 +604,7 @@ async fn when_oob_dispatched(world: &mut MerkleWorld) {
 // Additional when steps for rotate / disaster-recovery / proxy-ssh / unseal
 // ---------------------------------------------------------------------------
 
-#[when(expr = "the LLM calls vault.rotate with handle {string} and new key material")]
+#[when(expr = "the LLM calls vault_rotate with handle {string} and new key material")]
 async fn when_llm_vault_rotate(world: &mut MerkleWorld, handle_str: String) {
     use merkle_types::Handle;
     let handle: Handle = match handle_str.parse() {
@@ -632,7 +632,7 @@ async fn when_llm_vault_rotate(world: &mut MerkleWorld, handle_str: String) {
     }
 }
 
-#[when(expr = "the LLM calls vault.ssh.exec with handle {string} and command {string}")]
+#[when(expr = "the LLM calls vault_ssh_exec with handle {string} and command {string}")]
 async fn when_llm_ssh_exec(world: &mut MerkleWorld, handle_str: String, _command: String) {
     // Proxy SSH exec: check handle category and rate-limit state.
     // Real impl would: resolve Handle → key_material, call SshExecCommand, audit use_token.
@@ -644,7 +644,7 @@ async fn when_llm_ssh_exec(world: &mut MerkleWorld, handle_str: String, _command
 
     if cat_str != "ssh" {
         world.last_error = Some(format!(
-            "category_mismatch: vault.ssh.exec requires category ssh but received category {cat_str}"
+            "category_mismatch: vault_ssh_exec requires category ssh but received category {cat_str}"
         ));
         return;
     }
@@ -658,7 +658,7 @@ async fn when_llm_ssh_exec(world: &mut MerkleWorld, handle_str: String, _command
     world.last_error = None;
 }
 
-#[when(expr = "the LLM calls vault.ssh.exec with handle {string}")]
+#[when(expr = "the LLM calls vault_ssh_exec with handle {string}")]
 async fn when_llm_ssh_exec_no_cmd(world: &mut MerkleWorld, _handle_str: String) {
     // Proxy SSH exec via handle is scaffolded.
     world.last_error = Some("proxy_tool_not_supported_for_category".into());
@@ -719,7 +719,7 @@ async fn when_restore_backup(world: &mut MerkleWorld) {
     world.last_error = Some("disaster_recovery_not_implemented".into());
 }
 
-#[when(expr = "the operator calls vault.backup with mode {string}")]
+#[when(expr = "the operator calls vault_backup with mode {string}")]
 async fn when_vault_backup(world: &mut MerkleWorld, _mode: String) {
     // Backup uses TriggerBackupCommand which requires namespace, recipients, target.
     // Full backup flow is scaffolded — deferred to F5.B backup scenarios.
@@ -742,7 +742,7 @@ async fn when_idle_timeout(world: &mut MerkleWorld) {
     }
 }
 
-#[when(expr = "the operator calls vault.list or vault.describe for namespace {string}")]
+#[when(expr = "the operator calls vault_list or vault_describe for namespace {string}")]
 async fn when_vault_list_or_describe(world: &mut MerkleWorld, ns_label: String) {
     let ns_id = world.ensure_namespace(&ns_label).await;
     let cmd = ListSecretsCommand {
@@ -763,13 +763,13 @@ async fn when_ssh_session_close(world: &mut MerkleWorld) {
     world.last_error = None;
 }
 
-#[when(expr = "the operator calls vault.put with a Private Blob whose fingerprint is {string}")]
+#[when(expr = "the operator calls vault_put with a Private Blob whose fingerprint is {string}")]
 async fn when_vault_put_fingerprint(world: &mut MerkleWorld, _fp: String) {
     // Fingerprint dedup check is scaffolded.
     world.last_error = Some("duplicate_fingerprint_detected".into());
 }
 
-#[when(expr = "the operator calls vault.put with category {string} and a conformant Private Blob")]
+#[when(expr = "the operator calls vault_put with category {string} and a conformant Private Blob")]
 async fn when_vault_put_custom_category(world: &mut MerkleWorld, _cat: String) {
     // CUE schema validation is scaffolded.
     world.last_error = Some("category_not_registered".into());
@@ -780,7 +780,7 @@ async fn when_ciphertext_transplant(_world: &mut MerkleWorld, _handle: String) {
     super::scaffolded("when_ciphertext_transplant");
 }
 
-#[when(expr = "the operator calls vault.get with handle {string}")]
+#[when(expr = "the operator calls vault_get with handle {string}")]
 async fn when_vault_get(world: &mut MerkleWorld, handle_str: String) {
     use merkle_types::Handle;
     let handle: Handle = match handle_str.parse() {
@@ -871,7 +871,7 @@ async fn when_oob_acknowledged(world: &mut MerkleWorld) {
     }
 }
 
-#[when(expr = "the MCP Adapter invokes vault.reveal with handle {string}")]
+#[when(expr = "the MCP Adapter invokes vault_reveal with handle {string}")]
 async fn when_mcp_vault_reveal(world: &mut MerkleWorld, handle_str: String) {
     use merkle_types::Handle;
 
@@ -947,7 +947,7 @@ async fn when_client_sets_no_slash_no_oob(_world: &mut MerkleWorld) {
     // No-op — default confirmation state.
 }
 
-#[when("the MCP Adapter invokes vault.reveal with the constructed call")]
+#[when("the MCP Adapter invokes vault_reveal with the constructed call")]
 async fn when_mcp_vault_reveal_constructed(world: &mut MerkleWorld) {
     // Uses no-slash, no-oob confirmation — should be rejected.
     world.last_error = Some("operator_confirmation_required".into());
@@ -1108,17 +1108,17 @@ async fn when_reveal_with_signed_config_flag_full(world: &mut MerkleWorld) {
 }
 
 /// Short alias used in denial scenarios.
-#[when("vault.reveal is called with signed_config_flag set")]
+#[when("vault_reveal is called with signed_config_flag set")]
 async fn when_reveal_with_signed_config_flag_short(world: &mut MerkleWorld) {
     when_reveal_with_signed_config_flag_inner(world).await;
 }
 
-/// Bare `vault.reveal is called` — uses `world.jwt_token` when present,
+/// Bare `vault_reveal is called` — uses `world.jwt_token` when present,
 /// otherwise falls through to a no-op (precondition sets the error state).
 ///
 /// Used by the "Reveal denied when JWT exp is past" scenario where the Given
 /// steps build the JWT and this When step fires it at the verifier.
-#[when("vault.reveal is called")]
+#[when("vault_reveal is called")]
 async fn when_reveal_bare(world: &mut MerkleWorld) {
     if world.jwt_token.is_some() {
         when_reveal_with_signed_config_flag_inner(world).await;
@@ -1155,7 +1155,7 @@ async fn when_reveal_with_signed_config_flag_inner(world: &mut MerkleWorld) {
     let challenge_id = world.jwt_challenge_id.take().unwrap_or_default();
 
     // Reveal the first stored secret.
-    // When `last_handle` is None (no explicit prior vault.put in this scenario),
+    // When `last_handle` is None (no explicit prior vault_put in this scenario),
     // fall back to the medium-sensitivity deploy token from the Background table
     // that is always seeded for reveal_with_oob.feature scenarios.
     let handle = world.last_handle.clone().unwrap_or_else(|| {

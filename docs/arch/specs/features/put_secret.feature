@@ -1,6 +1,6 @@
 Feature: Creating a new Secret
 
-  The vault.put MCP Tool creates a new Secret under the bound Namespace, validates
+  The vault_put MCP Tool creates a new Secret under the bound Namespace, validates
   the input against the Category schema, enforces Namespace Policy rules such as
   tag requirements for sensitivity=high, detects duplicate fingerprints, and
   appends an Audit Entry. The Private Blob is encrypted with the Namespace DEK
@@ -14,7 +14,7 @@ Feature: Creating a new Secret
     And the Namespace DEK for "acme-backend" is loaded in agent memory
 
   Scenario: Create a new ssh Secret in the cwd-bound Namespace
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field        | value                                      |
       | name         | bastion-prod                               |
       | category     | ssh                                        |
@@ -28,7 +28,7 @@ Feature: Creating a new Secret
     And the MCP response contains the Handle and Public Metadata but not the Private Blob
 
   Scenario: Create with tags including env:prod when sensitivity is high
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field       | value                           |
       | name        | deploy-token-prod               |
       | category    | token                           |
@@ -39,7 +39,7 @@ Feature: Creating a new Secret
     And the Handle returned is "vault://acme-backend/token/deploy-token-prod"
 
   Scenario: Reject put when sensitivity=high without env:* tag
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field       | value             |
       | name        | admin-password    |
       | category    | password          |
@@ -53,7 +53,7 @@ Feature: Creating a new Secret
   Scenario: Detect duplicate fingerprint and emit warning before storing
     Given a Secret named "bastion-prod" with category "ssh" already exists in namespace "acme-backend"
     And the existing Secret has a content fingerprint "sha256:aabbccdd11223344"
-    When the operator calls vault.put with a Private Blob whose fingerprint is "sha256:aabbccdd11223344"
+    When the operator calls vault_put with a Private Blob whose fingerprint is "sha256:aabbccdd11223344"
     Then the Vault Agent detects the matching fingerprint before persisting
     And the MCP response includes warning "duplicate_fingerprint_detected" with the existing Handle
     And the operator must confirm with flag "force=true" to proceed with storage
@@ -61,13 +61,13 @@ Feature: Creating a new Secret
 
   Scenario: Create a Secret under a custom Category with declared CUE schema
     Given a custom Category "wireguard" is registered with a CUE schema declaring fields "private_key", "public_key", "endpoint", "allowed_ips"
-    When the operator calls vault.put with category "wireguard" and a conformant Private Blob
+    When the operator calls vault_put with category "wireguard" and a conformant Private Blob
     Then the Vault Agent validates the Private Blob against the "wireguard" CUE schema
     And the validation passes because all required fields are present and typed correctly
     And the Secret is persisted with category "wireguard" and the correct Handle format "vault://acme-backend/wireguard/<name>"
 
   Scenario: Reject put when category is not registered
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field    | value          |
       | name     | my-secret      |
       | category | unregistered   |
@@ -76,7 +76,7 @@ Feature: Creating a new Secret
     And no Secret is persisted to SQLite
 
   Scenario: PutSecret rejects expose=true when sensitivity=high
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field       | value                                              |
       | name        | db-admin-exposed                                   |
       | category    | password                                           |
@@ -92,7 +92,7 @@ Feature: Creating a new Secret
     Given the Vault Agent is in Unsealed State
     And a Namespace with label "acme" is bound for the session
     And the Namespace DEK for "acme" is loaded in agent memory
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field       | value                    |
       | name        | db-admin                 |
       | category    | password                 |
@@ -106,14 +106,14 @@ Feature: Creating a new Secret
     And a Namespace with label "acme" is bound for the session
     And a Secret at handle "vault://acme/password/db-admin" was previously encrypted with Associated Data "vault://acme/password/db-admin"
     When an attacker writes that ciphertext into the database row for handle "vault://acme/password/other-secret"
-    And the operator calls vault.get with handle "vault://acme/password/other-secret"
+    And the operator calls vault_get with handle "vault://acme/password/other-secret"
     Then the Vault Agent supplies Associated Data "vault://acme/password/other-secret" to the XChaCha20-Poly1305 decrypt call
     And AEAD verification fails because the Poly1305 authentication tag does not match
     And the Vault Agent returns an error without returning any plaintext material
     And an Audit Entry with op "get", outcome "error", and denial_reason "ad_binding_mismatch" is appended
 
   Scenario: PutSecret with value_format=utf8 stores plaintext bytes after AEAD encryption
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field        | value                       |
       | name         | api-token                   |
       | category     | token                       |
@@ -126,7 +126,7 @@ Feature: Creating a new Secret
     And an Audit Entry with op "put" and outcome "allow" is appended
 
   Scenario: PutSecret with value_format=base64 decodes bytes before AEAD encryption
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field        | value                               |
       | name         | signing-key                         |
       | category     | key                                 |
@@ -140,7 +140,7 @@ Feature: Creating a new Secret
     And an Audit Entry with op "put" and outcome "allow" is appended
 
   Scenario: PutSecret rejects missing value_format field with 400
-    When the operator calls vault.put with the following parameters
+    When the operator calls vault_put with the following parameters
       | field       | value         |
       | name        | my-token      |
       | category    | token         |

@@ -1112,7 +1112,7 @@ async fn given_op_confirm_slash_oob_short(world: &mut MerkleWorld) {
     world.op_oob_ack = true;
 }
 
-#[given(expr = "the LLM constructs a vault.reveal call with handle {string}")]
+#[given(expr = "the LLM constructs a vault_reveal call with handle {string}")]
 async fn given_llm_reveal_call(_world: &mut MerkleWorld, _handle: String) {
     super::scaffolded("given_llm_reveal_call");
 }
@@ -1254,7 +1254,7 @@ async fn given_op_confirm_no_slash_no_oob_fixture(_world: &mut MerkleWorld) {
     // Default confirmation state — slash_command false, no OOB.
 }
 
-// reveal_with_oob — LLM constructs vault.reveal: already registered
+// reveal_with_oob — LLM constructs vault_reveal: already registered
 
 // backup_and_restore — elapsed time exceeded max_interval (Given context)
 #[given(
@@ -1352,7 +1352,7 @@ async fn given_enrolled_jwt_attestation_key_short(world: &mut MerkleWorld) {
 }
 
 /// Build and store a valid JWT signed by the enrolled key. The JWT will be
-/// passed as `signed_config_flag` in the next vault.reveal call.
+/// passed as `signed_config_flag` in the next vault_reveal call.
 ///
 /// kid is supplied verbatim from the step expression.
 #[given(expr = "the MCP client supplies a valid JWT with kid={string} matching the challenge_id")]

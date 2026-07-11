@@ -17,7 +17,7 @@ Feature: Audit Chain integrity verification
     And the Hash Chain is intact from entry 1 through entry 1000
 
   Scenario: Chain verifier passes on an intact Audit Log
-    When the operator calls merkle doctor or vault.audit.verify
+    When the operator calls merkle doctor or vault_audit_verify
     Then the Chain Verifier reads all 1000 entries in order from the Audit Log
     And for each entry it recomputes current_hash as BLAKE3(serialize(entry_without_hashes) || prev_hash) and verifies it matches the stored current_hash
     And for each entry it verifies the stored prev_hash equals the current_hash of the preceding entry
@@ -54,7 +54,7 @@ Feature: Audit Chain integrity verification
     And the delivery outcome is recorded in a separate sync_log table but does not append a new Audit Entry to the main chain
 
   Scenario: Query Audit Log by op, namespace, time range, and outcome
-    When the operator calls vault.audit.query with filters
+    When the operator calls vault_audit_query with filters
       | filter_field | filter_value                          |
       | op           | reveal                                |
       | namespace_id | 0192ac11-7000-7000-8000-000000000010  |
