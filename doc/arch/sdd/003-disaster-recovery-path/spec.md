@@ -4,6 +4,7 @@ number: 003
 slug: disaster-recovery-path
 status: implemented
 created_at: 2026-07-11T03:35:15.404064Z
+archived: true
 ---
 # Feature Specification: Disaster Recovery Path
 
