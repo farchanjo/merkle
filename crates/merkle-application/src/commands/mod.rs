@@ -9,6 +9,7 @@ pub mod crypto_decrypt;
 pub mod crypto_sign;
 pub mod delete_secret;
 pub mod describe_secret;
+pub mod disaster_recover;
 pub mod execute_restore;
 pub mod http_download;
 pub mod http_request;

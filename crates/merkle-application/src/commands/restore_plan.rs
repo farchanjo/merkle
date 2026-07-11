@@ -7,11 +7,11 @@
 use merkle_domain_backup_recovery::planner::RestorePlanner;
 use merkle_domain_backup_recovery::restore_mode::RestoreMode;
 use merkle_domain_backup_recovery::restore_plan::RestorePlan;
-use merkle_domain_secret_storage::Secret;
 use merkle_ports::SecretFilter;
 use merkle_types::{AuditOp, AuditOutcome, HmacSignature, NamespaceId, UuidV7};
 use tracing::info;
 
+use crate::backup_payload::BackupPlaintext;
 use crate::backup_recipients::load_master_identity;
 use crate::{AppContext, AppError};
 
@@ -77,8 +77,8 @@ impl RestorePlanCommand {
 
         let identity = load_master_identity(ctx).await?;
         let plaintext = ctx.crypto.age_decrypt(&identity, &ciphertext)?;
-        let backup_secrets: Vec<Secret> = serde_json::from_slice(&plaintext)
-            .map_err(|e| AppError::Domain(format!("backup payload is not a secret snapshot: {e}")))?;
+        let payload = BackupPlaintext::decode(&plaintext).map_err(AppError::Domain)?;
+        let backup_secrets = payload.secrets();
 
         let live_secrets = ctx
             .storage

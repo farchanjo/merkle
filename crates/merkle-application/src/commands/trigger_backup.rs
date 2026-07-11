@@ -1,8 +1,10 @@
 //! `TriggerBackupCommand` — encrypt and persist a vault backup.
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use merkle_domain_backup_recovery::{
     artifact::BackupArtifact, backup::Backup, recipient::BackupRecipient, trigger::BackupTrigger,
 };
+use merkle_domain_identity::KEYCHAIN_SERVICE;
 use merkle_ports::AgeRecipient;
 use merkle_types::{AuditOp, AuditOutcome, HmacSignature, NamespaceId, Rfc3339Timestamp, UuidV7};
 use std::{
@@ -12,6 +14,8 @@ use std::{
 };
 use tracing::info;
 
+use crate::backup_payload::encode_v2;
+use crate::commands::init_vault::KEYCHAIN_ACCOUNT_VRK_RECOVERY;
 use crate::{AppContext, AppError};
 
 /// Input for triggering a backup.
@@ -82,9 +86,28 @@ impl TriggerBackupCommand {
             ));
         }
 
-        // 2. Serialize secrets for encryption.
-        let plaintext = serde_json::to_vec(&secrets)
-            .map_err(|e| AppError::Domain(format!("serialization failed: {e}")))?;
+        // 2. Prefer backup v2 (secrets + recovery-wrapped VRK) when the recovery
+        //    blob exists; otherwise fall back to legacy v1 secrets-only array so
+        //    tests and partial fixtures still produce dual-recipient artifacts.
+        let plaintext = match ctx
+            .keychain
+            .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_VRK_RECOVERY)
+            .await
+        {
+            Ok(vrk_recovery_b64) => {
+                let vrk_recovery_age = BASE64.decode(&vrk_recovery_b64).map_err(|e| {
+                    AppError::Domain(format!(
+                        "vrk-recovery keychain blob is not valid base64: {e}"
+                    ))
+                })?;
+                let payload = encode_v2(vrk_recovery_age, secrets);
+                serde_json::to_vec(&payload)
+                    .map_err(|e| AppError::Domain(format!("serialization failed: {e}")))?
+            }
+            Err(merkle_ports::KeychainError::NotFound) => serde_json::to_vec(&secrets)
+                .map_err(|e| AppError::Domain(format!("serialization failed: {e}")))?,
+            Err(e) => return Err(AppError::Keychain(e)),
+        };
 
         // 3. age-encrypt for both recipients.
         let recipients = vec![
