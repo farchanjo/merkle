@@ -388,3 +388,54 @@ The Amendment 4 verify-after-write check correctly caught the resulting persiste
 failure and triggered the documented `file`-backend fallback exactly as designed —
 the probe is vindicated, not defective. The fix was enabling `apple-native` (plus
 `windows-native`), not relaxing the persistence check.
+
+
+## Amendment 6 — 2026-07-10 — `allowed_consumers` opt-in enforcement at the socket
+
+### Context
+
+Peer-credential checks (same-UID, platform path resolution) are necessary but not
+sufficient: any same-UID process could call the Companion Socket. Gap #6 added
+per-namespace `allowed_consumers` enforcement in
+`crates/merkle-adapter-companion-socket/src/consumer_gate.rs` against the
+kernel-resolved peer program path.
+
+Domain docs and the `AllowedConsumers` value-object narrative historically stated
+that an **empty** glob list denies all consumers. Enforcing empty-deny at the
+socket would brick every newly created namespace (balanced/paranoid defaults ship
+empty globs until the operator configures them).
+
+### Decision
+
+1. **Empty allowlist = skip process gate (opt-in).** If
+   `NamespacePolicy.allowed_consumers.globs` is empty, the socket **allows** the
+   request with respect to the consumer check (UID peer-cred still applies).
+2. **Non-empty allowlist = fail-closed path match.** The peer `program_path` must
+   resolve and match at least one glob, or the request is denied (HTTP 403).
+   Unresolved path with a non-empty allowlist is deny.
+3. **Missing policy row** is treated as empty allowlist (allow for consumer
+   check). Storage errors loading policy fail closed.
+4. **Domain documentation** that claims "empty denies all Companion Socket
+   access" is **superseded for the socket adapter contract** by this amendment.
+   Operators who need process isolation MUST configure globs; profile defaults
+   do not provide process isolation until configured.
+5. **Matching** uses the resolved **full** `program_path` string from peer-cred
+   (e.g. `/usr/bin/ssh`), passed to `AllowedConsumers::matches`. Globs apply to
+   that full string (`*` matches any characters including `/`). Bare-name-only
+   patterns such as `ssh` do **not** match `/usr/bin/ssh` today — operators
+   should configure path-aware patterns (e.g. `*/ssh`, `/usr/bin/ssh`, or `*`)
+   until a future basename-normalization change lands with tests.
+
+### Consequences
+
+* Usable out-of-the-box namespaces without pre-seeding consumer globs.
+* Same-UID unrestricted access remains until operators set globs — document this
+  residual risk in threat model and runbooks.
+* Policy-permissions domain narrative and CUE comments must match the opt-in
+  model (see same-commit domain doc update).
+
+### Cross-references
+
+* `consumer_gate.rs` decision table
+* ADR-0002 companion socket
+* ADR-0032 security profiles (defaults that ship empty globs)
