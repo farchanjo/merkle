@@ -46,8 +46,8 @@ use crate::{
         ProxyCryptoSignRequest, ProxyCryptoSignResponse, ProxyHttpDownloadRequest,
         ProxyHttpDownloadResponse, ProxyHttpRequestRequest, ProxyHttpRequestResponse,
         ProxyHttpUploadRequest, ProxyHttpUploadResponse, ProxyPortForwardRequest,
-        ProxySpawnRequest, ProxySshCopyRequest, ProxySshCopyResponse, ProxySshExecRequest,
-        ProxySshExecResponse, ProxySshShellRequest,
+        ProxySpawnRequest, ProxySpawnResponse, ProxySshCopyRequest, ProxySshCopyResponse,
+        ProxySshExecRequest, ProxySshExecResponse, ProxySshShellRequest, ProxySshShellResponse,
     },
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
