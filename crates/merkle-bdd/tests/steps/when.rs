@@ -107,6 +107,7 @@ async fn when_execute_unseal(world: &mut MerkleWorld) {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     };
     match cmd.execute(&world.app_ctx).await {
         Ok(_) => {
@@ -978,6 +979,7 @@ async fn when_execute_unseal_first(world: &mut MerkleWorld) {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     };
     match cmd.execute(&world.app_ctx).await {
         Ok(_) => world.last_error = None,
@@ -1003,6 +1005,7 @@ async fn when_execute_unseal_second(world: &mut MerkleWorld) {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     };
     match cmd.execute(&world.app_ctx).await {
         Ok(_) => world.last_error = None,

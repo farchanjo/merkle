@@ -161,3 +161,5 @@ Control-plane feature posture schemas (not domain aggregates).
 - [`allowlisted-spawn-proxy.cue`](allowlisted-spawn-proxy.cue)
 
 - [`verified-oob-high-reveal.cue`](verified-oob-high-reveal.cue)
+
+- [`passphrase-unseal-socket.cue`](passphrase-unseal-socket.cue)

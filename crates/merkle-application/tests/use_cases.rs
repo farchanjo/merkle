@@ -118,6 +118,7 @@ async fn unseal(ctx: &AppContext) -> bool {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     };
     let out = cmd.execute(ctx).await.expect("unseal should succeed");
     out.unsealed
@@ -262,6 +263,7 @@ async fn test_unseal_was_already_unsealed_distinguishes_paths() {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     };
 
     // First call: vault was sealed → must report `was_already_unsealed = false`.
@@ -1050,6 +1052,7 @@ async fn test_init_then_unseal_succeeds_keychain_naming_aligned() {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     };
     unseal_cmd
         .execute(&ctx)
@@ -1111,6 +1114,7 @@ async fn init_then_unseal_audit_chain_verifies_end_to_end() {
             entropy_seeded: true,
             keychain_reachable: true,
         },
+        passphrase: None,
     }
     .execute(&ctx)
     .await
@@ -2005,4 +2009,64 @@ async fn test_reveal_high_succeeds_after_verified_oob_auto_approve() {
     .await
     .expect("high reveal after OOB");
     assert_eq!(out.plaintext, b"high-secret");
+}
+
+#[tokio::test]
+async fn test_unseal_with_passphrase_after_enroll() {
+    use merkle_application::commands::unseal_vault::{
+        enroll_passphrase_fallback, UnsealKeyMethod, UnsealVaultCommand,
+    };
+
+    let ctx = make_ctx().await;
+    preload_master_key(&ctx).await;
+    // Enroll passphrase wrap using the known master key bytes.
+    enroll_passphrase_fallback(&ctx, &master_key_bytes(), "correct horse battery")
+        .await
+        .expect("enroll");
+    // Seal if unsealed
+    if ctx.is_unsealed().await {
+        let _ = merkle_application::commands::seal_vault::SealVaultCommand
+            .execute(&ctx)
+            .await;
+    }
+    // Delete master key from keychain so only passphrase path works.
+    let _ = ctx
+        .keychain
+        .delete("dev.fapp.merkle", "master-v1")
+        .await;
+
+    let out = UnsealVaultCommand {
+        preconditions: UnsealPreconditions {
+            security_profile: SecurityProfile::Balanced,
+            mlock_succeeded: true,
+            entropy_seeded: true,
+            keychain_reachable: true,
+        },
+        passphrase: Some("correct horse battery".into()),
+    }
+    .execute(&ctx)
+    .await
+    .expect("passphrase unseal");
+    assert!(out.unsealed);
+    assert_eq!(out.method, UnsealKeyMethod::Argon2idPassphrase);
+
+    let _ = merkle_application::commands::seal_vault::SealVaultCommand
+        .execute(&ctx)
+        .await;
+    let err = UnsealVaultCommand {
+        preconditions: UnsealPreconditions {
+            security_profile: SecurityProfile::Balanced,
+            mlock_succeeded: true,
+            entropy_seeded: true,
+            keychain_reachable: true,
+        },
+        passphrase: Some("wrong passphrase".into()),
+    }
+    .execute(&ctx)
+    .await
+    .expect_err("bad passphrase");
+    assert!(matches!(
+        err,
+        merkle_application::AppError::PolicyDenied(_)
+    ));
 }

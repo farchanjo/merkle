@@ -137,11 +137,14 @@ pub struct InitVaultResponse {
 // Unseal / Seal
 // ---------------------------------------------------------------------------
 
-/// Optional request body for `POST /v1/agent/unseal`.
-///
-/// Currently no fields are accepted; the body is reserved for future extension.
+/// Request body for `POST /v1/agent/unseal`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UnsealRequest {}
+pub struct UnsealRequest {
+    /// Optional master-key passphrase for Argon2id fallback unseal (ADR-0005).
+    /// When absent, the agent retrieves the Master Key from the OS keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase: Option<String>,
+}
 
 /// Response body for `POST /v1/agent/unseal`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
