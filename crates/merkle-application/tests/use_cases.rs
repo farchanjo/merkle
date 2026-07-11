@@ -679,6 +679,7 @@ async fn test_crypto_sign_produces_verifiable_signature() {
         key_handle: handle,
         dek_bytes: test_dek(),
         message: message.to_vec(),
+        algorithm: merkle_application::commands::crypto_sign::CryptoSignAlgorithm::Ed25519,
     };
     let sign_out = sign_cmd
         .execute(&ctx)
@@ -1021,6 +1022,7 @@ async fn test_init_then_unseal_succeeds_keychain_naming_aligned() {
     let init_cmd = InitVaultCommand {
         interactive: false,
         security_profile: SecurityProfile::Relaxed,
+            passphrase: None,
     };
     let init_out = init_cmd
         .execute(&ctx)
@@ -1101,6 +1103,7 @@ async fn init_then_unseal_audit_chain_verifies_end_to_end() {
     InitVaultCommand {
         interactive: false,
         security_profile: SecurityProfile::Relaxed,
+            passphrase: None,
     }
     .execute(&ctx)
     .await
@@ -1255,6 +1258,7 @@ async fn test_init_aborts_when_keychain_write_does_not_persist() {
     let result = InitVaultCommand {
         interactive: false,
         security_profile: merkle_types::SecurityProfile::Balanced,
+            passphrase: None,
     }
     .execute(&ctx)
     .await;
@@ -1647,6 +1651,7 @@ async fn init_wraps_vrk_recoverably_under_operator_recipient() {
     let out = InitVaultCommand {
         interactive: false,
         security_profile: SecurityProfile::Balanced,
+            passphrase: None,
     }
     .execute(&ctx)
     .await

@@ -195,6 +195,7 @@ pub async fn init(
     let cmd = merkle_application::commands::init_vault::InitVaultCommand {
         interactive: false,
         security_profile,
+        passphrase: None,
     };
 
     match cmd.execute(&ctx).await {

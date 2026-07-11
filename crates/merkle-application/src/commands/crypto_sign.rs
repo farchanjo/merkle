@@ -1,8 +1,7 @@
-//! `CryptoSignCommand` — Ed25519 sign with a vault-stored private key.
+//! `CryptoSignCommand` — Ed25519 or RSA-SHA256 sign with a vault-stored key.
 //!
-//! Loads the secret at `key_handle`, decrypts the private key bytes, and
-//! signs `message` via [`Crypto::ed25519_sign`]. The 64-byte signature is
-//! returned in hex encoding. Audited with `op=crypto_sign`.
+//! Loads the secret at `key_handle`, decrypts the private key bytes, and signs
+//! `message`. Audited with `op=crypto_sign`.
 
 use merkle_ports::Ed25519PrivateKey;
 use merkle_types::{AuditOp, AuditOutcome, Handle, NamespaceId};
@@ -10,23 +9,34 @@ use tracing::info;
 
 use crate::{AppContext, AppError};
 
+/// Signing algorithm for [`CryptoSignCommand`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CryptoSignAlgorithm {
+    /// Ed25519 pure signature over the message bytes (32-byte seed key).
+    Ed25519,
+    /// RSA PKCS#1 v1.5 signature of SHA-256(message). Key is PKCS#8 or PKCS#1 DER.
+    RsaSha256,
+}
+
 /// Input for crypto-sign.
 #[derive(Debug)]
 pub struct CryptoSignCommand {
     /// Namespace owning the signing key secret.
     pub namespace_id: NamespaceId,
-    /// Handle to the secret holding the Ed25519 32-byte private key seed.
+    /// Handle to the secret holding the private key material.
     pub key_handle: Handle,
     /// 32-byte namespace DEK for decrypting the key secret.
     pub dek_bytes: [u8; 32],
     /// Message bytes to sign.
     pub message: Vec<u8>,
+    /// Signature algorithm.
+    pub algorithm: CryptoSignAlgorithm,
 }
 
 /// Output of `CryptoSignCommand`.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CryptoSignOutput {
-    /// Hex-encoded 64-byte Ed25519 signature.
+    /// Hex-encoded signature bytes.
     pub signature_hex: String,
 }
 
@@ -38,14 +48,17 @@ impl CryptoSignCommand {
     /// - [`AppError::VaultSealed`] — vault not Unsealed.
     /// - [`AppError::NotFound`] — key secret not found.
     /// - [`AppError::Crypto`] — AEAD decryption failed.
-    /// - [`AppError::InvalidInput`] — key bytes are not 32 bytes long.
+    /// - [`AppError::InvalidInput`] — key bytes malformed for the algorithm.
     /// - [`AppError::Storage`] — audit write failed.
     pub async fn execute(&self, ctx: &AppContext) -> Result<CryptoSignOutput, AppError> {
         ctx.require_unsealed().await?;
 
-        info!(key_handle = %self.key_handle, "crypto_sign: loading signing key");
+        info!(
+            key_handle = %self.key_handle,
+            ?self.algorithm,
+            "crypto_sign: loading signing key"
+        );
 
-        // Load and decrypt the private key secret.
         let secret = ctx
             .storage
             .get_secret_by_handle(&self.key_handle)
@@ -69,19 +82,21 @@ impl CryptoSignCommand {
             &blob.associated_data,
         )?;
 
-        // The decrypted payload must be exactly 32 bytes (Ed25519 seed).
-        let seed: [u8; 32] = key_bytes.as_slice().try_into().map_err(|_| {
-            AppError::InvalidInput(format!(
-                "crypto_sign: expected 32-byte Ed25519 seed, got {} bytes",
-                key_bytes.len()
-            ))
-        })?;
+        let signature_hex = match self.algorithm {
+            CryptoSignAlgorithm::Ed25519 => {
+                let seed: [u8; 32] = key_bytes.as_slice().try_into().map_err(|_| {
+                    AppError::InvalidInput(format!(
+                        "crypto_sign: expected 32-byte Ed25519 seed, got {} bytes",
+                        key_bytes.len()
+                    ))
+                })?;
+                let sk = Ed25519PrivateKey(seed);
+                let signature: [u8; 64] = ctx.crypto.ed25519_sign(&sk, &self.message);
+                hex::encode(signature)
+            }
+            CryptoSignAlgorithm::RsaSha256 => sign_rsa_sha256(&key_bytes, &self.message)?,
+        };
 
-        let sk = Ed25519PrivateKey(seed);
-        let signature: [u8; 64] = ctx.crypto.ed25519_sign(&sk, &self.message);
-        let signature_hex = hex::encode(signature);
-
-        // Audit: op=crypto_sign.
         let hmac_key = ctx.require_hmac_key().await?;
         let params = merkle_domain_audit_compliance::AppendParams::new(
             AuditOp::CryptoSign,
@@ -96,4 +111,34 @@ impl CryptoSignCommand {
         info!(key_handle = %self.key_handle, "crypto_sign: signature produced");
         Ok(CryptoSignOutput { signature_hex })
     }
+}
+
+fn sign_rsa_sha256(key_bytes: &[u8], message: &[u8]) -> Result<String, AppError> {
+    use rsa::pkcs1::DecodeRsaPrivateKey as _;
+    use rsa::pkcs8::DecodePrivateKey as _;
+    use rsa::signature::{SignatureEncoding, Signer as _};
+    use rsa::{RsaPrivateKey, pkcs1v15::SigningKey};
+    use sha2::Sha256;
+
+    // Accept PEM or DER PKCS#8 / PKCS#1.
+    let key = if let Ok(s) = std::str::from_utf8(key_bytes) {
+        let s = s.trim();
+        if s.contains("BEGIN") {
+            RsaPrivateKey::from_pkcs8_pem(s)
+                .or_else(|_| RsaPrivateKey::from_pkcs1_pem(s))
+                .map_err(|e| AppError::InvalidInput(format!("rsa pem parse: {e}")))?
+        } else {
+            return Err(AppError::InvalidInput(
+                "rsa key must be PEM or DER PKCS#8/PKCS#1".into(),
+            ));
+        }
+    } else {
+        RsaPrivateKey::from_pkcs8_der(key_bytes)
+            .or_else(|_| RsaPrivateKey::from_pkcs1_der(key_bytes))
+            .map_err(|e| AppError::InvalidInput(format!("rsa der parse: {e}")))?
+    };
+
+    let signing_key = SigningKey::<Sha256>::new(key);
+    let sig = signing_key.sign(message);
+    Ok(hex::encode(sig.to_bytes()))
 }

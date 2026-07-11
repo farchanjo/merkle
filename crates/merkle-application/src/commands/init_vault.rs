@@ -60,6 +60,10 @@ pub struct InitVaultCommand {
     /// Security profile to apply for subsequent Namespace Policy defaults.
     /// Defaults to `Balanced` when not supplied.
     pub security_profile: SecurityProfile,
+
+    /// Optional master-key passphrase to enroll Argon2id fallback at init
+    /// (ADR-0005 / Feature 009). When `None`, also checks `MERKLE_MASTER_PASSPHRASE`.
+    pub passphrase: Option<String>,
 }
 
 /// Output of a successful `InitVaultCommand`.
@@ -289,6 +293,26 @@ impl InitVaultCommand {
         .caller_program("merkle-agent");
         // BUG-06: persist-then-advance under a single guard (see `audit_commit`).
         crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+
+        // Optional passphrase fallback enrollment (Feature 009 / ADR-0041).
+        let passphrase = self
+            .passphrase
+            .clone()
+            .or_else(|| std::env::var("MERKLE_MASTER_PASSPHRASE").ok())
+            .filter(|p| !p.is_empty());
+        if let Some(pass) = passphrase {
+            if let Err(e) = crate::commands::unseal_vault::enroll_passphrase_fallback(
+                ctx,
+                &master_key_bytes,
+                &pass,
+            )
+            .await
+            {
+                warn!(error = %e, "init_vault: passphrase fallback enroll failed (non-fatal)");
+            } else {
+                info!("init_vault: passphrase fallback enrolled");
+            }
+        }
 
         info!(vault_id = %vault_id, "init_vault: ceremony complete");
 

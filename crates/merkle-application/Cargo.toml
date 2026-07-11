@@ -32,6 +32,8 @@ zeroize                          = { workspace = true }
 age                              = { workspace = true }
 secrecy                          = { workspace = true }
 tempfile                         = { workspace = true }
+rsa                              = { workspace = true }
+sha2                             = { workspace = true }
 
 [dev-dependencies]
 tokio                             = { workspace = true, features = ["macros", "rt-multi-thread"] }

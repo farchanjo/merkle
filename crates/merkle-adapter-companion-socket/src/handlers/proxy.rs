@@ -49,7 +49,7 @@ use crate::{
         ProxySpawnRequest, ProxySpawnResponse, ProxySshCopyRequest, ProxySshCopyResponse,
         ProxySshExecRequest, ProxySshExecResponse, ProxySshShellRequest,
     },
-    problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
+    problem::{Problem, ProblemType, app_error_to_problem},
 };
 
 // ---------------------------------------------------------------------------
@@ -658,20 +658,14 @@ pub async fn spawn(
 
 /// `POST /v1/proxy/crypto/sign`
 ///
-/// Signs `message_b64` (base64-decoded before signing) with the Ed25519
-/// private key stored at `key_handle`. Only the `ed25519` algorithm is
-/// implemented in Phase 6; `rsa-sha256` returns 501.
+/// Signs `message_b64` with the private key at `key_handle` using Ed25519 or
+/// RSA-SHA256 (PKCS#1 v1.5).
 #[instrument(skip(ctx, body))]
 pub async fn crypto_sign(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<ProxyCryptoSignRequest>,
 ) -> impl IntoResponse {
-    if body.algorithm == CryptoSignAlgorithm::RsaSha256 {
-        return not_implemented(
-            "crypto_sign: rsa-sha256 is not yet implemented. Only ed25519 is supported.",
-        )
-        .into_response();
-    }
+    use merkle_application::commands::crypto_sign::CryptoSignAlgorithm as AppAlgo;
 
     let namespace_id = match parse_namespace_id(body.namespace_id) {
         Ok(id) => id,
@@ -695,24 +689,28 @@ pub async fn crypto_sign(
         .into_response();
     };
 
+    let (algorithm, algo_label) = match body.algorithm {
+        CryptoSignAlgorithm::Ed25519 => (AppAlgo::Ed25519, "ed25519"),
+        CryptoSignAlgorithm::RsaSha256 => (AppAlgo::RsaSha256, "rsa-sha256"),
+    };
+
     let cmd = CryptoSignCommand {
         namespace_id,
         key_handle: body.key_handle,
         dek_bytes: dek,
         message,
+        algorithm,
     };
 
     match cmd.execute(&ctx).await {
         Ok(out) => {
-            // signature_hex from CryptoSignCommand is lowercase hex; decode to
-            // bytes then re-encode as standard base64 for the DTO.
             let sig_bytes: Vec<u8> = (0..out.signature_hex.len())
                 .step_by(2)
                 .filter_map(|i| u8::from_str_radix(out.signature_hex.get(i..i + 2)?, 16).ok())
                 .collect();
             let resp = ProxyCryptoSignResponse {
                 signature_b64: B64.encode(&sig_bytes),
-                algorithm: "ed25519".into(),
+                algorithm: algo_label.into(),
             };
             (StatusCode::OK, Json(resp)).into_response()
         }

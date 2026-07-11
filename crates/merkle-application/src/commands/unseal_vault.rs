@@ -25,6 +25,8 @@
 //! vault whose `hmac_key` is still `None`. Any failure while fetching key
 //! material rolls the state back to `Sealed`.
 
+use std::sync::Arc;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use merkle_domain_audit_compliance::{AppendParams, AuditEntry, AuditLog, AuditWriter, PinnedHead};
 use merkle_domain_identity::{KEYCHAIN_SERVICE, SealedState, VaultRootKey};
@@ -459,7 +461,45 @@ pub async fn audit_commit(
         *log = rebuild_log(prev_head, prev_seq);
         return Err(e);
     }
+    // Best-effort remote HMAC webhook (Feature audit-remote-hmac-webhook).
+    fire_audit_webhook(ctx, &entry, hmac_key).await;
     Ok(())
+}
+
+/// Fire-and-forget POST of an audit entry to the configured webhook URL.
+async fn fire_audit_webhook(ctx: &AppContext, entry: &AuditEntry, hmac_key: &[u8; 32]) {
+    let Some(url) = ctx.audit_webhook_url.read().await.clone() else {
+        return;
+    };
+    let body = serde_json::json!({
+        "seq": entry.seq,
+        "op": entry.op.to_string(),
+        "outcome": entry.outcome.to_string(),
+        "current_hash": entry.current_hash.to_string(),
+        "hmac": entry.hmac.as_ref().map(|h| h.to_string()),
+    });
+    let body_bytes = body.to_string().into_bytes();
+    // Detached transport integrity tag over the JSON body (not the chain key reuse
+    // of entry.hmac — a request-level MAC for the webhook receiver).
+    let request_mac = merkle_types::HmacSignature::compute(hmac_key, &body_bytes);
+    let external = Arc::clone(&ctx.external);
+    tokio::spawn(async move {
+        let req = merkle_ports::HttpRequestSpec {
+            method: "POST".into(),
+            url,
+            headers: vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("X-Merkle-Audit-HMAC".into(), request_mac.to_string()),
+            ],
+            body: Some(body_bytes),
+        };
+        if let Err(e) = external
+            .http_request(req, merkle_ports::HttpAuth::None)
+            .await
+        {
+            tracing::warn!(error = %e, "audit webhook delivery failed");
+        }
+    });
 }
 
 /// Persist an audit entry and its MAC-authenticated pinned head atomically.

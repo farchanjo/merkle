@@ -163,6 +163,9 @@ pub struct AppContext {
     /// `GET /v1/agent/status` for `db_path` / `db_size_bytes` / free disk.
     /// `None` for in-memory or unknown backends.
     pub db_path: Arc<RwLock<Option<PathBuf>>>,
+
+    /// Optional remote audit webhook URL (HMAC-bearing POST on each commit).
+    pub audit_webhook_url: Arc<RwLock<Option<String>>>,
 }
 
 impl AppContext {
@@ -197,7 +200,15 @@ impl AppContext {
             anacron: Arc::new(RwLock::new(AnacronState::new(24, 50, 15))),
             backup_dir: Arc::new(RwLock::new(std::env::temp_dir().join("merkle-backups"))),
             db_path: Arc::new(RwLock::new(None)),
+            audit_webhook_url: Arc::new(RwLock::new(
+                std::env::var("MERKLE_AUDIT_WEBHOOK_URL").ok().filter(|s| !s.is_empty()),
+            )),
         }
+    }
+
+    /// Override the remote audit webhook URL (agent config).
+    pub async fn set_audit_webhook_url(&self, url: Option<String>) {
+        *self.audit_webhook_url.write().await = url.filter(|s| !s.is_empty());
     }
 
     /// Record operator/client activity: refresh `last_activity` and clear any
@@ -223,6 +234,39 @@ impl AppContext {
     /// Drop a tempfile registry entry (does not touch the filesystem).
     pub async fn unregister_tempfile(&self, token: &str) {
         self.tempfiles.write().await.remove(token);
+    }
+
+    /// Close a client session: revoke use-tokens, schedule tempfile cleanup,
+    /// and kill any port-forward children keyed by `session_id`.
+    ///
+    /// Namespace bindings remain persistent (ADR-0026); this is session hygiene
+    /// only, not an unbind of the vault namespace itself.
+    pub async fn close_session_state(&self, session_id: &UuidV7) -> (u32, u32) {
+        let tokens_revoked = {
+            let mut tokens = self.use_tokens.write().await;
+            let n = u32::try_from(tokens.len()).unwrap_or(u32::MAX);
+            tokens.clear();
+            n
+        };
+        let tempfiles_cleaned = {
+            let mut temps = self.tempfiles.write().await;
+            let n = u32::try_from(temps.len()).unwrap_or(u32::MAX);
+            for (_token, entry) in temps.drain() {
+                let _ = std::fs::remove_file(&entry.path);
+            }
+            n
+        };
+        {
+            let mut forwards = self.active_port_forwards.write().await;
+            if let Some(mut child) = forwards.remove(session_id) {
+                let _ = child.start_kill();
+            }
+            // Also drop any remaining forwards on full session close (1:1 phase).
+            for (_id, mut child) in forwards.drain() {
+                let _ = child.start_kill();
+            }
+        }
+        (tokens_revoked, tempfiles_cleaned)
     }
 
     /// Increment the anacron pending-change counter after a vault mutation.
