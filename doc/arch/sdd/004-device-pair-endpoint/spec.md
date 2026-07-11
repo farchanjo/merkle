@@ -4,6 +4,7 @@ number: 004
 slug: device-pair-endpoint
 status: implemented
 created_at: 2026-07-11T03:36:26.024614Z
+archived: true
 ---
 # Feature Specification: Device Pair Endpoint
 
