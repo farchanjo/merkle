@@ -133,10 +133,16 @@ Usage: /merkle-rollback <handle> <version>
 Example: /merkle-rollback vault://prod/token/github-ci 2
 ```
 
-Maps to: `vault_rotate { handle, new_value: <version_content>, purpose: "rollback to version <n>", operator_confirmation: true }`. The MCP Adapter fetches the historical version's value from the agent, then issues a `rotate` call that creates a new version containing the old value.
+Maps to: `vault_rollback { handle, target_version }` with operator
+confirmation injected only via MCP `_meta` key
+`dev.fapp.merkle/operator_confirmation` = JSON boolean `true` (MERK-001;
+never a tool argument). The agent append-copies the historical blob into a
+**new** monotonic version (`version_no = max+1`); it does not re-activate
+the historical version in place (ADR-0014 amendment). Audit records
+`op=rotate` for success and denial.
 
 Requires Operator Confirmation because rollback changes the live
-Secret value and leaves a version history gap.
+Secret value while preserving immutable history.
 
 ---
 
