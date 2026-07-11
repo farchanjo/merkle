@@ -153,3 +153,5 @@ Control-plane feature posture schemas (not domain aggregates).
 - [`disaster-recovery-path.cue`](disaster-recovery-path.cue)
 
 - [`device-pair-endpoint.cue`](device-pair-endpoint.cue)
+
+- [`ssh-port-forward.cue`](ssh-port-forward.cue)

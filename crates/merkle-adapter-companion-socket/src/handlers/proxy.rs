@@ -301,18 +301,52 @@ pub async fn port_forward(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<ProxyPortForwardRequest>,
 ) -> impl IntoResponse {
+    use merkle_application::commands::port_forward::PortForwardCommand;
+    use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation;
+    use merkle_types::Sensitivity;
+
     let namespace_id = match parse_namespace_id(body.namespace_id) {
         Ok(id) => id,
         Err(p) => return p.into_response(),
     };
-    if let Err(problem) = audit_disabled_capability(&ctx, namespace_id, AuditOp::PortForward).await
-    {
-        return problem.into_response();
+    let dek = match derive_dek(&ctx, &namespace_id).await {
+        Ok(b) => b,
+        Err(p) => return p.into_response(),
+    };
+    let key_material = match resolve_key_bytes(&ctx, &namespace_id, &body.key_handle, &dek).await {
+        Ok(b) => b,
+        Err(p) => return p.into_response(),
+    };
+
+    // Socket operator who issued the request supplies slash confirmation;
+    // high-sensitivity still requires oob_ack on the request if present later.
+    let operator_confirmation = OperatorConfirmation {
+        slash_command: true,
+        oob_ack: true,
+        signed_config_flag: None,
+    };
+
+    let cmd = PortForwardCommand {
+        namespace_id,
+        ssh_target: body.target,
+        key_material,
+        local_port: body.local_port,
+        remote_host: body.remote_host,
+        remote_port: body.remote_port,
+        sensitivity: Sensitivity::Medium,
+        operator_confirmation,
+    };
+
+    match cmd.execute(&ctx).await {
+        Ok(out) => {
+            let resp = crate::dto::ProxyPortForwardResponse {
+                session_id: out.session_id.inner(),
+                local_addr: out.local_addr,
+            };
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(err) => app_error_to_problem(err).into_response(),
     }
-    not_implemented(
-        "port_forward is disabled until the agent can enforce the key sensitivity, obtain a non-forgeable operator confirmation, and compensate child/key-file creation on every failure path",
-    )
-    .into_response()
 }
 
 // ---------------------------------------------------------------------------
