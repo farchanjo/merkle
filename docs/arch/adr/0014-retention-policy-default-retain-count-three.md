@@ -162,3 +162,60 @@ retain_count = 7
   `docs/arch/schemas/policy_permissions/`.
 * Related: [0003-sqlite-with-per-blob-encryption.md](0003-sqlite-with-per-blob-encryption.md)
 * Related: [0009-merkle-style-audit-hash-chain.md](0009-merkle-style-audit-hash-chain.md)
+
+
+## Amendment — 2026-07-10 — Immutable-history secret rollback (append-copy)
+
+### Context
+
+Retention (`retain_count = 3`) assumes a rollback window, but the original ADR
+does not specify the **mechanics** of restoring a historical value. Live code
+implements `Secret::rollback_to` as an **append-copy**, not an in-place
+reactivation of an old `version_no`. Feature and OpenAPI prose that said
+"set active version to N" / audit `op: rollback` drifted from the domain
+invariant already stated in `docs/arch/domain/secret-storage.md`.
+
+### Decision
+
+1. **Append-copy semantics.** `Secret::rollback_to(target_version_no, policy)`:
+   - Requires the target historical version to exist.
+   - Allocates a **new** `SecretVersion` with `version_no = max(existing) + 1`.
+   - Copies the target's private blob / DEK material into that new version
+     (immutable history — historical rows stay unchanged).
+   - Deprecates the previous active version through the same rotation path
+     used by `Secret::rotate`, including `retain_count` pruning of the oldest
+     deprecated versions when the chain would exceed the policy.
+2. **Surfaces.**
+   - Socket: `POST /v1/namespaces/{namespace_id}/secrets/{handle}/rollback`
+     with `target_version` + `OperatorConfirmation` (`slash_command` required).
+   - MCP: `vault_rollback` gated by MERK-001 `_meta` operator confirmation
+     (ADR-0011 amendment) and slash prompt `/merkle-rollback` (ADR-0028).
+   - Requires Unsealed vault.
+3. **Audit op.** Rollback does **not** introduce `AuditOp::Rollback`. Success
+   and denial both record **`AuditOp::Rotate`** (deny carries
+   `denial_reason` describing missing operator confirmation). Rationale: the
+   domain effect is a new monotonic version with copied material — the same
+   chain shape as rotate — and the closed `AuditOp` enum stays smaller. Clients
+   that need to distinguish rollbacks must use purpose/handle context or
+   command traces, not a separate op variant, until a future ADR adds one.
+4. **Client contract.** Response `active_version` is the **new** monotonic
+   version number, **not** equal to `target_version`. Clients must not assume
+   the historical `version_no` becomes current.
+
+### Consequences
+
+* Good, because version numbers stay strictly monotonic and historical rows
+  remain tamper-evident and decryptable.
+* Good, because rollback reuses retention pruning (cannot grow unbounded).
+* Bad, because operators watching only for audit `op=rollback` never see an
+  event (use `rotate` plus command context).
+* Bad, because a rollback counts against `retain_count` and may prune older
+  history the operator still wanted.
+
+### Cross-references
+
+* `crates/merkle-domain-secret-storage/src/secret.rs` — `rollback_to`
+* `crates/merkle-application/src/commands/rollback_secret.rs`
+* ADR-0011 (operator confirmation), ADR-0028 (slash prompt)
+* OpenAPI rollback path; Gherkin `rotate_secret.feature` rollback scenario
+* Domain: `docs/arch/domain/secret-storage.md` invariant 3
