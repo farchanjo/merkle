@@ -4,6 +4,7 @@ number: 002
 slug: backup-restore-path
 status: implemented
 created_at: 2026-07-11T03:10:34.911726Z
+archived: true
 ---
 # Feature Specification: Backup Restore Path
 
