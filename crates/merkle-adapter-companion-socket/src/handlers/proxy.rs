@@ -362,16 +362,45 @@ pub async fn port_forward(
 /// buffered output over this endpoint conflates two different user experiences
 /// (interactive PTY vs command execution) and would create a misleading API
 /// contract.
-#[instrument(skip(_ctx, _body))]
+#[instrument(skip(ctx, body))]
 pub async fn ssh_shell(
-    State(_ctx): State<Arc<AppContext>>,
-    Json(_body): Json<ProxySshShellRequest>,
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<ProxySshShellRequest>,
 ) -> impl IntoResponse {
-    not_implemented(
-        "ssh_shell: full PTY proxy is not implemented in Phase 6. \
-         A future streaming sub-protocol over the Companion Socket will replace this stub.",
-    )
-    .into_response()
+    use merkle_application::commands::ssh_shell::SshShellCommand;
+
+    let namespace_id = match parse_namespace_id(body.namespace_id) {
+        Ok(id) => id,
+        Err(p) => return p.into_response(),
+    };
+    let dek = match derive_dek(&ctx, &namespace_id).await {
+        Ok(b) => b,
+        Err(p) => return p.into_response(),
+    };
+    let key_material = match resolve_key_bytes(&ctx, &namespace_id, &body.key_handle, &dek).await {
+        Ok(b) => b,
+        Err(p) => return p.into_response(),
+    };
+
+    // Buffered remote shell (not interactive PTY). Full PTY remains future work.
+    let cmd = SshShellCommand {
+        namespace_id,
+        target: body.target,
+        key_material,
+        command: body.command,
+    };
+
+    match cmd.execute(&ctx).await {
+        Ok(out) => {
+            let resp = crate::dto::ProxySshShellResponse {
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                exit_code: out.exit_code,
+            };
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(err) => app_error_to_problem(err).into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
