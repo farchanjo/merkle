@@ -103,12 +103,11 @@ Invariants:
 
 1. When `allowed = false`, no Reveal is permitted regardless of other fields;
    the denial is immediate and does not prompt for confirmation.
-2. When `require_oob_above = low`, every Reveal at any sensitivity requires
-   OOB Confirmation; this is the effective behavior of the `paranoid` Security
-   Profile.
-3. `slash_command_only = true` combined with `require_oob_above = medium`
-   is the default for `balanced` Security Profile; API-parameter confirms
-   are accepted only for `low` sensitivity in that configuration.
+2. When `allowed = false` (paranoid default), no Reveal is permitted at all —
+   OOB threshold is irrelevant until reveals are re-enabled by policy override.
+3. `balanced` defaults: `allowed = true`, `require_oob_above = high`,
+   slash confirmation required. OOB applies at High sensitivity only (not
+   medium).
 
 ### SecurityProfile
 
@@ -122,13 +121,13 @@ informational only after that point.
 
 The three built-in profiles:
 
-- `relaxed` — low default sensitivity; OOB only for `high`; rate limits
-  generous; allows API-parameter confirms.
-- `balanced` — medium default sensitivity; OOB for `medium` and `high`;
-  moderate rate limits; Slash Command only for confirms.
-- `paranoid` — high default sensitivity; OOB for all sensitivities; strict
-  rate limits; cross-namespace imports disabled; Reveals allowed only via
-  explicit Slash Command with OOB.
+- `relaxed` — OOB at High; `allowed_consumers = ["*"]`; slash not required by
+  default; generous rate limits.
+- `balanced` — OOB at High only; slash required; empty `allowed_consumers`
+  (socket consumer gate skipped until configured; ADR-0015 A6); moderate rates.
+- `paranoid` — `reveal.allowed = false` by default (reveals disabled until
+  override); if re-enabled, `require_oob_above = medium` and slash required;
+  empty consumers; tight rates; cross-namespace imports disabled.
 
 Invariants:
 
@@ -142,22 +141,23 @@ Invariants:
 
 Role: ValueObject.
 
-Responsibility: A glob list of process names that may connect to the Companion
-Socket and dereference Use Tokens for Secrets in this Namespace. Evaluated at
-CompanionSocketSession establishment time against the peer process name resolved
-from the connecting PID. An empty list denies all external process access to
-this Namespace through the Companion Socket; the Vault Agent itself is always
-an implicit allowed consumer.
+Responsibility: A glob list of process paths/names that may call
+namespace-scoped Companion Socket operations for this Namespace. Evaluated at
+socket chokepoints against the peer program path resolved from peer credentials
+(ADR-0015 Amendment 6). An **empty** list means the consumer check is **skipped**
+(opt-in process isolation): same-UID peer-cred still applies, but any resolved
+program may proceed until the operator configures globs. A non-empty list is
+fail-closed (path must match; unresolved path denies). The Vault Agent itself
+is always an implicit allowed consumer.
 
 Invariants:
 
 1. Glob patterns follow Unix shell glob semantics (`*` matches any sequence
-   of characters; `?` matches one character); they do not match directory
-   separators.
+   of characters including `/`; `?` matches one character). The socket passes
+   the full peer `program_path` into the matcher (ADR-0015 Amendment 6).
 2. An AllowedConsumers list with the single entry `*` permits any process
-   name; this is the `relaxed` profile default.
-3. Process name matching is case-sensitive on Linux and case-insensitive on
-   macOS; the policy record must declare the target platform's convention.
+   path; this is the `relaxed` profile default.
+3. Matching is case-sensitive on all platforms today (implementation).
 
 ## Key Invariants
 
@@ -169,8 +169,10 @@ Invariants:
    the limit denies the operation immediately without side effects.
 4. Cross-Namespace reads are denied by default; a positive import allowlist
    entry is required for each permitted pairing.
-5. `allowed_consumers` with an empty list denies all Companion Socket access
-   to the Namespace; an explicit `*` permits any process name.
+5. `allowed_consumers` with an empty list **skips** process allowlist
+   enforcement (opt-in; ADR-0015 Amendment 6). Non-empty lists fail closed on
+   mismatch or unresolved peer path. An explicit `*` permits any process name
+   when a list is configured; `relaxed` profile defaults may use `*`.
 6. When `reveal_policy.allowed = false`, no Reveal is possible regardless of
    Operator Confirmation or Slash Command.
 7. Security Profile selection at init determines the starting policy; per-
