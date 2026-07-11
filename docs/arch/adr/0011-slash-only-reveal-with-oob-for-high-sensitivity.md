@@ -479,3 +479,60 @@ same canonical account name.
 - Integration test in `merkle-application/tests/use_cases.rs`: full reveal via JWT instead of
   slash command.
 - Three new BDD scenarios in `reveal_with_oob.feature`: success, signature failure, exp past.
+
+
+## Amendment — 2026-07-10 — MERK-001: operator confirmation via MCP `_meta`
+
+### Problem refinement
+
+The Decision Outcome correctly forbids LLM-set confirmation flags in tool call
+arguments. The original text referred to a client-injected bit in "MCP session
+context" without naming the transport field the rmcp adapter actually reads.
+Without an exact contract, implementers risk adding `operator_confirmation` as a
+JSON Schema tool argument (which the model can forge) or reading ad-hoc headers.
+
+### Decision (binding)
+
+1. **Transport key.** On the MCP surface, operator slash confirmation is the
+   request `_meta` entry with key exactly:
+
+   `dev.fapp.merkle/operator_confirmation`
+
+   Constant: `OPERATOR_CONFIRMATION_META_KEY` in
+   `crates/merkle-adapter-mcp/src/lib.rs`.
+
+2. **Value.** The gate accepts confirmation only when the value is the JSON
+   boolean `true` (not the string `"true"`, not `1`, not presence alone).
+   Helper: `operator_confirmation_from_meta`.
+
+3. **Who writes `_meta`.** Only the MCP host / client transport (e.g. Claude Code
+   slash-command path) may set this field. The LLM controls tool `arguments`
+   only; it cannot attach or forge `_meta`.
+
+4. **Forbidden.** Tool input structs for destructive or sensitive tools
+   (`vault_reveal`, `vault_delete`, `vault_rollback`, and any future gate that
+   requires operator confirmation) MUST NOT declare an `operator_confirmation`
+   (or equivalent) argument. Adding such a field does nothing for authorization
+   and trains unsafe patterns.
+
+5. **Adapter translation.** When `_meta` confirms, the MCP adapter builds the
+   Companion Socket `OperatorConfirmation` DTO with `slash_command = true` (and
+   OOB handled on the agent side per this ADR). When `_meta` does not confirm,
+   the tool fails closed before calling the socket for gated operations.
+
+6. **Prompts.** ADR-0028 prompt bodies remain informational; they do not grant
+   confirmation. Slash prompts rely on the host to inject `_meta`.
+
+### Consequences
+
+* Prompt injection cannot forge confirmation via tool arguments.
+* Hosts that fail to inject `_meta` on slash commands produce silent denials
+  (fail closed) — operators must configure client slash wiring.
+* Specs and OpenAPI descriptions that only say "Slash Command flag" without
+  naming `_meta` are incomplete; update wiring docs in the same change train.
+
+### Cross-references
+
+* ADR-0028 MCP prompts
+* `docs/arch/integrations/claude-code-wiring.md`
+* `docs/arch/domain/access-mediation.md`
