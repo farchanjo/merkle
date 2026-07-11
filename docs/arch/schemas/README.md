@@ -157,3 +157,5 @@ Control-plane feature posture schemas (not domain aggregates).
 - [`ssh-port-forward.cue`](ssh-port-forward.cue)
 
 - [`buffered-ssh-shell.cue`](buffered-ssh-shell.cue)
+
+- [`allowlisted-spawn-proxy.cue`](allowlisted-spawn-proxy.cue)
