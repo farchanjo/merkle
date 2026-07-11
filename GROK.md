@@ -11,11 +11,11 @@ speckit plane in `doc/arch/` (symlinks + governance).
 
 spec-first: read the corpus before code. Drive the loop with:
 
-* `~/bin/speckit status`
-* `~/bin/speckit next`
-* `~/bin/speckit validate`
+* `speckit status`
+* `speckit next`
+* `speckit validate`
 
-Binary-only: use `~/bin/speckit`, never the speckit source tree.
+Binary-only: use the installed `speckit` binary, never the speckit source tree.
 
 ## Architecture
 
@@ -24,11 +24,36 @@ Proxy I/O runs in the agent (ADR-0024 amendment). See `AGENTS.md` for the map.
 
 ## Commands
 
+Full verb list lives in `AGENTS.md`. Common loop:
+
+```text
+speckit status
+speckit next
+speckit missing
+speckit validate
+speckit specify
+speckit clarify
+speckit plan
+speckit tasks
+speckit analyze
+speckit implement
+speckit init
+speckit constitution
+speckit feature list
+speckit explain
+speckit verify
+speckit search
+speckit diagram
+speckit reindex
+```
+
+## Commands
+
 ```sh
-~/bin/speckit status
-~/bin/speckit next
-~/bin/speckit missing
-~/bin/speckit validate
+speckit status
+speckit next
+speckit missing
+speckit validate
 cargo check --workspace --all-targets
 make deploy
 ```
