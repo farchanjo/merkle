@@ -63,20 +63,14 @@ pub async fn run(
     passphrase: bool,
     format: OutputFormat,
 ) -> Result<(), CliError> {
-    if passphrase {
-        let _pass = read_passphrase_with_fallback()?;
-        // The current Companion Socket API does not accept a passphrase over
-        // the wire (UnsealRequest has no fields). The CLI derives the key
-        // locally and initiates the unseal; the agent fetches from keychain.
-        eprintln!(
-            "warn: passphrase-based unseal is not yet implemented in the Companion Socket API; \
-             proceeding with keychain-based unseal"
-        );
-    }
+    let body = if passphrase {
+        let pass = read_passphrase_with_fallback()?;
+        serde_json::json!({ "passphrase": pass })
+    } else {
+        serde_json::json!({})
+    };
 
-    let value: serde_json::Value = client
-        .post("/v1/agent/unseal", &serde_json::json!({}))
-        .await?;
+    let value: serde_json::Value = client.post("/v1/agent/unseal", &body).await?;
 
     if format == OutputFormat::Human {
         let already = value

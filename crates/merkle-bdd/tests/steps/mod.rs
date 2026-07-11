@@ -246,6 +246,7 @@ impl MerkleWorld {
                 entropy_seeded: true,
                 keychain_reachable: true,
             },
+        passphrase: None,
         };
         cmd.execute(&self.app_ctx)
             .await

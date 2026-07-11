@@ -220,7 +220,7 @@ pub async fn init(
 )]
 pub async fn unseal(
     State(ctx): State<Arc<AppContext>>,
-    _body: Option<Json<UnsealRequest>>,
+    body: Option<Json<UnsealRequest>>,
 ) -> impl IntoResponse {
     // Construct preconditions: attempt mlock (best-effort) and assume entropy
     // is seeded. In a real binary these would be checked at startup; here we
@@ -232,10 +232,20 @@ pub async fn unseal(
         keychain_reachable: true,
     };
 
-    let cmd = merkle_application::commands::unseal_vault::UnsealVaultCommand { preconditions };
+    let passphrase = body.as_ref().and_then(|j| j.0.passphrase.clone());
+    let cmd = merkle_application::commands::unseal_vault::UnsealVaultCommand {
+        preconditions,
+        passphrase,
+    };
 
     match cmd.execute(&ctx).await {
         Ok(output) => {
+            use merkle_application::commands::unseal_vault::UnsealKeyMethod;
+            use merkle_companion_contract::UnsealMethod;
+            let method = Some(match output.method {
+                UnsealKeyMethod::Keychain => UnsealMethod::Keychain,
+                UnsealKeyMethod::Argon2idPassphrase => UnsealMethod::Argon2idPassphrase,
+            });
             // ADR-0025 §Bug #5: propagate the new `was_already_unsealed`
             // discriminator so CLI/MCP callers print the correct status text.
             // Previously this aliased `output.unsealed` (always true on success),
@@ -243,7 +253,7 @@ pub async fn unseal(
             let resp = UnsealResponse {
                 sealed: !output.unsealed,
                 already_unsealed: output.was_already_unsealed,
-                method: None,
+                method,
             };
             (StatusCode::OK, Json(resp)).into_response()
         }

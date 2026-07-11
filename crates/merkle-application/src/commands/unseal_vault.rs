@@ -35,6 +35,7 @@ use zeroize::Zeroizing;
 
 use crate::commands::init_vault::{KEYCHAIN_ACCOUNT_VRK_MASTER, VRK_MASTER_AAD};
 use crate::{AppContext, AppError};
+use merkle_domain_identity::Argon2idParams;
 
 /// Domain-separation label for the audit-chain HMAC key derivation (ADR-0021).
 const AUDIT_HMAC_KEY_DOMAIN: &[u8] = b"merkle vault hmac key v1";
@@ -42,11 +43,29 @@ const AUDIT_HMAC_KEY_DOMAIN: &[u8] = b"merkle vault hmac key v1";
 /// XChaCha20-Poly1305 nonce length (bytes) prefixed to the wrapped VRK blob.
 const NONCE_LEN: usize = 24;
 
+/// Keychain account storing Argon2id params JSON for passphrase unseal.
+pub const KEYCHAIN_ACCOUNT_ARGON2_PARAMS: &str = "master-argon2-params-v1";
+/// Keychain account storing AEAD wrap of Master Key under passphrase-derived key.
+pub const KEYCHAIN_ACCOUNT_MASTER_PASSPHRASE_WRAP: &str = "master-passphrase-wrap-v1";
+/// AAD for passphrase wrap of the Master Key.
+pub const MASTER_PASSPHRASE_AAD: &[u8] = b"merkle master passphrase wrap v1";
+
+/// How the Master Key was obtained for this unseal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsealKeyMethod {
+    /// Retrieved from the OS / file keychain.
+    Keychain,
+    /// Derived via Argon2id and used to unwrap the stored Master Key wrap.
+    Argon2idPassphrase,
+}
+
 /// Input for unsealing the vault.
 #[derive(Debug)]
 pub struct UnsealVaultCommand {
     /// Runtime preconditions evaluated before any key material is loaded.
     pub preconditions: merkle_domain_identity::UnsealPreconditions,
+    /// Optional passphrase for Argon2id Master Key fallback (ADR-0005).
+    pub passphrase: Option<String>,
 }
 
 /// Output of a successful `UnsealVaultCommand`.
@@ -69,6 +88,9 @@ pub struct UnsealVaultOutput {
     /// (CLI, MCP tool result text) MUST branch on this field — never on
     /// [`Self::unsealed`] alone.
     pub was_already_unsealed: bool,
+
+    /// How the Master Key was obtained (keychain vs passphrase).
+    pub method: UnsealKeyMethod,
 }
 
 impl UnsealVaultCommand {
@@ -95,11 +117,16 @@ impl UnsealVaultCommand {
             return Ok(UnsealVaultOutput {
                 unsealed: true,
                 was_already_unsealed: true,
+                method: if self.passphrase.is_some() {
+                    UnsealKeyMethod::Argon2idPassphrase
+                } else {
+                    UnsealKeyMethod::Keychain
+                },
             });
         }
 
         // ── Window 2: fetch ALL key material (no lock held) ──────────────────
-        let (vrk, hmac_key) = match self.fetch_key_material(ctx).await {
+        let (vrk, hmac_key, method) = match self.fetch_key_material(ctx).await {
             Ok(material) => material,
             Err(e) => {
                 rollback_to_sealed(ctx).await;
@@ -118,10 +145,11 @@ impl UnsealVaultCommand {
         // Reset idle clock so an immediate idle re-lock cannot fire after unseal.
         ctx.touch_activity().await;
 
-        info!("unseal_vault: vault is now Unsealed");
+        info!(?method, "unseal_vault: vault is now Unsealed");
         Ok(UnsealVaultOutput {
             unsealed: true,
             was_already_unsealed: false,
+            method,
         })
     }
 
@@ -147,22 +175,26 @@ impl UnsealVaultCommand {
     async fn fetch_key_material(
         &self,
         ctx: &AppContext,
-    ) -> Result<(VaultRootKey, [u8; 32]), AppError> {
-        let keychain_ref = {
-            let identity = ctx.identity.read().await;
-            identity.master_key_keychain_ref().clone()
+    ) -> Result<(VaultRootKey, [u8; 32], UnsealKeyMethod), AppError> {
+        let (master_key_arr, method) = if let Some(ref passphrase) = self.passphrase {
+            let master = load_master_via_passphrase(ctx, passphrase).await?;
+            (master, UnsealKeyMethod::Argon2idPassphrase)
+        } else {
+            let keychain_ref = {
+                let identity = ctx.identity.read().await;
+                identity.master_key_keychain_ref().clone()
+            };
+            let master_key_bytes = ctx
+                .keychain
+                .retrieve(keychain_ref.service(), keychain_ref.account())
+                .await
+                .map_err(AppError::Keychain)?;
+            let master = Zeroizing::new(
+                <[u8; 32]>::try_from(master_key_bytes)
+                    .map_err(|_| AppError::InvalidInput("master key has wrong length".into()))?,
+            );
+            (master, UnsealKeyMethod::Keychain)
         };
-        let master_key_bytes = ctx
-            .keychain
-            .retrieve(keychain_ref.service(), keychain_ref.account())
-            .await
-            .map_err(AppError::Keychain)?;
-
-        // Zeroizing so the plaintext master key is wiped when this frame drops.
-        let master_key_arr = Zeroizing::new(
-            <[u8; 32]>::try_from(master_key_bytes)
-                .map_err(|_| AppError::InvalidInput("master key has wrong length".into()))?,
-        );
 
         // BUG-005: reproduce the EXACT Vault Root Key by AEAD-decrypting the
         // master-wrapped blob `init_vault` persisted. The previous placeholder
@@ -199,8 +231,139 @@ impl UnsealVaultCommand {
                 .map_err(|_| AppError::InvalidInput("unwrapped VRK has wrong length".into()))?,
         );
         let hmac_key = derive_audit_hmac_key(ctx.crypto.as_ref(), &vrk_bytes);
-        Ok((VaultRootKey::from_bytes(*vrk_bytes), hmac_key))
+        Ok((VaultRootKey::from_bytes(*vrk_bytes), hmac_key, method))
     }
+}
+
+/// Enroll passphrase fallback: wrap the Master Key under Argon2id(passphrase).
+///
+/// Stores params + wrap in the keychain so later unseal can omit keychain master
+/// retrieve and use passphrase only.
+///
+/// # Errors
+///
+/// Crypto / keychain failures.
+pub async fn enroll_passphrase_fallback(
+    ctx: &AppContext,
+    master_key: &[u8; 32],
+    passphrase: &str,
+) -> Result<(), AppError> {
+    if passphrase.is_empty() {
+        return Err(AppError::InvalidInput("passphrase must not be empty".into()));
+    }
+    let salt = ctx.crypto.random_bytes_16();
+    let params = Argon2idParams::try_new(65_536, 3, 1, salt)
+        .map_err(|e| AppError::Domain(e.to_string()))?;
+    let kdf_key = ctx
+        .crypto
+        .argon2id_derive(passphrase.as_bytes(), params.salt(), &params)?;
+    let nonce = ctx.crypto.random_bytes_24();
+    let ct = ctx
+        .crypto
+        .aead_encrypt(&kdf_key, &nonce, master_key, MASTER_PASSPHRASE_AAD)?;
+    let mut wrap = Vec::with_capacity(24 + ct.len());
+    wrap.extend_from_slice(&nonce);
+    wrap.extend_from_slice(&ct);
+    let wrap_b64 = BASE64.encode(&wrap).into_bytes();
+    let params_json = serde_json::json!({
+        "m_cost": params.m_cost(),
+        "t_cost": params.t_cost(),
+        "p_cost": params.p_cost(),
+        "salt_b64": BASE64.encode(params.salt()),
+    })
+    .to_string()
+    .into_bytes();
+    ctx.keychain
+        .store(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_ARGON2_PARAMS, &params_json)
+        .await
+        .map_err(AppError::Keychain)?;
+    ctx.keychain
+        .store(
+            KEYCHAIN_SERVICE,
+            KEYCHAIN_ACCOUNT_MASTER_PASSPHRASE_WRAP,
+            &wrap_b64,
+        )
+        .await
+        .map_err(AppError::Keychain)?;
+    Ok(())
+}
+
+async fn load_master_via_passphrase(
+    ctx: &AppContext,
+    passphrase: &str,
+) -> Result<Zeroizing<[u8; 32]>, AppError> {
+    if passphrase.is_empty() {
+        return Err(AppError::InvalidInput("passphrase must not be empty".into()));
+    }
+    let params_json = ctx
+        .keychain
+        .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_ARGON2_PARAMS)
+        .await
+        .map_err(|e| match e {
+            merkle_ports::KeychainError::NotFound => AppError::InvalidInput(
+                "passphrase_params_not_configured: enroll passphrase fallback first".into(),
+            ),
+            other => AppError::Keychain(other),
+        })?;
+    let v: serde_json::Value = serde_json::from_slice(&params_json)
+        .map_err(|e| AppError::Domain(format!("argon2 params json: {e}")))?;
+    let m_cost = v["m_cost"]
+        .as_u64()
+        .ok_or_else(|| AppError::Domain("argon2 m_cost missing".into()))? as u32;
+    let t_cost = v["t_cost"]
+        .as_u64()
+        .ok_or_else(|| AppError::Domain("argon2 t_cost missing".into()))? as u32;
+    let p_cost = v["p_cost"]
+        .as_u64()
+        .ok_or_else(|| AppError::Domain("argon2 p_cost missing".into()))? as u32;
+    let salt_b64 = v["salt_b64"]
+        .as_str()
+        .ok_or_else(|| AppError::Domain("argon2 salt_b64 missing".into()))?;
+    let salt_vec = BASE64
+        .decode(salt_b64)
+        .map_err(|e| AppError::Domain(format!("argon2 salt b64: {e}")))?;
+    let salt: [u8; 16] = salt_vec
+        .try_into()
+        .map_err(|_| AppError::Domain("argon2 salt must be 16 bytes".into()))?;
+    let params = Argon2idParams::try_new(m_cost, t_cost, p_cost, salt)
+        .map_err(|e| AppError::Domain(e.to_string()))?;
+    let kdf_key = ctx
+        .crypto
+        .argon2id_derive(passphrase.as_bytes(), params.salt(), &params)?;
+
+    let wrap_b64 = ctx
+        .keychain
+        .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_PASSPHRASE_WRAP)
+        .await
+        .map_err(|e| match e {
+            merkle_ports::KeychainError::NotFound => AppError::InvalidInput(
+                "passphrase_wrap_not_configured: enroll passphrase fallback first".into(),
+            ),
+            other => AppError::Keychain(other),
+        })?;
+    let wrap = BASE64
+        .decode(&wrap_b64)
+        .map_err(|e| AppError::InvalidInput(format!("passphrase wrap b64: {e}")))?;
+    if wrap.len() <= NONCE_LEN {
+        return Err(AppError::InvalidInput(
+            "passphrase wrap too short".into(),
+        ));
+    }
+    let (nonce_bytes, ciphertext) = wrap.split_at(NONCE_LEN);
+    let nonce: [u8; NONCE_LEN] = nonce_bytes
+        .try_into()
+        .map_err(|_| AppError::InvalidInput("passphrase wrap nonce wrong length".into()))?;
+    let master_vec = ctx
+        .crypto
+        .aead_decrypt(&kdf_key, &nonce, ciphertext, MASTER_PASSPHRASE_AAD)
+        .map_err(|_| {
+            AppError::PolicyDenied("unseal_authentication_failed: bad passphrase".into())
+        })?;
+    let master = Zeroizing::new(
+        <[u8; 32]>::try_from(master_vec.as_slice())
+            .map_err(|_| AppError::InvalidInput("unwrapped master wrong length".into()))?,
+    );
+    Ok(master)
 }
 
 /// Publish the HMAC key and flip the state to `Unsealed` atomically.
@@ -692,7 +855,8 @@ pub(crate) mod test_support {
                 entropy_seeded: true,
                 keychain_reachable: true,
             },
-        }
+                passphrase: None,
+    }
         .execute(ctx)
         .await
         .expect("unseal should succeed");
@@ -870,7 +1034,8 @@ mod tests {
 
         let result = UnsealVaultCommand {
             preconditions: preconditions(),
-        }
+                passphrase: None,
+    }
         .execute(&ctx)
         .await;
 
@@ -914,7 +1079,8 @@ mod tests {
 
         let result = UnsealVaultCommand {
             preconditions: preconditions(),
-        }
+                passphrase: None,
+    }
         .execute(&ctx)
         .await;
 
