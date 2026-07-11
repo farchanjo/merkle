@@ -4,6 +4,7 @@ number: 005
 slug: ssh-port-forward
 status: implemented
 created_at: 2026-07-11T03:40:08.42385Z
+archived: true
 ---
 # Feature Specification: SSH Port Forward
 
