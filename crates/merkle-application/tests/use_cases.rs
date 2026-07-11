@@ -1915,3 +1915,94 @@ async fn disaster_recover_rewrapping_master_from_v2_backup() {
 
     std::fs::remove_dir_all(directory).ok();
 }
+
+/// Feature 008 — High reveal succeeds only after real OOB auto-approve (not forged oob_ack).
+#[tokio::test]
+async fn test_reveal_high_succeeds_after_verified_oob_auto_approve() {
+    use merkle_application::commands::reveal_secret::RevealSecretCommand;
+    use merkle_domain_access_mediation::operator_confirmation::OperatorConfirmation;
+    use merkle_types::{CompanionDeviceClass, OobChannel};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let storage = merkle_adapter_sqlite::SqliteStorage::open("sqlite::memory:")
+        .await
+        .expect("sqlite");
+    let crypto = Arc::new(merkle_adapter_crypto::RustCryptoAdapter::new());
+    let keychain = Arc::new(merkle_adapter_keychain::MockKeychainAdapter::new());
+    let oob = Arc::new(MockOobNotifier::new());
+    oob.set_auto_approve(true);
+    let external = Arc::new(merkle_adapter_external_services::MockExternalServices::new());
+    let keychain_ref = merkle_domain_identity::KeychainEntry::for_master_key(
+        1,
+        Rfc3339Timestamp::now(),
+    );
+    let recovery_pubkey = merkle_domain_identity::RecoveryPublicKey::new(
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p".to_owned(),
+        "SHA256:test=".to_owned(),
+        Rfc3339Timestamp::now(),
+    );
+    let identity = merkle_domain_identity::VaultIdentity::new(keychain_ref, recovery_pubkey);
+    let ctx = AppContext::new(
+        Arc::new(storage),
+        keychain,
+        crypto,
+        oob,
+        external,
+        identity,
+    );
+    // Seed master + VRK like other tests via preload helper paths.
+    preload_master_key(&ctx).await;
+    assert!(unseal(&ctx).await);
+
+    let ns_label: NamespaceLabel = "high-oob".parse().unwrap();
+    let ns_id = BindNamespaceCommand {
+        label: ns_label,
+        cwd_hash: None,
+        dek_version: 1,
+    }
+    .execute(&ctx)
+    .await
+    .expect("bind")
+    .namespace_id;
+    let handle: merkle_types::Handle = "vault://high-oob/api-key/prod".parse().unwrap();
+    PutSecretCommand {
+        namespace_id: ns_id,
+        handle: handle.clone(),
+        category: "api-key".parse().unwrap(),
+        sensitivity: Sensitivity::High,
+        tags: vec!["env:prod".parse().unwrap()],
+        expose_metadata: false,
+        description: None,
+        plaintext: b"high-secret".to_vec(),
+        dek_version: 1,
+        dek_bytes: test_dek(),
+        value_format: merkle_application::ValueFormat::Utf8,
+    }
+    .execute(&ctx)
+    .await
+    .expect("put high");
+
+    let out = RevealSecretCommand {
+        namespace_id: ns_id,
+        handle: handle.clone(),
+        operator_confirmation: OperatorConfirmation {
+            slash_command: true,
+            oob_ack: false, // must not matter
+            signed_config_flag: None,
+        },
+        challenge_id: None,
+        sensitivity: Sensitivity::High,
+        oob_threshold: Sensitivity::High,
+        security_profile: SecurityProfile::Balanced,
+        dek_bytes: test_dek(),
+        companion_device: None,
+        oob_channel: OobChannel::DesktopNotif,
+        oob_timeout: Duration::from_secs(2),
+        required_device_class: CompanionDeviceClass::Software,
+    }
+    .execute(&ctx)
+    .await
+    .expect("high reveal after OOB");
+    assert_eq!(out.plaintext, b"high-secret");
+}

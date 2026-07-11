@@ -159,3 +159,5 @@ Control-plane feature posture schemas (not domain aggregates).
 - [`buffered-ssh-shell.cue`](buffered-ssh-shell.cue)
 
 - [`allowlisted-spawn-proxy.cue`](allowlisted-spawn-proxy.cue)
+
+- [`verified-oob-high-reveal.cue`](verified-oob-high-reveal.cue)

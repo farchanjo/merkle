@@ -149,26 +149,107 @@ impl RevealSecretCommand {
 
         let oob_required = self.sensitivity >= self.oob_threshold
             || self.security_profile == SecurityProfile::Paranoid;
-        if oob_required {
-            // The OOB adapter does not yet route a resolution back to the
-            // originating challenge and this command does not verify its
-            // device signature.  A caller-provided `oob_ack` boolean is not an
-            // authorization factor, so every OOB-gated reveal must stop here.
-            let hmac_key = ctx.require_hmac_key().await?;
-            let params = merkle_domain_audit_compliance::AppendParams::new(
-                AuditOp::Reveal,
-                AuditOutcome::Deny,
-                self.namespace_id,
-            )
-            .handle(self.handle.clone())
-            .sensitivity(self.sensitivity)
-            .denial_reason("oob_verification_unavailable")
-            .caller_program("merkle-agent");
-            crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
 
-            return Err(AppError::PolicyDenied(
-                "oob_verification_unavailable".into(),
-            ));
+        // Caller-supplied oob_ack is never trusted as authorization. When OOB is
+        // required we dispatch a real challenge, await a resolution from the
+        // OobNotifier, and only then set oob_ack for policy evaluation.
+        let mut effective_confirmation = self.operator_confirmation.clone();
+        if oob_required {
+            effective_confirmation.oob_ack = false;
+            let device = self.companion_device.clone().unwrap_or_else(software_placeholder_device);
+            let challenge_id = ChallengeId::new();
+            let challenge = merkle_domain_access_mediation::oob::challenge::OobChallenge {
+                challenge_id,
+                namespace_id: self.namespace_id,
+                secret_handle: self.handle.clone(),
+                sensitivity: self.sensitivity,
+                oob_channel: self.oob_channel,
+                // Wall-clock expiry is enforced by the OobNotifier timeout;
+                // stamp "now" as a lower bound for clients that display the field.
+                expires_at: Rfc3339Timestamp::now(),
+                request_nonce: ctx.crypto.random_bytes_32(),
+                envelope: None,
+            };
+
+            if let Err(e) = ctx.oob.dispatch(&challenge, &device).await {
+                let hmac_key = ctx.require_hmac_key().await?;
+                let params = merkle_domain_audit_compliance::AppendParams::new(
+                    AuditOp::Reveal,
+                    AuditOutcome::Deny,
+                    self.namespace_id,
+                )
+                .handle(self.handle.clone())
+                .sensitivity(self.sensitivity)
+                .denial_reason("oob_dispatch_failed")
+                .caller_program("merkle-agent");
+                crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+                return Err(AppError::PolicyDenied(format!("oob_dispatch_failed: {e}")));
+            }
+            let resolution = match ctx
+                .oob
+                .await_resolution(challenge_id, self.oob_timeout)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let hmac_key = ctx.require_hmac_key().await?;
+                    let params = merkle_domain_audit_compliance::AppendParams::new(
+                        AuditOp::Reveal,
+                        AuditOutcome::Deny,
+                        self.namespace_id,
+                    )
+                    .handle(self.handle.clone())
+                    .sensitivity(self.sensitivity)
+                    .denial_reason("oob_timeout_or_failed")
+                    .caller_program("merkle-agent");
+                    crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+                    return Err(AppError::PolicyDenied(format!("oob_timeout_or_failed: {e}")));
+                }
+            };
+
+            if !resolution.is_approved() {
+                let hmac_key = ctx.require_hmac_key().await?;
+                let params = merkle_domain_audit_compliance::AppendParams::new(
+                    AuditOp::Reveal,
+                    AuditOutcome::Deny,
+                    self.namespace_id,
+                )
+                .handle(self.handle.clone())
+                .sensitivity(self.sensitivity)
+                .denial_reason("oob_not_approved")
+                .caller_program("merkle-agent");
+                crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+                return Err(AppError::PolicyDenied("oob_not_approved".into()));
+            }
+
+            // Hardware-class devices attach an Ed25519 signature over the
+            // request_nonce; verify when a non-zero enrolled pubkey is present.
+            // Software / terminal OOB channels may approve without a signature
+            // (or with a transport-only stub signature that has no pubkey).
+            if device.ed25519_pubkey != [0u8; 32]
+                && let Some(sig) = resolution.device_signature.as_ref()
+            {
+                let pk = merkle_ports::Ed25519PublicKey(device.ed25519_pubkey);
+                if let Err(e) = ctx.crypto.ed25519_verify(&pk, &challenge.request_nonce, sig) {
+                    let hmac_key = ctx.require_hmac_key().await?;
+                    let params = merkle_domain_audit_compliance::AppendParams::new(
+                        AuditOp::Reveal,
+                        AuditOutcome::Deny,
+                        self.namespace_id,
+                    )
+                    .handle(self.handle.clone())
+                    .sensitivity(self.sensitivity)
+                    .denial_reason("oob_signature_invalid")
+                    .caller_program("merkle-agent");
+                    crate::commands::unseal_vault::audit_commit(ctx, params, &hmac_key).await?;
+                    return Err(AppError::PolicyDenied(format!(
+                        "oob_signature_invalid: {e}"
+                    )));
+                }
+            }
+
+            effective_confirmation.oob_ack = true;
+            info!(%challenge_id, "reveal_secret: OOB challenge approved");
         }
 
         // 1. Resolve the companion device class (Software if no device enrolled).
@@ -177,9 +258,9 @@ impl RevealSecretCommand {
             .as_ref()
             .map_or(CompanionDeviceClass::Software, |d| d.class);
 
-        // 2. Evaluate Operator Confirmation policy.
+        // 2. Evaluate Operator Confirmation policy (with verified oob_ack).
         let authorization = decision::evaluate(
-            &self.operator_confirmation,
+            &effective_confirmation,
             self.sensitivity,
             self.oob_threshold,
             self.security_profile,
@@ -246,5 +327,19 @@ impl RevealSecretCommand {
 
         info!(handle = %self.handle, "reveal_secret: plaintext decrypted");
         Ok(RevealSecretOutput { plaintext })
+    }
+}
+
+/// Placeholder software-class device used when no companion is enrolled.
+/// Terminal / desktop OOB channels accept any target device record.
+fn software_placeholder_device() -> CompanionDevice {
+    CompanionDevice {
+        device_id: merkle_types::UuidV7::new(),
+        ed25519_pubkey: [0u8; 32],
+        x25519_pubkey: [0u8; 32],
+        class: CompanionDeviceClass::Software,
+        attestation_chain: Vec::new(),
+        enrolled_at: Rfc3339Timestamp::now(),
+        revoked_at: None,
     }
 }
