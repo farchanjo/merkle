@@ -125,7 +125,7 @@ This is the heart of Merkle's security story: **the LLM can never authorize its 
 | `slash_command` | Claude Code **client** | MCP session context — *not* tool arguments | **All** sensitivities |
 | `oob_ack` | **OOB Notifier** | A distinct OS channel (desktop notification / TTY prompt / `localhost` confirm) | `sensitivity=high` (**AND** with `slash_command`) |
 
-On top of those, `vault.reveal` and `vault.delete` consult a third independent signal: **operator confirmation** carried in the MCP `_meta` field under the key `dev.fapp.merkle/operator_confirmation` (MERK-001). The LLM controls only the tool `arguments` object; `_meta` is written by the client transport. `VaultRevealInput` and `VaultDeleteInput` deliberately have **no** `operator_confirmation` field — so a model that tries to set it through arguments achieves nothing.
+On top of those, `vault_reveal` and `vault_delete` consult a third independent signal: **operator confirmation** carried in the MCP `_meta` field under the key `dev.fapp.merkle/operator_confirmation` (MERK-001). The LLM controls only the tool `arguments` object; `_meta` is written by the client transport. `VaultRevealInput` and `VaultDeleteInput` deliberately have **no** `operator_confirmation` field — so a model that tries to set it through arguments achieves nothing.
 
 > [!WARNING]
 > Prompt injection cannot forge any of these. `slash_command` comes from the client's turn parser, `oob_ack` requires a *physical action on a separate OS channel*, and `operator_confirmation` must be JSON boolean `true` in `_meta`. A string `"true"` or any other shape evaluates to `false`.
@@ -143,7 +143,7 @@ sequenceDiagram
 
     Operator->>CC: types /merkle-reveal {handle} "reason"
     CC->>LLM: injects slash_command + operator_confirmation (_meta)
-    LLM->>MCP: vault.reveal { handle, purpose }
+    LLM->>MCP: vault_reveal { handle, purpose }
     Note over LLM,MCP: no operator_confirmation in arguments
     MCP->>Agent: POST /v1/reveal (slash_command=true)
     Agent->>Agent: verify slash_command + sensitivity=high
@@ -160,7 +160,7 @@ sequenceDiagram
 For low/medium sensitivity the OOB step is skipped; only `slash_command` (and operator confirmation) is needed. If OOB is required but not yet acknowledged, the agent returns `{ "oob_pending": true, "oob_channel": ..., "expires_at": ..., "request_nonce": ... }` and the caller re-issues after acknowledgment.
 
 > [!TIP]
-> For proxy operations, prefer **`vault.use`** over `vault.reveal`. It mints a 256-bit, single-use **UseToken** (default TTL 60 s) that a consumer tool (`vault.ssh.exec`, `vault.spawn`, `vault.write_tempfile`, …) dereferences internally. The plaintext never appears in the MCP response at all — the model sees only the token and the command's output.
+> For proxy operations, prefer **`vault_use`** over `vault_reveal`. It mints a 256-bit, single-use **UseToken** (default TTL 60 s) that a consumer tool (`vault_ssh_exec`, `vault_spawn`, `vault_write_tempfile`, …) dereferences internally. The plaintext never appears in the MCP response at all — the model sees only the token and the command's output.
 
 ---
 
@@ -333,7 +333,7 @@ Add this to `~/.claude.json`:
 
 Then restart Claude Code (or run `/mcp restart merkle`) and verify by asking Claude:
 
-> *"Call `vault.doctor` and show me the full result."*
+> *"Call `vault_doctor` and show me the full result."*
 
 You should see `"sealed": false`. You're connected.
 
@@ -417,27 +417,27 @@ Handle format: `vault://<namespace>/<category>/<name>` or the short form `<names
 
 | Group | Tools |
 |---|---|
-| **Identity** (3) | `vault.unseal` · `vault.seal` · `vault.bind` |
-| **Secrets** (8) | `vault.put` · `vault.get` · `vault.list` · `vault.describe` · `vault.rotate` · `vault.delete` · `vault.search` · `vault.history` |
-| **Reveal** (1) | `vault.reveal` ⚠️ requires operator confirmation |
-| **Use-token** (4) | `vault.use` · `vault.write_tempfile` · `vault.write_fifo` · `vault.revoke_tempfile` |
-| **Proxy** (10) | `vault.ssh.exec` · `vault.ssh.copy` · `vault.ssh.port_forward` · `vault.ssh.shell`\* · `vault.http.request` · `vault.http.download` · `vault.http.upload` · `vault.spawn` · `vault.crypto.sign` · `vault.crypto.decrypt` |
-| **Audit** (1) | `vault.audit.query` |
-| **Backup** (2) | `vault.backup` · `vault.restore` |
-| **Diagnostics** (1) | `vault.doctor` |
+| **Identity** (3) | `vault_unseal` · `vault_seal` · `vault_bind` |
+| **Secrets** (8) | `vault_put` · `vault_get` · `vault_list` · `vault_describe` · `vault_rotate` · `vault_delete` · `vault_search` · `vault_history` |
+| **Reveal** (1) | `vault_reveal` ⚠️ requires operator confirmation |
+| **Use-token** (4) | `vault_use` · `vault_write_tempfile` · `vault_write_fifo` · `vault_revoke_tempfile` |
+| **Proxy** (10) | `vault_ssh_exec` · `vault_ssh_copy` · `vault_ssh_port_forward` · `vault_ssh_shell`\* · `vault_http_request` · `vault_http_download` · `vault_http_upload` · `vault_spawn` · `vault_crypto_sign` · `vault_crypto_decrypt` |
+| **Audit** (1) | `vault_audit_query` |
+| **Backup** (2) | `vault_backup` · `vault_restore` |
+| **Diagnostics** (1) | `vault_doctor` |
 
-> \* `vault.ssh.shell` is wired but the daemon returns HTTP 501 (interactive PTY not yet implemented). Use `vault.ssh.exec` for non-interactive commands.
+> \* `vault_ssh_shell` is wired but the daemon returns HTTP 501 (interactive PTY not yet implemented). Use `vault_ssh_exec` for non-interactive commands.
 
 **4 prompts** — surface in Claude Code as `/mcp__merkle__<name>` ([ADR-0028](docs/arch/adr/0028-mcp-prompts-for-slash-commands.md)):
 
 | Prompt | Maps to | Operator confirmation? |
 |---|---|---|
-| `merkle-doctor` | `vault.doctor` | No |
-| `merkle-show` | `vault.describe` | No |
-| `merkle-reveal` | `vault.reveal` | **Yes** |
-| `merkle-rollback` | `vault.history` + `vault.rotate` | **Yes** |
+| `merkle-doctor` | `vault_doctor` | No |
+| `merkle-show` | `vault_describe` | No |
+| `merkle-reveal` | `vault_reveal` | **Yes** |
+| `merkle-rollback` | `vault_history` + `vault_rotate` | **Yes** |
 
-Every session should start with `vault.bind { label }` (at most once per session, two-phase commit per [ADR-0026](docs/arch/adr/0026-idempotent-bind-and-session-state-atomicity.md)). The `cwd_hash` is derived internally from BLAKE3 of the working directory and never crosses the transport. Full details in the [Claude Code wiring guide](docs/arch/integrations/claude-code-wiring.md).
+Every session should start with `vault_bind { label }` (at most once per session, two-phase commit per [ADR-0026](docs/arch/adr/0026-idempotent-bind-and-session-state-atomicity.md)). The `cwd_hash` is derived internally from BLAKE3 of the working directory and never crosses the transport. Full details in the [Claude Code wiring guide](docs/arch/integrations/claude-code-wiring.md).
 
 ---
 

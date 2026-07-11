@@ -57,9 +57,9 @@ catalog (`MerklePrompts`) in
 `crates/merkle-adapter-mcp/src/prompts.rs`. Each prompt is keyed by name,
 declares its required + optional `PromptArgument`s, and renders a single
 user-role `PromptMessage` whose text instructs the consuming LLM to chain
-the corresponding `vault.*` tool calls with the spec-defined arguments
-(`vault.doctor`, `vault.describe`, `vault.reveal`, `vault.history` +
-`vault.rotate`).
+the corresponding `vault_*` tool calls with the spec-defined arguments
+(`vault_doctor`, `vault_describe`, `vault_reveal`, `vault_history` +
+`vault_rotate`).
 
 `prompts/list` and `prompts/get` are wired through `ServerHandler` on
 `MerkleMcpServer` and delegate to `MerklePrompts::list` /

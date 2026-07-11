@@ -1,14 +1,14 @@
 # SSH Bridge Contract
 
 Integration contract describing the SSH proxy tool implementation
-within the Vault Agent and the `vault.ssh.*` tool surface exposed
+within the Vault Agent and the `vault_ssh_*` tool surface exposed
 through the MCP Adapter.
 
 ## 1. Overview
 
 The SSH Bridge is the External Service Adapter responsible for SSH
 operations. It is invoked by the Proxy Executor when the LLM calls any
-`vault.ssh.*` tool. Its primary guarantee is that SSH key material and
+`vault_ssh_*` tool. Its primary guarantee is that SSH key material and
 passphrases are resolved from the encrypted private blob inside the
 agent process and never appear in the MCP transport, the audit log
 payloads, or on disk in plaintext outside of a controlled Tempfile or
@@ -40,7 +40,7 @@ under `meta.ssh_impl` as `"russh"` or `"subprocess"`.
 
 ### 2.1 Credential Resolution
 
-When a `vault.ssh.*` tool call arrives the Proxy Executor:
+When a `vault_ssh_*` tool call arrives the Proxy Executor:
 
 1. Resolves the handle to the `ssh` category Secret.
 2. Decrypts the `private_blob` inside the agent (XChaCha20-Poly1305).
@@ -57,7 +57,7 @@ When a `vault.ssh.*` tool call arrives the Proxy Executor:
 
 4. The decrypted `private_key_pem` is parsed in memory by `russh` or
    written to a FIFO (subprocess path). It is never written to any
-   regular file unless explicitly requested via `vault.write_tempfile`.
+   regular file unless explicitly requested via `vault_write_tempfile`.
 
 ### 2.2 Key Parsing
 
@@ -111,7 +111,7 @@ Default mode: `strict`. On first connection to a host with no
 
 The operator must then either:
 
-- Update the Secret's `known_hosts_fp` field via `vault.rotate`.
+- Update the Secret's `known_hosts_fp` field via `vault_rotate`.
 - Set `tofu_policy = "auto_accept"` in `config.toml` (not recommended
   for production) to silently accept and store the fingerprint on first
   contact.
@@ -156,7 +156,7 @@ with `SshJumpDepthExceeded`.
 
 ### 5.1 Exec
 
-`vault.ssh.exec` runs a non-interactive command. The SSH Bridge opens
+`vault_ssh_exec` runs a non-interactive command. The SSH Bridge opens
 a session channel, sends an `exec` request, captures `stdout` and
 `stderr` up to the configured size limits (64 KiB and 16 KiB
 respectively), and waits for the channel to close. The exit status is
@@ -168,7 +168,7 @@ that redacts sequences matching patterns in the Namespace Policy's
 
 ### 5.2 Copy (SCP / SFTP)
 
-`vault.ssh.copy` supports both SCP and SFTP modes.
+`vault_ssh_copy` supports both SCP and SFTP modes.
 
 - **SFTP** (default, preferred): the `russh-sftp` sub-crate opens an
   SFTP subsystem and performs `put` (to_remote) or `get` (from_remote)
@@ -184,7 +184,7 @@ returned).
 
 ### 5.3 Port Forward
 
-`vault.ssh.port_forward` opens a local (`-L`) or remote (`-R`) port
+`vault_ssh_port_forward` opens a local (`-L`) or remote (`-R`) port
 forward and holds it open until either the TTL expires or the session
 is closed.
 
@@ -202,7 +202,7 @@ forwards owned by that session.
 
 ### 5.4 Shell
 
-`vault.ssh.shell` opens a PTY-backed interactive shell. The Bridge
+`vault_ssh_shell` opens a PTY-backed interactive shell. The Bridge
 requests a pty-req channel with the supplied dimensions, then opens a
 shell channel. Input from the tool call is not supported (the tool
 does not accept a `stdin` parameter). The shell runs for up to
@@ -210,13 +210,13 @@ does not accept a `stdin` parameter). The shell runs for up to
 `output` string.
 
 This tool is appropriate for introspection sessions (check logs, run
-a quick diagnostic). For automation, prefer `vault.ssh.exec`.
+a quick diagnostic). For automation, prefer `vault_ssh_exec`.
 
 ## 6. Tempfile Handling
 
 When the subprocess fallback path is active and the remote tool
 requires a key file path (e.g., `ssh -i /path/to/key`), the SSH
-Bridge uses `vault.write_tempfile` in FIFO mode:
+Bridge uses `vault_write_tempfile` in FIFO mode:
 
 1. Creates a named pipe at a path under `$XDG_RUNTIME_DIR/merkle/` (or
    `%TEMP%\merkle\` on Windows) with mode `0600`.
@@ -246,7 +246,7 @@ The SSH Bridge maintains an in-process connection cache keyed by
 connection TTL (default 300 seconds, configurable via
 `config.toml` `[ssh] connection_ttl_secs`).
 
-When a `vault.ssh.*` call arrives the Bridge:
+When a `vault_ssh_*` call arrives the Bridge:
 
 1. Looks up `(handle_id, session_id)` in the cache.
 2. If found and the `russh` handle is still healthy (liveness checked
@@ -259,7 +259,7 @@ when the agent receives a `SIGHUP`.
 
 ### 7.2 Concurrency
 
-Multiple `vault.ssh.*` calls on the same connection are serialized at
+Multiple `vault_ssh_*` calls on the same connection are serialized at
 the session-channel level. `russh` supports concurrent channels on a
 single connection; the Bridge uses a channel pool of up to
 `config.toml` `[ssh] max_channels_per_connection` (default 4) before
@@ -274,7 +274,7 @@ When the MCP session closes the Bridge:
 3. Cancels all pending port forwards owned by that session.
 4. Unlinks all FIFOs and Tempfiles tracked under that session.
 
-## 8. Sequence Diagram: vault.ssh.exec End-to-End
+## 8. Sequence Diagram: vault_ssh_exec End-to-End
 
 ```mermaid
 sequenceDiagram
@@ -285,8 +285,8 @@ sequenceDiagram
     participant Bridge as SSH Bridge (russh)
     participant Remote as Remote Host
 
-    LLM->>Client: invoke vault.ssh.exec {handle: "vault://prod/ssh/bastion", command: "df -h /"}
-    Client->>Server: tools/call vault.ssh.exec
+    LLM->>Client: invoke vault_ssh_exec {handle: "vault://prod/ssh/bastion", command: "df -h /"}
+    Client->>Server: tools/call vault_ssh_exec
     Server->>Agent: ProxyExec(session_id, handle, "df -h /")
     Agent->>Agent: decrypt private_blob → credentials
     Agent->>Bridge: connect(hostname, port, username, private_key)

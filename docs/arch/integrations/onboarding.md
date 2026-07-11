@@ -118,8 +118,8 @@ Namespace:
 password secret named example with value change-me."
 ```
 
-Claude calls `vault.bind` (which creates the Namespace on first
-use) followed by `vault.put`.
+Claude calls `vault_bind` (which creates the Namespace on first
+use) followed by `vault_put`.
 
 ## 6. Companion Device Pairing (Optional)
 
@@ -204,7 +204,7 @@ Restart Claude Code or run `/mcp restart merkle`.
 Verify the connection:
 
 ```
-Ask Claude: "Call vault.doctor and show me the full result."
+Ask Claude: "Call vault_doctor and show me the full result."
 ```
 
 Expected response includes `"sealed": false` if the agent is running

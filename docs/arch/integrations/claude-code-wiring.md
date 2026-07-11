@@ -16,7 +16,7 @@ Merkle conforms to the MCP specification and will work with any
 compliant MCP host. Configuration examples in this document target
 Claude Code specifically. Hosts that do not support slash commands
 can still use all Merkle tools except those requiring Operator
-Confirmation (`vault.reveal`), which will always return `RevealDenied`
+Confirmation (`vault_reveal`), which will always return `RevealDenied`
 unless the confirmation flag arrives as `true`.
 
 The MCP server process is `merkle mcp`. It communicates over stdio
@@ -65,10 +65,10 @@ After editing `~/.claude.json` restart Claude Code or run
 
 ### Verification
 
-Run `vault.doctor` via Claude Code after configuration:
+Run `vault_doctor` via Claude Code after configuration:
 
 ```
-Ask Claude: "Call vault.doctor and show me the full result."
+Ask Claude: "Call vault_doctor and show me the full result."
 ```
 
 The response should include `"sealed": false` if the agent is running
@@ -79,7 +79,7 @@ needs to be unsealed first.
 
 Slash commands in Claude Code allow the operator to pass a verifiable
 signal that a sensitive action is authorized. Merkle leverages this by
-mapping each slash command to a specific `vault.*` tool call with
+mapping each slash command to a specific `vault_*` tool call with
 `operator_confirmation: true` set by the client before the tool
 invocation reaches the MCP server.
 
@@ -97,7 +97,7 @@ Usage: /merkle-reveal <handle> [purpose]
 Example: /merkle-reveal vault://prod/password/db-root "manual admin reset"
 ```
 
-Maps to: `vault.reveal { handle, purpose, operator_confirmation: true }`.
+Maps to: `vault_reveal { handle, purpose, operator_confirmation: true }`.
 
 When the Secret's `sensitivity` is `medium` or `high` and the
 Namespace Policy requires OOB Confirmation, the agent will emit an OOB
@@ -109,7 +109,7 @@ present for the reveal to succeed.
 ### /merkle-show
 
 Display the public metadata of a Secret without revealing plaintext.
-Equivalent to `vault.describe` but surfaced as a slash command for
+Equivalent to `vault_describe` but surfaced as a slash command for
 quick access from the operator.
 
 ```
@@ -118,7 +118,7 @@ Usage: /merkle-show <handle>
 Example: /merkle-show vault://prod/ssh/bastion
 ```
 
-Maps to: `vault.describe { handle }`. Does not require Operator
+Maps to: `vault_describe { handle }`. Does not require Operator
 Confirmation; included as a slash command for discoverability.
 
 ---
@@ -133,7 +133,7 @@ Usage: /merkle-rollback <handle> <version>
 Example: /merkle-rollback vault://prod/token/github-ci 2
 ```
 
-Maps to: `vault.rotate { handle, new_value: <version_content>, purpose: "rollback to version <n>", operator_confirmation: true }`. The MCP Adapter fetches the historical version's value from the agent, then issues a `rotate` call that creates a new version containing the old value.
+Maps to: `vault_rotate { handle, new_value: <version_content>, purpose: "rollback to version <n>", operator_confirmation: true }`. The MCP Adapter fetches the historical version's value from the agent, then issues a `rotate` call that creates a new version containing the old value.
 
 Requires Operator Confirmation because rollback changes the live
 Secret value and leaves a version history gap.
@@ -148,7 +148,7 @@ Run the diagnostic pass and display agent health.
 Usage: /merkle-doctor
 ```
 
-Maps to: `vault.doctor {}`. Does not require Operator Confirmation.
+Maps to: `vault_doctor {}`. Does not require Operator Confirmation.
 Included as a slash command because operators routinely call it at the
 start of a session.
 
@@ -169,7 +169,7 @@ sequenceDiagram
 
     Operator->>CC: /merkle-reveal vault://prod/password/db-root "reset"
     Note over CC: Slash command sets operator_confirmation=true in tool call
-    CC->>Server: tools/call vault.reveal {handle, purpose, operator_confirmation: true}
+    CC->>Server: tools/call vault_reveal {handle, purpose, operator_confirmation: true}
     Server->>Agent: Reveal(session_id, handle, purpose, confirmed=true)
     Agent->>Agent: evaluate Namespace Policy + sensitivity
     alt sensitivity=low and policy allows no OOB
@@ -206,12 +206,12 @@ Operator: "SSH into the prod-db host via the bastion and run
            SELECT COUNT(*) FROM orders WHERE created_at > NOW() - INTERVAL '1 day'."
 
 Claude steps:
-1. vault.bind { label: "prod" }
-2. vault.list { category: "ssh", tags: ["role:bastion", "env:prod"] }
+1. vault_bind { label: "prod" }
+2. vault_list { category: "ssh", tags: ["role:bastion", "env:prod"] }
    → handle: "vault://prod/ssh/bastion"
-3. vault.list { category: "ssh", tags: ["role:db", "env:prod"] }
+3. vault_list { category: "ssh", tags: ["role:db", "env:prod"] }
    → handle: "vault://prod/ssh/prod-db"
-4. vault.ssh.exec {
+4. vault_ssh_exec {
      handle: "vault://prod/ssh/prod-db",
      command: "psql -U app -d orders -c \"SELECT COUNT(*) FROM orders WHERE created_at > NOW() - INTERVAL '1 day'\""
    }
@@ -229,10 +229,10 @@ field on the `prod-db` Secret.
 Operator: "Run terraform plan for the prod environment."
 
 Claude steps:
-1. vault.bind { label: "prod" }
-2. vault.list { category: "cloud", tags: ["provider:aws", "env:prod"] }
+1. vault_bind { label: "prod" }
+2. vault_list { category: "cloud", tags: ["provider:aws", "env:prod"] }
    → handle: "vault://prod/cloud/aws-prod"
-3. vault.spawn {
+3. vault_spawn {
      env_handles: [{ handle: "vault://prod/cloud/aws-prod" }],
      cmd: "terraform",
      args: ["plan", "-var-file=prod.tfvars"],
@@ -251,7 +251,7 @@ output is returned.
 ```
 Operator: /merkle-reveal vault://personal/password/wifi-guest "paste into phone"
 
-Claude: (calls vault.reveal with operator_confirmation=true)
+Claude: (calls vault_reveal with operator_confirmation=true)
         "The password is: [plaintext shown here]"
         "Warning: This value is now in the conversation context."
 ```
@@ -261,24 +261,24 @@ operator needs to read the value and type it elsewhere. For higher
 sensitivity Secrets the OOB Confirmation flow activates before the
 plaintext is returned.
 
-After use, the operator should consider running `vault.audit.query`
+After use, the operator should consider running `vault_audit_query`
 to confirm the reveal is logged, and rotating the Secret if it was
 intended for single use.
 
 ## 6. Best Practices
 
-**Bind a Namespace explicitly at session start.** Call `vault.bind`
+**Bind a Namespace explicitly at session start.** Call `vault_bind`
 at the start of every session to avoid relying on the default
 working-directory derivation. This makes audit log entries easier to
 correlate.
 
 ```
 "Before we start, bind the namespace for this project."
-→ Claude calls vault.bind { label: "acme-prod" }
+→ Claude calls vault_bind { label: "acme-prod" }
 ```
 
 **Use tags consistently.** Adopt a tagging convention and apply it at
-`vault.put` time. Recommended tag axes:
+`vault_put` time. Recommended tag axes:
 
 | Axis | Examples |
 |---|---|
@@ -288,11 +288,11 @@ correlate.
 | Provider | `provider:aws`, `provider:gcp` |
 
 Tags are the primary mechanism by which the LLM discovers related
-Secrets. A Secret with no tags is harder to find via `vault.list`
-and `vault.search`.
+Secrets. A Secret with no tags is harder to find via `vault_list`
+and `vault_search`.
 
 **Avoid `sensitivity = high` unless necessary.** High sensitivity
-adds OOB Confirmation to `vault.reveal` calls unconditionally. Use
+adds OOB Confirmation to `vault_reveal` calls unconditionally. Use
 `sensitivity = medium` for Secrets that can be revealed in context
 (with slash command) and reserve `high` for Secrets that should never
 appear in any LLM context (HSM keys, root CA private keys).
@@ -301,15 +301,15 @@ appear in any LLM context (HSM keys, root CA private keys).
 
 ```
 "Show me the audit log for the last 7 days, grouped by operation."
-→ Claude calls vault.audit.query { since: "<7 days ago>", limit: 500 }
+→ Claude calls vault_audit_query { since: "<7 days ago>", limit: 500 }
 ```
 
 Look for unexpected `reveal` operations, cross-environment accesses
 (Secrets with different `env:` tags accessed in the same session), and
 unusual caller PIDs.
 
-**Use `vault.rotate` for all Secret updates.** Do not delete and re-
-create a Secret to change its value. `vault.rotate` preserves the
+**Use `vault_rotate` for all Secret updates.** Do not delete and re-
+create a Secret to change its value. `vault_rotate` preserves the
 version history and the handle URI, so any existing references (in
 scripts, aliases, or Claude sessions) continue to resolve correctly.
 
@@ -319,13 +319,13 @@ scripts, aliases, or Claude sessions) continue to resolve correctly.
 
 **Symptom**: Most tool calls return `NamespaceNotBound`.
 
-**Cause**: The session started without calling `vault.bind` and the
+**Cause**: The session started without calling `vault_bind` and the
 default Namespace (derived from the working directory hash) does not
 exist in the vault.
 
-**Fix**: Ask Claude to call `vault.bind { label: "<your-namespace>" }`.
+**Fix**: Ask Claude to call `vault_bind { label: "<your-namespace>" }`.
 If you are unsure which Namespace labels exist, check the output of
-`vault.list` after binding the label you expect.
+`vault_list` after binding the label you expect.
 
 ---
 
@@ -345,7 +345,7 @@ unsealed, retry the tool call.
 
 ### OobConfirmationTimeout
 
-**Symptom**: `vault.reveal` returns `OobConfirmationTimeout`.
+**Symptom**: `vault_reveal` returns `OobConfirmationTimeout`.
 
 **Cause**: The OOB Confirmation was not acknowledged within the
 configured TTL (default 30 seconds).
@@ -353,14 +353,14 @@ configured TTL (default 30 seconds).
 **Fix**: Re-issue the `/merkle-reveal` slash command and acknowledge the
 desktop notification or terminal prompt within the TTL. If the
 notification is not appearing, check that the agent is running and
-that the OOB notifier is configured correctly (`vault.doctor` will
+that the OOB notifier is configured correctly (`vault_doctor` will
 report `"oob_notifier": "active"` or `"unavailable"`).
 
 ---
 
 ### RevealDenied (policy gate)
 
-**Symptom**: `vault.reveal` returns `RevealDenied` even with the slash
+**Symptom**: `vault_reveal` returns `RevealDenied` even with the slash
 command.
 
 **Cause 1**: The Secret has `sensitivity = high` and the Namespace
@@ -375,7 +375,7 @@ was incorrect.
 setting it).
 
 **Fix**: Use the `/merkle-reveal` slash command, not a direct request
-to Claude to "call vault.reveal with operator_confirmation: true" in
+to Claude to "call vault_reveal with operator_confirmation: true" in
 prose. The slash command is the only path that sets the flag correctly.
 
 ---

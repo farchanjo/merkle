@@ -28,8 +28,12 @@ accessed over the Companion Socket.
 Key properties:
 
 - No MCP resources or prompts are exposed; only tools.
+- **Tool names** use underscores only (`vault_bind`, `vault_ssh_exec`, …)
+  and match the MCP pattern `^[a-zA-Z0-9_-]{1,64}$`. Dotted names
+  (`vault.bind`) are **not** used — strict clients (e.g. Grok) drop
+  any tool whose name contains characters outside that set.
 - All tool responses are structured JSON. Plaintext material never
-  appears in a tool response except through `vault.reveal` with
+  appears in a tool response except through `vault_reveal` with
   Operator Confirmation.
 - The MCP server process is short-lived: one process per client
   window, spawned by the client. The long-lived Vault Agent daemon
@@ -78,10 +82,10 @@ MCP Adapter to agent communication layer.
 ### 2.3 Namespace Binding
 
 After session establishment the client (or the LLM at the operator's
-direction) should call `vault.bind` to associate the session with a
+direction) should call `vault_bind` to associate the session with a
 Namespace. Without a binding, all tool calls that require a Namespace
 resolve to the default Namespace derived from the working directory
-hash. `vault.bind` may be called at most once per session; re-binding
+hash. `vault_bind` may be called at most once per session; re-binding
 is rejected.
 
 ### 2.4 Session Teardown
@@ -106,7 +110,7 @@ application service layer. A validation failure returns error code
 `-32602` (Invalid params) with a structured `data` field listing the
 failing constraints.
 
-### vault.bind
+### vault_bind
 
 Associate the current MCP session with a named Namespace.
 
@@ -134,7 +138,7 @@ Associate the current MCP session with a named Namespace.
 
 ---
 
-### vault.list
+### vault_list
 
 List Secrets matching filter criteria. Returns public metadata only.
 
@@ -176,7 +180,7 @@ List Secrets matching filter criteria. Returns public metadata only.
 
 ---
 
-### vault.describe
+### vault_describe
 
 Return full public metadata for a single Secret.
 
@@ -188,14 +192,14 @@ Return full public metadata for a single Secret.
 }
 ```
 
-**Output**: Same shape as a single `vault.list` item, plus a
+**Output**: Same shape as a single `vault_list` item, plus a
 `schema_id` field referencing the CUE schema in effect.
 
 **Errors**: `HandleNotFound`, `NamespaceNotBound`.
 
 ---
 
-### vault.search
+### vault_search
 
 Free-text semantic search over public metadata using the FTS5 index.
 Returns ranked handles with a relevance score.
@@ -228,7 +232,7 @@ Returns ranked handles with a relevance score.
 
 ---
 
-### vault.put
+### vault_put
 
 Create or overwrite a Secret. The `value` field contains the sensitive
 material and is never echoed back.
@@ -262,7 +266,7 @@ material and is never echoed back.
 
 ---
 
-### vault.get
+### vault_get
 
 Return public metadata and a WARNING that plaintext is withheld.
 This tool confirms the Secret exists and is accessible; it does not
@@ -287,7 +291,7 @@ return the private blob.
   "sensitivity": "string",
   "tags": ["string"],
   "version": "integer",
-  "warning": "Plaintext withheld. Use vault.use for proxy operations or vault.reveal (requires Operator Confirmation) for explicit access."
+  "warning": "Plaintext withheld. Use vault_use for proxy operations or vault_reveal (requires Operator Confirmation) for explicit access."
 }
 ```
 
@@ -296,7 +300,7 @@ return the private blob.
 
 ---
 
-### vault.delete
+### vault_delete
 
 Permanently delete a Secret and all its versions.
 
@@ -322,7 +326,7 @@ Permanently delete a Secret and all its versions.
 
 ---
 
-### vault.rotate
+### vault_rotate
 
 Replace the active value of a Secret, retaining prior versions up to
 the Namespace Policy `retain_count`.
@@ -332,7 +336,7 @@ the Namespace Policy `retain_count`.
 ```json
 {
   "handle": "string",
-  "new_value": "object  // same schema as vault.put value",
+  "new_value": "object  // same schema as vault_put value",
   "purpose": "string"
 }
 ```
@@ -353,7 +357,7 @@ the Namespace Policy `retain_count`.
 
 ---
 
-### vault.use
+### vault_use
 
 Issue a Use Token that grants a single consumer process access to the
 Secret's plaintext via the Companion Socket. The plaintext never
@@ -382,13 +386,13 @@ appears in the MCP response.
 `RateLimitExceeded`.
 
 **Note**: The `use_token` is intended for delivery to a local process,
-not for consumption by the LLM. Standard workflow: `vault.use` then
-`vault.ssh.exec` (or another proxy tool), which internally resolves
+not for consumption by the LLM. Standard workflow: `vault_use` then
+`vault_ssh_exec` (or another proxy tool), which internally resolves
 the token.
 
 ---
 
-### vault.reveal
+### vault_reveal
 
 Return the plaintext of a Secret directly in the MCP response.
 Requires Operator Confirmation. Default-denied for
@@ -422,7 +426,7 @@ Requires Operator Confirmation. Default-denied for
 
 ---
 
-### vault.ssh.exec
+### vault_ssh_exec
 
 Execute a remote command over SSH using credentials from a Secret.
 
@@ -454,7 +458,7 @@ Execute a remote command over SSH using credentials from a Secret.
 
 ---
 
-### vault.ssh.copy
+### vault_ssh_copy
 
 Copy files to or from a remote host using credentials from a Secret.
 
@@ -484,7 +488,7 @@ Copy files to or from a remote host using credentials from a Secret.
 
 ---
 
-### vault.ssh.port_forward
+### vault_ssh_port_forward
 
 Establish a local or remote port forward over SSH.
 
@@ -518,16 +522,16 @@ Establish a local or remote port forward over SSH.
 
 ---
 
-### vault.ssh.shell
+### vault_ssh_shell
 
 (non-interactive buffered) Open an SSH shell session and capture all
 output. Output is buffered and returned in full at session end via the
 tool response. Suitable for short sessions that produce bounded output;
-long-running shells should use `vault.ssh.exec` with a command.
+long-running shells should use `vault_ssh_exec` with a command.
 
 **Note**: stdin is not accepted. The session is write-once from the
 server side; interactive input cannot be delivered after the session
-opens. Use `vault.ssh.exec` for commands requiring stdin.
+opens. Use `vault_ssh_exec` for commands requiring stdin.
 
 **Input**
 
@@ -556,7 +560,7 @@ opens. Use `vault.ssh.exec` for commands requiring stdin.
 
 ---
 
-### vault.http.request
+### vault_http_request
 
 Perform an HTTP request injecting credentials from a Secret as headers
 or body fields, without exposing them.
@@ -591,7 +595,7 @@ or body fields, without exposing them.
 
 ---
 
-### vault.http.download
+### vault_http_download
 
 Download a file, optionally using credentials from a Secret for
 authentication.
@@ -623,7 +627,7 @@ authentication.
 
 ---
 
-### vault.http.upload
+### vault_http_upload
 
 Upload a file using credentials from a Secret.
 
@@ -655,7 +659,7 @@ Upload a file using credentials from a Secret.
 
 ---
 
-### vault.spawn
+### vault_spawn
 
 Spawn a child process with environment variables drawn from one or more
 Secrets. The process is isolated; its stdin is closed.
@@ -694,7 +698,7 @@ Secrets. The process is isolated; its stdin is closed.
 
 ---
 
-### vault.write_tempfile
+### vault_write_tempfile
 
 Materialize a Secret on the local filesystem as a Tempfile or FIFO.
 Useful for tools that require a file path (e.g., `ssh -i`).
@@ -723,7 +727,7 @@ Useful for tools that require a file path (e.g., `ssh -i`).
 
 ---
 
-### vault.revoke_tempfile
+### vault_revoke_tempfile
 
 Explicitly revoke a Tempfile or FIFO before session close or idle
 timeout. The file is removed immediately and the path becomes invalid.
@@ -732,7 +736,7 @@ timeout. The file is removed immediately and the path becomes invalid.
 
 ```json
 {
-  "path": "string  // absolute path previously returned by vault.write_tempfile"
+  "path": "string  // absolute path previously returned by vault_write_tempfile"
 }
 ```
 
@@ -749,7 +753,7 @@ timeout. The file is removed immediately and the path becomes invalid.
 
 ---
 
-### vault.write_fifo
+### vault_write_fifo
 
 Materialize a Secret as a named pipe (FIFO). The agent writes the
 Secret plaintext to the pipe once; the file is removed after the
@@ -778,7 +782,7 @@ path exactly once (e.g., `ssh -i`).
 
 ---
 
-### vault.audit.query
+### vault_audit_query
 
 Query the append-only Audit Log.
 
@@ -824,7 +828,7 @@ Query the append-only Audit Log.
 
 ---
 
-### vault.doctor
+### vault_doctor
 
 Run a diagnostic pass and return agent health status.
 
@@ -854,7 +858,7 @@ Run a diagnostic pass and return agent health status.
 
 ---
 
-### vault.history
+### vault_history
 
 Return the version history of a Secret.
 
@@ -909,13 +913,13 @@ are returned as a JSON-RPC `error` object with:
 | `UnsealRequired` | -32001 | Vault Agent is in Sealed State | Run `merkle unseal` or configure Touch ID |
 | `RateLimitExceeded` | -32002 | Operation class rate limit hit | Wait for the window to expire; check Namespace Policy |
 | `RevealDenied` | -32003 | Reveal blocked by policy or missing confirmation | Pass `operator_confirmation: true` via slash command |
-| `HandleNotFound` | -32004 | No Secret matches the given handle | Verify handle URI; check `vault.list` |
-| `NamespaceNotBound` | -32005 | Session has no Namespace binding | Call `vault.bind` first |
+| `HandleNotFound` | -32004 | No Secret matches the given handle | Verify handle URI; check `vault_list` |
+| `NamespaceNotBound` | -32005 | Session has no Namespace binding | Call `vault_bind` first |
 | `OobConfirmationRequired` | -32006 | OOB Confirmation channel must be used | Acknowledge the desktop notification or terminal prompt |
 | `OobConfirmationTimeout` | -32007 | OOB Confirmation not received within deadline | Re-issue the tool call and confirm promptly |
 | `AlreadyBound` | -32008 | Session already bound to a Namespace | One binding per session; start a new session to change |
 | `SchemaValidationFailed` | -32009 | Input value did not satisfy the category CUE schema | Check the `data.fields` array for constraint failures |
-| `DuplicateName` | -32010 | A Secret with this name already exists | Use `vault.rotate` to update an existing Secret |
+| `DuplicateName` | -32010 | A Secret with this name already exists | Use `vault_rotate` to update an existing Secret |
 | `SshAuthFailed` | -32020 | SSH authentication rejected | Verify key material or passphrase in the Secret |
 | `SshConnectionFailed` | -32021 | Cannot reach the SSH host | Check network, firewall, and host address |
 | `HttpRequestFailed` | -32030 | HTTP request did not complete | Check URL, TLS, and network |
@@ -938,13 +942,13 @@ sequenceDiagram
     Client->>Server: notifications/initialized
     Server->>Agent: SessionLease(cwd_hash)
     Agent-->>Server: {session_id: "01JXXXXX"}
-    Client->>Server: tools/call vault.bind {label: "acme-prod"}
+    Client->>Server: tools/call vault_bind {label: "acme-prod"}
     Server->>Agent: BindNamespace(session_id, label)
     Agent-->>Server: {namespace_id: "01JYYY", policy_profile: "balanced"}
     Server-->>Client: {namespace_id: "01JYYY", label: "acme-prod", policy_profile: "balanced"}
 ```
 
-### 5.2 vault.use Leading to Companion Socket Resolution
+### 5.2 vault_use Leading to Companion Socket Resolution
 
 ```mermaid
 sequenceDiagram
@@ -954,14 +958,14 @@ sequenceDiagram
     participant Agent as Vault Agent
     participant Proc as External Process
 
-    LLM->>Client: invoke vault.use {handle: "vault://acme-prod/ssh/bastion", purpose: "deploy"}
-    Client->>Server: tools/call vault.use
+    LLM->>Client: invoke vault_use {handle: "vault://acme-prod/ssh/bastion", purpose: "deploy"}
+    Client->>Server: tools/call vault_use
     Server->>Agent: IssueUseToken(session_id, handle, purpose)
     Agent-->>Server: {use_token: "ut_XXXX", companion_socket: "/run/merkle/agent.sock", expires_at: "..."}
     Server-->>Client: {use_token: "ut_XXXX", companion_socket: "..."}
     Client-->>LLM: tool result
-    LLM->>Client: invoke vault.ssh.exec {handle: "...", command: "whoami"}
-    Client->>Server: tools/call vault.ssh.exec
+    LLM->>Client: invoke vault_ssh_exec {handle: "...", command: "whoami"}
+    Client->>Server: tools/call vault_ssh_exec
     Server->>Agent: ProxyExec(session_id, handle, command)
     Agent->>Agent: resolve private_blob, decrypt key material
     Agent->>Proc: SSH connect + authenticate
@@ -971,7 +975,7 @@ sequenceDiagram
     Client-->>LLM: "deploy-user"
 ```
 
-### 5.3 vault.reveal with OOB Confirmation
+### 5.3 vault_reveal with OOB Confirmation
 
 ```mermaid
 sequenceDiagram
@@ -983,7 +987,7 @@ sequenceDiagram
 
     Note over Operator,Client: Operator types /merkle-reveal
     Operator->>Client: /merkle-reveal vault://acme-prod/password/db-root
-    Client->>Server: tools/call vault.reveal {handle: "...", purpose: "manual reset", operator_confirmation: true}
+    Client->>Server: tools/call vault_reveal {handle: "...", purpose: "manual reset", operator_confirmation: true}
     Server->>Agent: Reveal(session_id, handle, purpose, operator_confirmation=true)
     Agent->>Agent: check sensitivity (medium) and policy
     Agent->>OOB: SendConfirmationRequest(session_id, handle, purpose)
