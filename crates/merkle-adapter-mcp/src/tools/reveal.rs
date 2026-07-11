@@ -1,4 +1,4 @@
-//! vault.reveal — OOB-gated plaintext disclosure.
+//! vault_reveal — OOB-gated plaintext disclosure.
 //!
 //! Forwards `POST /v1/reveal` to the Companion Socket. The agent evaluates
 //! the operator confirmation and OOB policy and returns either plaintext
@@ -23,7 +23,7 @@ use merkle_types::Handle;
 // Input parameter struct
 // ---------------------------------------------------------------------------
 
-/// Input for vault.reveal.
+/// Input for vault_reveal.
 ///
 /// Note: there is deliberately no `operator_confirmation` argument. Operator
 /// confirmation is sourced from the client-injected request `_meta`
@@ -73,10 +73,10 @@ impl MerkleMcpServer {
     /// acknowledge and re-issue the tool call.
     ///
     /// WARNING: The revealed plaintext appears in the conversation context.
-    /// Prefer `vault.use` for proxy operations that do not require the model
+    /// Prefer `vault_use` for proxy operations that do not require the model
     /// to see the credential value.
     #[tool(
-        name = "vault.reveal",
+        name = "vault_reveal",
         description = "Return the plaintext of a Secret in the MCP response. Requires an operator confirmation issued via the /merkle-reveal slash command (injected into request _meta by the client, not a tool argument). Triggers OOB confirmation for medium/high sensitivity. If OOB pending, re-issue after acknowledging the notification."
     )]
     pub async fn vault_reveal(
@@ -88,7 +88,7 @@ impl MerkleMcpServer {
         // model-controlled tool argument (MERK-001).
         if !crate::operator_confirmation_from_meta(&meta) {
             return Err(ErrorData::invalid_params(
-                "vault.reveal requires an operator confirmation issued via the \
+                "vault_reveal requires an operator confirmation issued via the \
                  /merkle-reveal slash command; the model cannot authorize a reveal \
                  through tool arguments",
                 None,
@@ -142,7 +142,7 @@ impl MerkleMcpServer {
                     "oob_channel": resp.oob_channel.to_string(),
                     "expires_at": resp.expires_at.to_rfc3339(),
                     "request_nonce": resp.request_nonce,
-                    "instructions": "Acknowledge the OOB notification and re-issue vault.reveal.",
+                    "instructions": "Acknowledge the OOB notification and re-issue vault_reveal.",
                 })
                 .to_string(),
             )])),

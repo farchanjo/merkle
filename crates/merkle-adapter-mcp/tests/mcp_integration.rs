@@ -51,6 +51,46 @@ async fn server_info_name_is_merkle() {
     assert_eq!(info.server_info.name, "merkle");
 }
 
+/// Every published tool name must match the MCP name pattern
+/// `^[a-zA-Z0-9_-]{1,64}$`. Clients such as Grok drop tools whose names
+/// contain other characters (notably `.`), which previously left the
+/// merkle MCP server connected with zero tools.
+#[tokio::test]
+async fn all_tool_names_match_mcp_name_pattern() {
+    let server = unreachable_server();
+    let tools = server.list_tools_catalog();
+    assert_eq!(
+        tools.len(),
+        31,
+        "expected 31 vault tools; got {}",
+        tools.len()
+    );
+
+    let mut invalid = Vec::new();
+    for tool in &tools {
+        let name = tool.name.as_ref();
+        let ok = (1..=64).contains(&name.len())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !ok {
+            invalid.push(name.to_owned());
+        }
+        assert!(
+            name.starts_with("vault_"),
+            "tool {name} must use vault_ underscore prefix"
+        );
+        assert!(
+            !name.contains('.'),
+            "tool {name} must not contain '.' (breaks strict MCP clients)"
+        );
+    }
+    assert!(
+        invalid.is_empty(),
+        "tools with invalid MCP names: {invalid:?}"
+    );
+}
+
 /// Build a `_meta` carrying the client-injected operator-confirmation marker,
 /// as the `/merkle-reveal` and `/merkle-delete` slash commands do. The LLM
 /// cannot produce this — it only fills the tool `arguments` object (MERK-001).
@@ -63,7 +103,7 @@ fn confirmed_meta() -> rmcp::model::Meta {
     meta
 }
 
-/// `vault.reveal` without client-injected `_meta` provenance must be rejected
+/// `vault_reveal` without client-injected `_meta` provenance must be rejected
 /// with `INVALID_PARAMS` (-32602) before contacting the socket. A model can only
 /// fill the tool `arguments`, never the request `_meta` (MERK-001).
 #[tokio::test]
@@ -88,7 +128,7 @@ async fn vault_reveal_requires_operator_confirmation() {
     );
 }
 
-/// `vault.bind` called twice on the same session after a successful first bind
+/// `vault_bind` called twice on the same session after a successful first bind
 /// must return `ALREADY_BOUND` (-32008). The second call is rejected at the
 /// session guard before the socket is contacted (ADR-0026 "at most once" invariant).
 ///
@@ -118,13 +158,13 @@ async fn vault_bind_rejects_double_bind_after_successful_first_bind() {
 }
 
 /// Tools that require a bound namespace return `NAMESPACE_NOT_BOUND` (-32005)
-/// immediately, without contacting the socket, when `vault.bind` has not
+/// immediately, without contacting the socket, when `vault_bind` has not
 /// been called.
 #[tokio::test]
 async fn tools_return_namespace_not_bound_before_bind() {
     let server = unreachable_server();
 
-    // vault.put — requires namespace.
+    // vault_put — requires namespace.
     let err = server
         .vault_put(Parameters(VaultPutInput {
             category: "token".to_owned(),
@@ -137,7 +177,7 @@ async fn tools_return_namespace_not_bound_before_bind() {
             expose: None,
         }))
         .await
-        .expect_err("vault.put without bind must return error");
+        .expect_err("vault_put without bind must return error");
 
     assert_eq!(
         err.code.0,
@@ -146,7 +186,7 @@ async fn tools_return_namespace_not_bound_before_bind() {
         err.code.0
     );
 
-    // vault.list — also requires namespace.
+    // vault_list — also requires namespace.
     let err2 = server
         .vault_list(Parameters(VaultListInput {
             category: None,
@@ -158,7 +198,7 @@ async fn tools_return_namespace_not_bound_before_bind() {
             limit: None,
         }))
         .await
-        .expect_err("vault.list without bind must return error");
+        .expect_err("vault_list without bind must return error");
 
     assert_eq!(
         err2.code.0,
@@ -168,7 +208,7 @@ async fn tools_return_namespace_not_bound_before_bind() {
     );
 }
 
-/// `vault.reveal` with client-injected `_meta` provenance but without a bound
+/// `vault_reveal` with client-injected `_meta` provenance but without a bound
 /// namespace returns `NAMESPACE_NOT_BOUND` (-32005).
 #[tokio::test]
 async fn vault_reveal_unbound_returns_namespace_not_bound() {
@@ -225,7 +265,7 @@ async fn pre_bound_unreachable_server() -> MerkleMcpServer {
     server
 }
 
-/// `vault.unseal` with the socket absent returns `AGENT_UNREACHABLE` (-32100).
+/// `vault_unseal` with the socket absent returns `AGENT_UNREACHABLE` (-32100).
 #[tokio::test]
 async fn vault_unseal_returns_agent_unreachable() {
     let server = unreachable_server();
@@ -243,7 +283,7 @@ async fn vault_unseal_returns_agent_unreachable() {
     );
 }
 
-/// `vault.seal` with the socket absent returns `AGENT_UNREACHABLE`.
+/// `vault_seal` with the socket absent returns `AGENT_UNREACHABLE`.
 #[tokio::test]
 async fn vault_seal_returns_agent_unreachable() {
     let server = unreachable_server();
@@ -261,7 +301,7 @@ async fn vault_seal_returns_agent_unreachable() {
     );
 }
 
-/// `vault.bind` with the socket absent returns `AGENT_UNREACHABLE`.
+/// `vault_bind` with the socket absent returns `AGENT_UNREACHABLE`.
 #[tokio::test]
 async fn vault_bind_first_call_returns_agent_unreachable() {
     let server = unreachable_server();
@@ -281,7 +321,7 @@ async fn vault_bind_first_call_returns_agent_unreachable() {
     );
 }
 
-/// `vault.use` with a pre-bound session and dead socket returns
+/// `vault_use` with a pre-bound session and dead socket returns
 /// `AGENT_UNREACHABLE` (-32100).
 #[tokio::test]
 async fn vault_use_returns_agent_unreachable() {
@@ -293,7 +333,7 @@ async fn vault_use_returns_agent_unreachable() {
             purpose: "smoke test".to_owned(),
         }))
         .await
-        .expect_err("vault.use to dead socket must return error");
+        .expect_err("vault_use to dead socket must return error");
 
     assert_eq!(
         err.code.0,
@@ -303,7 +343,7 @@ async fn vault_use_returns_agent_unreachable() {
     );
 }
 
-/// `vault.delete` with a pre-bound session and dead socket returns
+/// `vault_delete` with a pre-bound session and dead socket returns
 /// `AGENT_UNREACHABLE`.
 #[tokio::test]
 async fn vault_delete_returns_agent_unreachable() {
@@ -318,7 +358,7 @@ async fn vault_delete_returns_agent_unreachable() {
             confirmed_meta(),
         )
         .await
-        .expect_err("vault.delete to dead socket must return error");
+        .expect_err("vault_delete to dead socket must return error");
 
     assert_eq!(
         err.code.0,
@@ -328,7 +368,7 @@ async fn vault_delete_returns_agent_unreachable() {
     );
 }
 
-/// `vault.delete` without client-injected `_meta` provenance is rejected up
+/// `vault_delete` without client-injected `_meta` provenance is rejected up
 /// front and never reaches the agent (no autonomous deletion by the model).
 #[tokio::test]
 async fn vault_delete_without_confirmation_is_rejected() {
@@ -343,7 +383,7 @@ async fn vault_delete_without_confirmation_is_rejected() {
             rmcp::model::Meta::new(),
         )
         .await
-        .expect_err("vault.delete without confirmation must be rejected");
+        .expect_err("vault_delete without confirmation must be rejected");
 
     // Must be the up-front invalid-params gate, NOT a transport error — proving
     // the call was refused before any socket I/O.
@@ -354,7 +394,7 @@ async fn vault_delete_without_confirmation_is_rejected() {
     );
 }
 
-/// `vault.audit.query` with a pre-bound session and dead socket returns
+/// `vault_audit_query` with a pre-bound session and dead socket returns
 /// `AGENT_UNREACHABLE`. Also compiles the new `VaultAuditQueryInput` shape
 /// (no `since`/`until` fields).
 #[tokio::test]
@@ -371,7 +411,7 @@ async fn vault_audit_query_returns_agent_unreachable() {
             verify_chain: Some(false),
         }))
         .await
-        .expect_err("vault.audit.query to dead socket must return error");
+        .expect_err("vault_audit_query to dead socket must return error");
 
     assert_eq!(
         err.code.0,
@@ -381,7 +421,7 @@ async fn vault_audit_query_returns_agent_unreachable() {
     );
 }
 
-/// `vault.doctor` with a dead socket returns `AGENT_UNREACHABLE`.
+/// `vault_doctor` with a dead socket returns `AGENT_UNREACHABLE`.
 #[tokio::test]
 async fn vault_doctor_returns_agent_unreachable() {
     let server = unreachable_server();
@@ -389,7 +429,7 @@ async fn vault_doctor_returns_agent_unreachable() {
     let err = server
         .vault_doctor(Parameters(VaultDoctorInput::default()))
         .await
-        .expect_err("vault.doctor to dead socket must return error");
+        .expect_err("vault_doctor to dead socket must return error");
 
     assert_eq!(
         err.code.0,
@@ -399,7 +439,7 @@ async fn vault_doctor_returns_agent_unreachable() {
     );
 }
 
-/// `vault.search` with a pre-bound session and dead socket returns
+/// `vault_search` with a pre-bound session and dead socket returns
 /// `AGENT_UNREACHABLE`.
 #[tokio::test]
 async fn vault_search_returns_agent_unreachable() {
@@ -412,7 +452,7 @@ async fn vault_search_returns_agent_unreachable() {
             offset: None,
         }))
         .await
-        .expect_err("vault.search to dead socket must return error");
+        .expect_err("vault_search to dead socket must return error");
 
     assert_eq!(
         err.code.0,
@@ -422,7 +462,7 @@ async fn vault_search_returns_agent_unreachable() {
     );
 }
 
-/// `vault.ssh.exec` with a pre-bound session and dead socket returns
+/// `vault_ssh_exec` with a pre-bound session and dead socket returns
 /// `AGENT_UNREACHABLE`. Compiles the new `VaultSshExecInput` shape.
 #[tokio::test]
 async fn vault_ssh_exec_returns_agent_unreachable() {
@@ -438,7 +478,7 @@ async fn vault_ssh_exec_returns_agent_unreachable() {
             timeout_secs: None,
         }))
         .await
-        .expect_err("vault.ssh.exec to dead socket must return error");
+        .expect_err("vault_ssh_exec to dead socket must return error");
 
     assert_eq!(
         err.code.0,
@@ -452,7 +492,7 @@ async fn vault_ssh_exec_returns_agent_unreachable() {
 // ADR-0026 regression tests: idempotent bind + session-state atomicity
 // ---------------------------------------------------------------------------
 
-/// REGRESSION (ADR-0026): a `vault.bind` that fails at the Companion Socket
+/// REGRESSION (ADR-0026): a `vault_bind` that fails at the Companion Socket
 /// layer must NOT set `namespace_bound = true` in `SessionState`.
 ///
 /// Before the fix, Phase 1 set `namespace_bound = true` before the socket call.
@@ -461,7 +501,7 @@ async fn vault_ssh_exec_returns_agent_unreachable() {
 ///
 /// This test verifies:
 /// a) A failed bind (unreachable socket) leaves the session fully unbound.
-/// b) A second `vault.bind` call after the failure returns `AGENT_UNREACHABLE`,
+/// b) A second `vault_bind` call after the failure returns `AGENT_UNREACHABLE`,
 ///    not `ALREADY_BOUND` — i.e. the session is NOT permanently locked.
 #[tokio::test]
 async fn vault_bind_socket_failure_leaves_session_unbound() {
@@ -565,7 +605,7 @@ async fn vault_bind_session_state_is_consistent_after_success() {
     );
 }
 
-/// `vault.ssh.port_forward` with a pre-bound session and dead socket returns
+/// `vault_ssh_port_forward` with a pre-bound session and dead socket returns
 /// `AGENT_UNREACHABLE`. Compiles the new `VaultSshPortForwardInput` shape
 /// (`target`, `local_port`, `remote_host`, `remote_port` — no `direction`,
 /// `bind_address`, `bind_port`, `target_host`, or `target_port`).
@@ -584,7 +624,7 @@ async fn vault_ssh_port_forward_returns_agent_unreachable() {
             operator_confirmation: None,
         }))
         .await
-        .expect_err("vault.ssh.port_forward to dead socket must return error");
+        .expect_err("vault_ssh_port_forward to dead socket must return error");
 
     assert_eq!(
         err.code.0,

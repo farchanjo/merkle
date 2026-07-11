@@ -1,7 +1,7 @@
-//! Backup and restore tools: vault.backup, vault.restore.
+//! Backup and restore tools: vault_backup, vault_restore.
 //!
 //! Both commands are forwarded to the Vault Agent Companion Socket.
-//! `vault.restore` is a two-step flow: create a restore plan first, then
+//! `vault_restore` is a two-step flow: create a restore plan first, then
 //! execute it with operator confirmation.
 
 use rmcp::{
@@ -24,14 +24,14 @@ use merkle_companion_client::dto::{
 // Input parameter structs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.backup.
+/// Input for vault_backup.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultBackupInput {
     /// Optional human-readable note for this backup snapshot.
     pub note: Option<String>,
 }
 
-/// Input for vault.restore.
+/// Input for vault_restore.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultRestoreInput {
     /// Filename (not full path) of the backup snapshot to restore from.
@@ -73,7 +73,7 @@ impl MerkleMcpServer {
     /// Returns snapshot metadata. The backup is age-encrypted for the
     /// configured recipients.
     #[tool(
-        name = "vault.backup",
+        name = "vault_backup",
         description = "Trigger an on-demand encrypted backup of the Vault Agent database. Returns snapshot metadata (filename, size, secret count). The backup is age-encrypted."
     )]
     pub async fn vault_backup(
@@ -108,7 +108,7 @@ impl MerkleMcpServer {
     /// are passed automatically; the caller only needs to supply the snapshot
     /// filename and set `confirm = true`.
     #[tool(
-        name = "vault.restore",
+        name = "vault_restore",
         description = "Restore from an encrypted backup snapshot. Requires confirm=true. Two-step: validates plan then executes restore atomically."
     )]
     pub async fn vault_restore(

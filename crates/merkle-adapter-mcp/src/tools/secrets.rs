@@ -1,6 +1,6 @@
 //! Secret CRUD tools:
-//! vault.put, vault.get, vault.list, vault.describe,
-//! vault.rotate, vault.rollback, vault.delete, vault.search, vault.history.
+//! vault_put, vault_get, vault_list, vault_describe,
+//! vault_rotate, vault_rollback, vault_delete, vault_search, vault_history.
 //!
 //! All operations are forwarded to the Vault Agent Companion Socket via
 //! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
@@ -27,7 +27,7 @@ use merkle_types::Handle;
 // Input parameter structs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.put — create or overwrite a Secret.
+/// Input for vault_put — create or overwrite a Secret.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultPutInput {
     /// Secret category (ssh | password | token | env | cert | key | database | note | otp | cloud | gpg).
@@ -48,7 +48,7 @@ pub struct VaultPutInput {
     pub expose: Option<bool>,
 }
 
-/// Input for vault.get — resolve public metadata (no plaintext).
+/// Input for vault_get — resolve public metadata (no plaintext).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultGetInput {
     /// Handle URI (vault://\<label\>/\<category\>/\<name\>).
@@ -57,7 +57,7 @@ pub struct VaultGetInput {
     pub purpose: String,
 }
 
-/// Input for vault.list — list Secrets matching filter criteria.
+/// Input for vault_list — list Secrets matching filter criteria.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 pub struct VaultListInput {
     /// Filter by category.
@@ -76,25 +76,25 @@ pub struct VaultListInput {
     pub limit: Option<u32>,
 }
 
-/// Input for vault.describe — full public metadata for a single Secret.
+/// Input for vault_describe — full public metadata for a single Secret.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultDescribeInput {
     /// Handle URI (vault://\<label\>/\<category\>/\<name\>).
     pub handle: String,
 }
 
-/// Input for vault.rotate — replace the active value while retaining history.
+/// Input for vault_rotate — replace the active value while retaining history.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultRotateInput {
     /// Handle URI of the Secret to rotate.
     pub handle: String,
-    /// New value — same schema as vault.put `value` for this category.
+    /// New value — same schema as vault_put `value` for this category.
     pub new_value: String,
     /// Human-readable reason; recorded in the audit log.
     pub purpose: String,
 }
 
-/// Input for vault.rollback — restore a historical version as a new active version.
+/// Input for vault_rollback — restore a historical version as a new active version.
 ///
 /// Note: there is deliberately no `operator_confirmation` argument. Confirmation
 /// is sourced from the client-injected request `_meta` (MERK-001).
@@ -108,7 +108,7 @@ pub struct VaultRollbackInput {
     pub purpose: String,
 }
 
-/// Input for vault.delete — permanently delete a Secret and all its versions.
+/// Input for vault_delete — permanently delete a Secret and all its versions.
 ///
 /// Note: there is deliberately no `operator_confirmation` argument. The
 /// confirmation for this irreversible operation is sourced from the
@@ -122,7 +122,7 @@ pub struct VaultDeleteInput {
     pub purpose: String,
 }
 
-/// Input for vault.search — free-text search over public metadata.
+/// Input for vault_search — free-text search over public metadata.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSearchInput {
     /// Natural-language or keyword query (FTS5 MATCH expression).
@@ -133,7 +133,7 @@ pub struct VaultSearchInput {
     pub offset: Option<u32>,
 }
 
-/// Input for vault.history — version history of a Secret.
+/// Input for vault_history — version history of a Secret.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultHistoryInput {
     /// Handle URI of the Secret.
@@ -184,7 +184,7 @@ fn resolve_namespace(session: &crate::session::SessionState) -> Result<Uuid, Err
 /// Each tag is expressed as `key:value`. A bare token without a `:` is mapped
 /// to a tag whose key and value are both the token, so it survives the daemon's
 /// `key`/`value` tag validation. Without this conversion the tags supplied to
-/// `vault.put` were silently dropped (BUG-10).
+/// `vault_put` were silently dropped (BUG-10).
 fn tag_strings_to_dto(tags: Vec<String>) -> Vec<TagDto> {
     tags.into_iter()
         .map(|t| match t.split_once(':') {
@@ -251,8 +251,8 @@ impl MerkleMcpServer {
     /// in any response. Requires the vault to be Unsealed and a Namespace to
     /// be bound.
     #[tool(
-        name = "vault.put",
-        description = "Create or overwrite a Secret. The value field contains sensitive material and is never echoed back. Requires vault.bind to have been called first and the vault to be Unsealed."
+        name = "vault_put",
+        description = "Create or overwrite a Secret. The value field contains sensitive material and is never echoed back. Requires vault_bind to have been called first and the vault to be Unsealed."
     )]
     pub async fn vault_put(
         &self,
@@ -283,8 +283,8 @@ impl MerkleMcpServer {
     /// Return public metadata for a handle and a warning that plaintext is
     /// withheld. Confirms existence without returning the private blob.
     #[tool(
-        name = "vault.get",
-        description = "Return public metadata and a warning that plaintext is withheld. Confirms the Secret exists. Use vault.use for proxy operations or vault.reveal for explicit access."
+        name = "vault_get",
+        description = "Return public metadata and a warning that plaintext is withheld. Confirms the Secret exists. Use vault_use for proxy operations or vault_reveal for explicit access."
     )]
     pub async fn vault_get(
         &self,
@@ -310,7 +310,7 @@ impl MerkleMcpServer {
                 "category": s.category,
                 "sensitivity": format!("{:?}", s.sensitivity),
                 "version": s.version,
-                "warning": "Plaintext withheld. Use vault.use for proxy operations or vault.reveal (requires Operator Confirmation) for explicit access.",
+                "warning": "Plaintext withheld. Use vault_use for proxy operations or vault_reveal (requires Operator Confirmation) for explicit access.",
             })
             .to_string(),
         )]))
@@ -319,7 +319,7 @@ impl MerkleMcpServer {
     /// List Secrets matching optional filter criteria. Returns public metadata
     /// only — no plaintext.
     #[tool(
-        name = "vault.list",
+        name = "vault_list",
         description = "List Secrets matching filter criteria. Returns public metadata only (no plaintext). Supports category, tag, name-pattern, expiry, sensitivity, and FTS5 filters."
     )]
     pub async fn vault_list(
@@ -361,7 +361,7 @@ impl MerkleMcpServer {
     /// Return full public metadata for a single Secret including its
     /// `schema_id` field.
     #[tool(
-        name = "vault.describe",
+        name = "vault_describe",
         description = "Return full public metadata for a single Secret, including schema_id. Does not return plaintext."
     )]
     pub async fn vault_describe(
@@ -403,7 +403,7 @@ impl MerkleMcpServer {
     /// Replace the active value of a Secret while retaining prior versions up
     /// to the Namespace Policy `retain_count`.
     #[tool(
-        name = "vault.rotate",
+        name = "vault_rotate",
         description = "Replace the active value of a Secret, retaining prior versions per Namespace Policy. Preferred over delete+put for Secret updates — preserves version history and the handle URI."
     )]
     pub async fn vault_rotate(
@@ -448,7 +448,7 @@ impl MerkleMcpServer {
     /// (set by `/merkle-rollback`) — not a model-controlled tool argument
     /// (MERK-001).
     #[tool(
-        name = "vault.rollback",
+        name = "vault_rollback",
         description = "Roll a Secret back to a retained historical version by copying its blob into a new active version (immutable history). Requires operator confirmation via the /merkle-rollback slash command (injected into request _meta by the client, not a tool argument)."
     )]
     pub async fn vault_rollback(
@@ -460,7 +460,7 @@ impl MerkleMcpServer {
 
         if !crate::operator_confirmation_from_meta(&meta) {
             return Err(ErrorData::invalid_params(
-                "vault.rollback requires an operator confirmation issued via the \
+                "vault_rollback requires an operator confirmation issued via the \
                  /merkle-rollback slash command; refusing to roll back autonomously",
                 None,
             ));
@@ -506,7 +506,7 @@ impl MerkleMcpServer {
     /// human operator — the model cannot supply it through tool arguments
     /// (MERK-001).
     #[tool(
-        name = "vault.delete",
+        name = "vault_delete",
         description = "Permanently delete a Secret and all its versions. Irreversible. Requires an operator confirmation issued via the /merkle-delete slash command (injected into request _meta by the client, not a tool argument). Recorded in the audit log."
     )]
     pub async fn vault_delete(
@@ -523,7 +523,7 @@ impl MerkleMcpServer {
         // rejected before any state change.
         if !crate::operator_confirmation_from_meta(&meta) {
             return Err(ErrorData::invalid_params(
-                "vault.delete is irreversible and requires an operator confirmation \
+                "vault_delete is irreversible and requires an operator confirmation \
                  issued via the /merkle-delete slash command; refusing to delete \
                  autonomously",
                 None,
@@ -572,7 +572,7 @@ impl MerkleMcpServer {
     /// Weight vector: name=10.0, tags=5.0, description=3.0, category=2.0,
     /// namespace_label=1.0. A name match strongly dominates a description match.
     #[tool(
-        name = "vault.search",
+        name = "vault_search",
         description = "Weighted BM25 full-text search over public metadata (name, tags, description, category, namespace_label). Returns ranked results with score (more negative = more relevant), bm25_rank (1-based, page-local), and per-field highlights. Paginate with limit + offset."
     )]
     pub async fn vault_search(
@@ -641,7 +641,7 @@ impl MerkleMcpServer {
 
     /// Return the version history of a Secret.
     #[tool(
-        name = "vault.history",
+        name = "vault_history",
         description = "Return the version history of a Secret. Shows creation, rotation, and deletion timestamps per version."
     )]
     pub async fn vault_history(
@@ -725,7 +725,7 @@ mod tests {
         assert_eq!(input.purpose, "undo bad rotate");
     }
 
-    /// BUG-10: vault.put must forward `tags` and `sensitivity` to the daemon.
+    /// BUG-10: vault_put must forward `tags` and `sensitivity` to the daemon.
     #[test]
     fn put_request_forwards_tags_and_sensitivity() {
         let input = VaultPutInput {
@@ -750,7 +750,7 @@ mod tests {
         assert_eq!(req.description.as_deref(), Some("prod API token"));
     }
 
-    /// BUG-11: vault.list must forward `tags`, `sensitivity`, and
+    /// BUG-11: vault_list must forward `tags`, `sensitivity`, and
     /// `expires_before` filters to the daemon.
     #[test]
     fn list_params_forward_dropped_filters() {

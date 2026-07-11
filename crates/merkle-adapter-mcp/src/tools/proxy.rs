@@ -1,12 +1,12 @@
-//! Proxy tools: vault.ssh.exec, vault.ssh.copy, vault.ssh.port_forward,
-//! vault.ssh.shell, vault.http.request, vault.http.download,
-//! vault.http.upload, vault.spawn, vault.crypto.sign, vault.crypto.decrypt.
+//! Proxy tools: vault_ssh_exec, vault_ssh_copy, vault_ssh_port_forward,
+//! vault_ssh_shell, vault_http_request, vault_http_download,
+//! vault_http_upload, vault_spawn, vault_crypto_sign, vault_crypto_decrypt.
 //!
 //! All proxy commands are forwarded to the Vault Agent Companion Socket via
 //! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
 //! Key material is decrypted agent-side; no key bytes cross the socket.
 //!
-//! `vault.ssh.shell` is wired but returns `vault.not_implemented` because
+//! `vault_ssh_shell` is wired but returns `vault.not_implemented` because
 //! the server endpoint returns 501 Not Implemented in this phase.
 
 use std::collections::HashMap;
@@ -36,7 +36,7 @@ use merkle_types::Handle;
 // SSH tool inputs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.ssh.exec.
+/// Input for vault_ssh_exec.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSshExecInput {
     /// Handle URI of an ssh-category Secret containing the private key.
@@ -53,7 +53,7 @@ pub struct VaultSshExecInput {
     pub timeout_secs: Option<u32>,
 }
 
-/// Input for vault.ssh.copy.
+/// Input for vault_ssh_copy.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSshCopyInput {
     /// Handle URI of an ssh-category Secret.
@@ -68,7 +68,7 @@ pub struct VaultSshCopyInput {
     pub dest: String,
 }
 
-/// Input for vault.ssh.port_forward.
+/// Input for vault_ssh_port_forward.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSshPortForwardInput {
     /// Handle URI of an ssh-category Secret.
@@ -87,7 +87,7 @@ pub struct VaultSshPortForwardInput {
     pub operator_confirmation: Option<bool>,
 }
 
-/// Input for vault.ssh.shell.
+/// Input for vault_ssh_shell.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSshShellInput {
     /// Handle URI of an ssh-category Secret.
@@ -100,7 +100,7 @@ pub struct VaultSshShellInput {
 // HTTP tool inputs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.http.request.
+/// Input for vault_http_request.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultHttpRequestInput {
     /// Handle URI of a token | password | key category Secret (optional auth).
@@ -115,7 +115,7 @@ pub struct VaultHttpRequestInput {
     pub body: Option<String>,
 }
 
-/// Input for vault.http.download.
+/// Input for vault_http_download.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultHttpDownloadInput {
     /// URL to download from.
@@ -126,7 +126,7 @@ pub struct VaultHttpDownloadInput {
     pub handle: Option<String>,
 }
 
-/// Input for vault.http.upload.
+/// Input for vault_http_upload.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultHttpUploadInput {
     /// URL to upload to.
@@ -143,7 +143,7 @@ pub struct VaultHttpUploadInput {
 // Process spawn input
 // ---------------------------------------------------------------------------
 
-/// Input for vault.spawn.
+/// Input for vault_spawn.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSpawnInput {
     /// Handles to vault secrets injected as environment variables.
@@ -162,7 +162,7 @@ pub struct VaultSpawnInput {
 // Crypto tool inputs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.crypto.sign.
+/// Input for vault_crypto_sign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultCryptoSignInput {
     /// Handle URI of a key-category Secret holding the signing key.
@@ -173,7 +173,7 @@ pub struct VaultCryptoSignInput {
     pub algorithm: Option<String>,
 }
 
-/// Input for vault.crypto.decrypt.
+/// Input for vault_crypto_decrypt.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultCryptoDecryptInput {
     /// Handle URI of a key-category Secret holding the decryption key.
@@ -228,7 +228,7 @@ impl MerkleMcpServer {
     /// Secret. Exit code, stdout (max 64 KiB), and stderr (max 16 KiB) are
     /// returned. Credentials never appear in the response.
     #[tool(
-        name = "vault.ssh.exec",
+        name = "vault_ssh_exec",
         description = "Execute a remote command over SSH using credentials from a Secret. Exit code, stdout (max 64 KiB), and stderr (max 16 KiB) are returned. Credentials never appear in the response."
     )]
     pub async fn vault_ssh_exec(
@@ -274,7 +274,7 @@ impl MerkleMcpServer {
     /// Copy files to or from a remote host using SSH credentials from a Secret.
     /// Direction: `upload` or `download`.
     #[tool(
-        name = "vault.ssh.copy",
+        name = "vault_ssh_copy",
         description = "Copy files to or from a remote host using SSH credentials from a Secret. Direction: upload or download."
     )]
     pub async fn vault_ssh_copy(
@@ -317,7 +317,7 @@ impl MerkleMcpServer {
     /// Establish a local SSH port forward using credentials from a Secret.
     /// Returns `session_id` and `local_addr`.
     #[tool(
-        name = "vault.ssh.port_forward",
+        name = "vault_ssh_port_forward",
         description = "Establish a local SSH port forward using credentials from a Secret. Returns session_id and local_addr. The tunnel is torn down on session close or TTL expiry."
     )]
     pub async fn vault_ssh_port_forward(
@@ -355,10 +355,10 @@ impl MerkleMcpServer {
 
     /// Open a buffered SSH shell session. Full PTY streaming is not yet
     /// implemented; this tool returns a `vault.not_implemented` error.
-    /// Use `vault.ssh.exec` for non-interactive commands.
+    /// Use `vault_ssh_exec` for non-interactive commands.
     #[tool(
-        name = "vault.ssh.shell",
-        description = "Open an interactive SSH shell session. NOT YET IMPLEMENTED — the server returns 501. Use vault.ssh.exec for non-interactive commands."
+        name = "vault_ssh_shell",
+        description = "Open an interactive SSH shell session. NOT YET IMPLEMENTED — the server returns 501. Use vault_ssh_exec for non-interactive commands."
     )]
     pub async fn vault_ssh_shell(
         &self,
@@ -383,7 +383,7 @@ impl MerkleMcpServer {
                 // 501 → explicit not_implemented message; other errors mapped normally.
                 use merkle_companion_client::ClientError;
                 if let ClientError::Http { status: 501, .. } = &e {
-                    crate::errors::not_implemented("vault.ssh.shell")
+                    crate::errors::not_implemented("vault_ssh_shell")
                 } else {
                     client_error_to_mcp(e)
                 }
@@ -391,13 +391,13 @@ impl MerkleMcpServer {
 
         // Unreachable in practice (server always returns 501 today), but
         // keeps the return type consistent.
-        Err(crate::errors::not_implemented("vault.ssh.shell"))
+        Err(crate::errors::not_implemented("vault_ssh_shell"))
     }
 
     /// Perform an HTTP request injecting credentials from a Secret.
     /// Response body is capped at 256 KiB.
     #[tool(
-        name = "vault.http.request",
+        name = "vault_http_request",
         description = "Perform an HTTP request, optionally injecting credentials from a Secret. Response body is capped at 256 KiB."
     )]
     pub async fn vault_http_request(
@@ -443,7 +443,7 @@ impl MerkleMcpServer {
     /// Download a file to the agent filesystem, optionally using credentials
     /// from a Secret for authentication.
     #[tool(
-        name = "vault.http.download",
+        name = "vault_http_download",
         description = "Download a file to the agent filesystem, optionally using credentials from a Secret for authentication."
     )]
     pub async fn vault_http_download(
@@ -482,7 +482,7 @@ impl MerkleMcpServer {
     /// Upload a local file from the agent filesystem to a URL, optionally
     /// using credentials from a Secret.
     #[tool(
-        name = "vault.http.upload",
+        name = "vault_http_upload",
         description = "Upload a file from the agent filesystem to a URL, optionally using credentials from a Secret for authentication."
     )]
     pub async fn vault_http_upload(
@@ -521,7 +521,7 @@ impl MerkleMcpServer {
     /// environment variables. stdin is closed. stdout/stderr returned.
     /// Credentials never appear in the response.
     #[tool(
-        name = "vault.spawn",
+        name = "vault_spawn",
         description = "Spawn a child process on the agent host with Secrets injected as environment variables. stdin is closed. stdout/stderr returned. Credentials never appear in the response."
     )]
     pub async fn vault_spawn(
@@ -565,7 +565,7 @@ impl MerkleMcpServer {
     /// Sign a payload using a private key stored in a Secret. Returns a
     /// base64-encoded signature. The private key never appears in the response.
     #[tool(
-        name = "vault.crypto.sign",
+        name = "vault_crypto_sign",
         description = "Sign a payload using a private key stored in a Secret. Returns a base64-encoded signature. The private key never appears in the response."
     )]
     pub async fn vault_crypto_sign(
@@ -611,7 +611,7 @@ impl MerkleMcpServer {
     /// Decrypt a ciphertext using a key stored in a Secret. Returns
     /// base64-encoded plaintext. The private key never appears in the response.
     #[tool(
-        name = "vault.crypto.decrypt",
+        name = "vault_crypto_decrypt",
         description = "Decrypt a ciphertext using a key stored in a Secret. Returns base64-encoded plaintext. The private key never appears in the response."
     )]
     pub async fn vault_crypto_decrypt(

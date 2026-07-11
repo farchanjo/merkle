@@ -1,8 +1,8 @@
 //! Use Token and Tempfile tools:
-//! vault.use, vault.write_tempfile, vault.write_fifo, vault.revoke_tempfile.
+//! vault_use, vault_write_tempfile, vault_write_fifo, vault_revoke_tempfile.
 //!
 //! All four tools forward to the Companion Socket endpoints added in PR3.
-//! The session_id from `vault.bind` is required for token issuance and
+//! The session_id from `vault_bind` is required for token issuance and
 //! is read from the per-session [`SessionState`].
 
 use rmcp::{
@@ -24,7 +24,7 @@ use merkle_types::Handle;
 // Input parameter structs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.use.
+/// Input for vault_use.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultUseInput {
     /// Handle URI of the Secret to issue a token for.
@@ -33,7 +33,7 @@ pub struct VaultUseInput {
     pub purpose: String,
 }
 
-/// Input for vault.write_tempfile.
+/// Input for vault_write_tempfile.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultWriteTempfileInput {
     /// Handle URI of the Secret to materialise.
@@ -43,17 +43,17 @@ pub struct VaultWriteTempfileInput {
     pub mode: Option<String>,
 }
 
-/// Input for vault.write_fifo.
+/// Input for vault_write_fifo.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultWriteFifoInput {
     /// Handle URI of the Secret to materialise as a FIFO.
     pub handle: String,
 }
 
-/// Input for vault.revoke_tempfile.
+/// Input for vault_revoke_tempfile.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultRevokeTempfileInput {
-    /// Opaque token previously returned by vault.write_tempfile or vault.write_fifo.
+    /// Opaque token previously returned by vault_write_tempfile or vault_write_fifo.
     pub path: String,
 }
 
@@ -99,11 +99,11 @@ fn resolve_session_id(session: &crate::session::SessionState) -> Result<Uuid, Er
 #[rmcp::tool_router(router = use_token_router)]
 impl MerkleMcpServer {
     /// Issue a short-lived Use Token for a Secret. The plaintext never appears
-    /// in the MCP response. Pass the `use_token` to `vault.ssh.exec` or another
+    /// in the MCP response. Pass the `use_token` to `vault_ssh_exec` or another
     /// proxy tool. Default TTL: 60 seconds.
     #[tool(
-        name = "vault.use",
-        description = "Issue a short-lived Use Token for a Secret. The plaintext never appears in the response. Pass the use_token to vault.ssh.exec or another proxy tool. Default TTL: 60 seconds."
+        name = "vault_use",
+        description = "Issue a short-lived Use Token for a Secret. The plaintext never appears in the response. Pass the use_token to vault_ssh_exec or another proxy tool. Default TTL: 60 seconds."
     )]
     pub async fn vault_use(
         &self,
@@ -146,7 +146,7 @@ impl MerkleMcpServer {
     /// Cleaned up on session close or idle timeout.
     /// Useful for tools that require a file path (e.g. `ssh -i`).
     #[tool(
-        name = "vault.write_tempfile",
+        name = "vault_write_tempfile",
         description = "Materialise a Secret on the local filesystem as a 0600 Tempfile. Cleaned up on session close. Useful for tools that require a file path, e.g. ssh -i."
     )]
     pub async fn vault_write_tempfile(
@@ -203,7 +203,7 @@ impl MerkleMcpServer {
     /// plaintext once; the file is removed after the first successful read.
     /// Suitable for programs that open a credential path exactly once.
     #[tool(
-        name = "vault.write_fifo",
+        name = "vault_write_fifo",
         description = "Materialise a Secret as a named pipe (FIFO). The agent writes the plaintext once; removed after the first read. Suitable for programs that open a credential path exactly once."
     )]
     pub async fn vault_write_fifo(
@@ -257,7 +257,7 @@ impl MerkleMcpServer {
     /// Explicitly revoke a Tempfile or FIFO before session close.
     /// The file is removed immediately and the path becomes invalid.
     #[tool(
-        name = "vault.revoke_tempfile",
+        name = "vault_revoke_tempfile",
         description = "Explicitly revoke a Tempfile or FIFO before session close or idle timeout. The file is removed immediately."
     )]
     pub async fn vault_revoke_tempfile(

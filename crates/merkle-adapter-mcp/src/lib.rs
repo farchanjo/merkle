@@ -15,20 +15,20 @@
 //!
 //! ## Tools exposed (31 total)
 //!
-//! Identity (3): `vault.unseal`, `vault.seal`, `vault.bind`
-//! Secrets (9): `vault.put`, `vault.get`, `vault.list`, `vault.describe`,
-//!               `vault.search`, `vault.rotate`, `vault.rollback`, `vault.delete`,
-//!               `vault.history`
-//! Reveal (1): `vault.reveal`
-//! Use-token (4): `vault.use`, `vault.write_tempfile`, `vault.write_fifo`,
-//!                `vault.revoke_tempfile`
-//! Proxy (10): `vault.ssh.exec`, `vault.ssh.copy`, `vault.ssh.port_forward`,
-//!              `vault.ssh.shell`, `vault.http.request`, `vault.http.download`,
-//!              `vault.http.upload`, `vault.spawn`,
-//!              `vault.crypto.sign`, `vault.crypto.decrypt`
-//! Audit (1): `vault.audit.query`
-//! Backup (2): `vault.backup`, `vault.restore`
-//! Diagnostics (1): `vault.doctor`
+//! Identity (3): `vault_unseal`, `vault_seal`, `vault_bind`
+//! Secrets (9): `vault_put`, `vault_get`, `vault_list`, `vault_describe`,
+//!               `vault_search`, `vault_rotate`, `vault_rollback`, `vault_delete`,
+//!               `vault_history`
+//! Reveal (1): `vault_reveal`
+//! Use-token (4): `vault_use`, `vault_write_tempfile`, `vault_write_fifo`,
+//!                `vault_revoke_tempfile`
+//! Proxy (10): `vault_ssh_exec`, `vault_ssh_copy`, `vault_ssh_port_forward`,
+//!              `vault_ssh_shell`, `vault_http_request`, `vault_http_download`,
+//!              `vault_http_upload`, `vault_spawn`,
+//!              `vault_crypto_sign`, `vault_crypto_decrypt`
+//! Audit (1): `vault_audit_query`
+//! Backup (2): `vault_backup`, `vault_restore`
+//! Diagnostics (1): `vault_doctor`
 //!
 //! ## Usage
 //!
@@ -147,6 +147,16 @@ impl MerkleMcpServer {
             tool_router,
         }
     }
+
+    /// Return the full MCP tool catalog (name + schema) this server exposes.
+    ///
+    /// Used by tests and diagnostics. Tool names must stay within the MCP
+    /// pattern `^[a-zA-Z0-9_-]{1,64}$` so strict clients (e.g. Grok) do not
+    /// drop the entire tool set.
+    #[must_use]
+    pub fn list_tools_catalog(&self) -> Vec<rmcp::model::Tool> {
+        self.tool_router.list_all()
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -164,7 +174,7 @@ impl ServerHandler for MerkleMcpServer {
         .with_server_info(Implementation::new("merkle", env!("CARGO_PKG_VERSION")))
         .with_instructions(
             "Merkle Vault Agent MCP adapter. \
-             Call vault.bind to associate a Namespace before using secret tools.",
+             Call vault_bind to associate a Namespace before using secret tools.",
         )
     }
 

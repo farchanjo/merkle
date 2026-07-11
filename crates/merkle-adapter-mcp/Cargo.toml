@@ -4,7 +4,7 @@ version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
 license.workspace     = true
-description  = "Driving-port adapter: rmcp SDK MCP server. Translates MCP stdio tool calls into JSON-RPC messages forwarded to the Vault Agent Companion Socket. Exposes vault.list, vault.describe, vault.use, vault.reveal, vault.put, vault.rotate, vault.delete, vault.bind, and all Proxy Tool entrypoints."
+description  = "Driving-port adapter: rmcp SDK MCP server. Translates MCP stdio tool calls into JSON-RPC messages forwarded to the Vault Agent Companion Socket. Exposes vault_list, vault_describe, vault_use, vault_reveal, vault_put, vault_rotate, vault_delete, vault_bind, and all Proxy Tool entrypoints."
 
 [lints]
 workspace = true

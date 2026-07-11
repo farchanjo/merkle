@@ -1,4 +1,4 @@
-//! Audit tools: vault.audit.query.
+//! Audit tools: vault_audit_query.
 //!
 //! Forwards `GET /v1/audit` to the Companion Socket via
 //! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
@@ -20,7 +20,7 @@ use merkle_companion_client::dto::AuditQuery;
 // Input parameter struct
 // ---------------------------------------------------------------------------
 
-/// Input for vault.audit.query.
+/// Input for vault_audit_query.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultAuditQueryInput {
     /// Filter audit entries by handle URI.
@@ -66,7 +66,7 @@ impl MerkleMcpServer {
     /// session, or outcome. Optionally verify the BLAKE3 hash chain
     /// integrity. Returns at most 500 entries per call.
     #[tool(
-        name = "vault.audit.query",
+        name = "vault_audit_query",
         description = "Query the append-only Audit Log. Filter by handle, operation type, session, or outcome. Optionally verify the BLAKE3 hash chain integrity. Max 500 entries per call."
     )]
     pub async fn vault_audit_query(

@@ -15,18 +15,18 @@ use uuid::Uuid;
 /// Access is guarded by `tokio::sync::RwLock` on the `MerkleMcpServer`.
 #[derive(Debug, Default)]
 pub struct SessionState {
-    /// Namespace label bound by `vault.bind`. `None` until `vault.bind` is
+    /// Namespace label bound by `vault_bind`. `None` until `vault_bind` is
     /// called. Operations that require a Namespace return `NamespaceNotBound`
     /// when this field is `None`.
     pub namespace_label: Option<String>,
 
     /// The `namespace_id` UUID returned by `CreateSessionResponse`, stored after
-    /// `vault.bind` succeeds. Used by all subsequent tool calls so they operate
+    /// `vault_bind` succeeds. Used by all subsequent tool calls so they operate
     /// on the same namespace record that was created in storage.
     pub namespace_id: Option<Uuid>,
 
     /// The `session_id` UUID returned by `POST /v1/sessions` (`CreateSessionResponse`).
-    /// Required by `vault.reveal` (`RevealRequest.session_id`) and the use-token
+    /// Required by `vault_reveal` (`RevealRequest.session_id`) and the use-token
     /// endpoints (`UseTokenRequest.session_id`, etc.) so all requests within a
     /// session are correlated server-side.
     pub session_id: Option<Uuid>,
@@ -49,7 +49,7 @@ impl SessionState {
         self.namespace_id
     }
 
-    /// Return the server-assigned `session_id`, or `None` before `vault.bind`.
+    /// Return the server-assigned `session_id`, or `None` before `vault_bind`.
     #[must_use]
     pub fn session_id(&self) -> Option<Uuid> {
         self.session_id
@@ -84,7 +84,7 @@ impl SessionState {
     ///
     /// # Errors
     ///
-    /// Returns `"AlreadyBound"` when `vault.bind` has already been called in
+    /// Returns `"AlreadyBound"` when `vault_bind` has already been called in
     /// this session.
     pub fn bind(&mut self, label: String) -> Result<(), &'static str> {
         if self.namespace_bound {

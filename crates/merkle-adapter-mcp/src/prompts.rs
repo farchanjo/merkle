@@ -7,7 +7,7 @@
 //! instead of relying on per-client `~/.claude/commands/*.md` wrappers.
 //!
 //! Each prompt returns a single user-role text message that instructs the
-//! consuming LLM how to chain the relevant `vault.*` tool calls. The
+//! consuming LLM how to chain the relevant `vault_*` tool calls. The
 //! `operator_confirmation: true` invariant remains enforced at the server
 //! layer via the slash-originated `_meta` flag — these prompts do not
 //! bypass it; they only surface the slash literal in the client UI.
@@ -85,7 +85,7 @@ impl MerklePrompts {
             "merkle-show",
             Some(
                 "Show public metadata for a merkle Secret. No plaintext is returned. \
-                 Maps to vault.describe.",
+                 Maps to vault_describe.",
             ),
             Some(vec![
                 PromptArgument::new("handle")
@@ -137,7 +137,7 @@ impl MerklePrompts {
     // -----------------------------------------------------------------------
 
     fn merkle_doctor_body() -> GetPromptResult {
-        let text = "Run the merkle Vault Agent diagnostic. Invoke the `vault.doctor` tool \
+        let text = "Run the merkle Vault Agent diagnostic. Invoke the `vault_doctor` tool \
                     with empty arguments. Report sealed state, keychain reachability, DB \
                     integrity, audit-chain head, backup schedule, expiring secrets, disk \
                     space and any warnings verbatim. No operator confirmation required.";
@@ -150,7 +150,7 @@ impl MerklePrompts {
         let handle = required_str(args, "handle")?;
         let text = format!(
             "Show the public metadata for the merkle Secret at `{handle}`. Invoke \
-             `vault.describe` with arguments `{{ \"handle\": \"{handle}\" }}`. Report \
+             `vault_describe` with arguments `{{ \"handle\": \"{handle}\" }}`. Report \
              category, sensitivity, tags, schema_id, created_at, current version, and \
              expires_at. Plaintext must not be revealed."
         );
@@ -167,7 +167,7 @@ impl MerklePrompts {
         let purpose = optional_str(args, "purpose").unwrap_or("slash-invoked reveal");
         let text = format!(
             "Reveal the plaintext of the merkle Secret at `{handle}`. Invoke \
-             `vault.reveal` with arguments `{{ \"handle\": \"{handle}\", \"purpose\": \
+             `vault_reveal` with arguments `{{ \"handle\": \"{handle}\", \"purpose\": \
              \"{purpose}\", \"operator_confirmation\": true }}`. If the agent emits an \
              out-of-band confirmation request (medium/high sensitivity or policy-required), \
              wait for the operator acknowledgement before reporting the plaintext. \
@@ -187,8 +187,8 @@ impl MerklePrompts {
         let version = required_str(args, "version")?;
         let text = format!(
             "Roll the merkle Secret at `{handle}` back to version `{version}`. Steps: \
-             (1) invoke `vault.history` with arguments `{{ \"handle\": \"{handle}\" }}` \
-             and locate the entry for version `{version}`; (2) invoke `vault.rollback` with \
+             (1) invoke `vault_history` with arguments `{{ \"handle\": \"{handle}\" }}` \
+             and locate the entry for version `{version}`; (2) invoke `vault_rollback` with \
              arguments `{{ \"handle\": \"{handle}\", \"target_version\": {version}, \
              \"purpose\": \"rollback to version {version}\" }}`. Report the new version \
              metadata (active_version, rolled_back_at). Operator Confirmation is mandatory \
@@ -271,7 +271,7 @@ mod tests {
                 .expect("show prompt must resolve with handle");
         let body = render_user_text(&result);
         assert!(body.contains("vault://prod/ssh/bastion"));
-        assert!(body.contains("vault.describe"));
+        assert!(body.contains("vault_describe"));
     }
 
     #[test]
@@ -314,8 +314,8 @@ mod tests {
             MerklePrompts::get(GetPromptRequestParams::new("merkle-rollback").with_arguments(args))
                 .expect("rollback prompt must resolve");
         let body = render_user_text(&result);
-        assert!(body.contains("vault.history"));
-        assert!(body.contains("vault.rollback"));
+        assert!(body.contains("vault_history"));
+        assert!(body.contains("vault_rollback"));
         assert!(body.contains("\"target_version\": 2"));
         assert!(body.contains("rollback to version 2"));
     }

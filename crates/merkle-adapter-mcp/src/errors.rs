@@ -9,7 +9,7 @@ use rmcp::{ErrorData, model::ErrorCode};
 
 /// Well-known MCP application error codes (Section 4 of mcp-protocol.md).
 pub mod codes {
-    /// Vault is sealed; call `vault.unseal` first.
+    /// Vault is sealed; call `vault_unseal` first.
     pub const UNSEAL_REQUIRED: i32 = -32001;
     /// Request rate limit exceeded.
     pub const RATE_LIMIT_EXCEEDED: i32 = -32002;
@@ -17,7 +17,7 @@ pub mod codes {
     pub const REVEAL_DENIED: i32 = -32003;
     /// Secret handle not found.
     pub const HANDLE_NOT_FOUND: i32 = -32004;
-    /// Session has no Namespace binding; call `vault.bind` first.
+    /// Session has no Namespace binding; call `vault_bind` first.
     pub const NAMESPACE_NOT_BOUND: i32 = -32005;
     /// Out-of-band confirmation is required.
     pub const OOB_CONFIRMATION_REQUIRED: i32 = -32006;
@@ -91,7 +91,7 @@ pub fn client_error_to_mcp(err: ClientError) -> ErrorData {
     match err {
         ClientError::Sealed => ErrorData::new(
             ErrorCode(codes::UNSEAL_REQUIRED),
-            "vault is sealed — call vault.unseal first",
+            "vault is sealed — call vault_unseal first",
             Some(serde_json::json!({
                 "hint": "Run `merkle unseal` or configure Touch ID",
                 "error_type": "vault.sealed",
@@ -186,7 +186,7 @@ fn classify_http(status: u16, problem_type: &str) -> (i32, &'static str, &'stati
         404 => (
             codes::HANDLE_NOT_FOUND,
             "vault.not_found",
-            "Verify the handle URI with vault.list",
+            "Verify the handle URI with vault_list",
         ),
         409 => (codes::CONFLICT, "vault.conflict", "Resource conflict"),
         400 => (
@@ -307,7 +307,7 @@ pub fn namespace_not_bound() -> ErrorData {
         ErrorCode(codes::NAMESPACE_NOT_BOUND),
         "NamespaceNotBound: session has no Namespace binding",
         Some(serde_json::json!({
-            "hint": "Call vault.bind first.",
+            "hint": "Call vault_bind first.",
             "error_type": "NamespaceNotBound",
         })),
     )

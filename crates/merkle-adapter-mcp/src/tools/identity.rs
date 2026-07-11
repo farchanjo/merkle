@@ -1,4 +1,4 @@
-//! Identity and sealing tools: vault.unseal, vault.seal, vault.bind.
+//! Identity and sealing tools: vault_unseal, vault_seal, vault_bind.
 //!
 //! These tools manage the vault lifecycle state transitions and namespace
 //! session binding. They communicate exclusively through the Companion Socket
@@ -21,7 +21,7 @@ use merkle_companion_client::dto::{CreateSessionRequest, UnsealRequest};
 // Input parameter structs
 // ---------------------------------------------------------------------------
 
-/// Input for vault.unseal.
+/// Input for vault_unseal.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultUnsealInput {
     /// Passphrase for software-only keychain. On macOS with Touch ID configured
@@ -29,14 +29,14 @@ pub struct VaultUnsealInput {
     pub passphrase: Option<String>,
 }
 
-/// Input for vault.seal.
+/// Input for vault_seal.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultSealInput {
     /// Optional reason for sealing, recorded in the audit log.
     pub reason: Option<String>,
 }
 
-/// Input for vault.bind.
+/// Input for vault_bind.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct VaultBindInput {
     /// Namespace label to bind this session to.
@@ -72,7 +72,7 @@ impl IdentityTools {
 /// Per ADR-0008 (CWD-Bound Namespace) this hash is the canonical namespace
 /// identity for the current working directory; per ADR-0025 §Bug #6 the MCP
 /// adapter materialises it internally so callers never pass `cwd_hash` over
-/// the MCP transport. The bound label supplied via `vault.bind` overrides
+/// the MCP transport. The bound label supplied via `vault_bind` overrides
 /// the default name but the underlying cwd_hash identity is preserved.
 fn cwd_hash() -> String {
     let cwd = std::env::current_dir()
@@ -100,7 +100,7 @@ impl MerkleMcpServer {
     /// `passphrase` is ignored. On Linux/Windows the passphrase is used to
     /// derive the key with Argon2id if no Secret Service is available.
     #[tool(
-        name = "vault.unseal",
+        name = "vault_unseal",
         description = "Unseal the Vault Agent by loading the MasterKey from the OS keychain. On macOS, Touch ID is used. On Linux/Windows a passphrase may be required. Most tools require the agent to be unsealed."
     )]
     pub async fn vault_unseal(
@@ -128,7 +128,7 @@ impl MerkleMcpServer {
     /// All subsequent tool calls that require plaintext access will return
     /// `UnsealRequired` until the agent is unsealed again.
     #[tool(
-        name = "vault.seal",
+        name = "vault_seal",
         description = "Seal the Vault Agent by zeroing the in-memory MasterKey. All subsequent plaintext-access tool calls will return UnsealRequired until the agent is unsealed again."
     )]
     pub async fn vault_seal(
@@ -157,13 +157,13 @@ impl MerkleMcpServer {
     /// (ADR-0025 §Bug #6 — documentation fix; no behavioural change).
     ///
     /// The returned `session_id` and `namespace_id` are stored in
-    /// `SessionState` for use by `vault.reveal` and all use-token tools.
+    /// `SessionState` for use by `vault_reveal` and all use-token tools.
     ///
     /// May be called at most once per session; re-binding is rejected with
     /// `AlreadyBound`. Without a binding, operations resolve to the default
     /// Namespace derived from the working directory hash.
     #[tool(
-        name = "vault.bind",
+        name = "vault_bind",
         description = "Associate the current MCP session with a named Namespace. Call this at session start. May be called at most once — re-binding returns AlreadyBound. Without binding, the default Namespace (cwd-hash derived) is used."
     )]
     pub async fn vault_bind(

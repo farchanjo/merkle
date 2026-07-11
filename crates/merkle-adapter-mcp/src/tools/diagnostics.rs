@@ -1,4 +1,4 @@
-//! Diagnostics tools: vault.doctor.
+//! Diagnostics tools: vault_doctor.
 //!
 //! Forwards `GET /v1/agent/doctor` to the Companion Socket via
 //! [`CompanionSocketClient`](merkle_companion_client::CompanionSocketClient).
@@ -19,7 +19,7 @@ use crate::{MerkleMcpServer, errors::client_error_to_mcp};
 // Input parameter struct
 // ---------------------------------------------------------------------------
 
-/// Input for vault.doctor — no parameters required.
+/// Input for vault_doctor — no parameters required.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 pub struct VaultDoctorInput {}
 
@@ -53,7 +53,7 @@ impl MerkleMcpServer {
     /// reachability, DB integrity, audit chain, backup schedule, expiring
     /// Secrets, disk space, and any warnings.
     #[tool(
-        name = "vault.doctor",
+        name = "vault_doctor",
         description = "Run a diagnostic health check on the Vault Agent. Always returns a result even in degraded state. Reports: sealed state, keychain, DB integrity, audit chain, backup schedule, expiring Secrets, disk space, and warnings."
     )]
     pub async fn vault_doctor(
