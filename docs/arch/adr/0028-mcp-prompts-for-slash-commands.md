@@ -50,7 +50,7 @@ evolves, and offers nothing to non-Claude-Code clients.
 
 ## Decision Outcome
 
-Chosen: **option 2 — expose the four slash commands as MCP prompts**.
+Chosen option: **option 2 — expose the four slash commands as MCP prompts**.
 
 The adapter advertises the `prompts` capability and registers a static
 catalog (`MerklePrompts`) in

@@ -79,7 +79,7 @@ verification of the tail.
 
 ## Decision Outcome
 
-Chosen: **option 3 — a trusted audit baseline**.
+Chosen option: **option 3 — a trusted audit baseline**.
 
 A new value object `AuditBaseline` (bounded context: Audit & Compliance)
 records a checkpoint:

@@ -86,7 +86,9 @@ single encrypted file is a backup target.
 
 **Decision: accepted.**
 
-## Decision
+## Decision Outcome
+
+Chosen option: "Option: FileKeystoreAdapter for headless/auto fallback"
 
 Introduce **`FileKeystoreAdapter`** as a new implementation of
 `merkle_ports::Keychain` in `crates/merkle-adapter-keychain`.
@@ -158,16 +160,16 @@ In `build_app_context` (`run.rs`):
 - `backend = "auto"` → attempt `OsKeychainAdapter`; on `PersistenceFailed` probe
   during a test-store, switch to `FileKeystoreAdapter`.
 
-## Consequences
+### Consequences
 
-### Positive
+#### Positive
 
 - Headless CI and Docker-based integration tests are unblocked.
 - macOS launch-agent operators have a working alternative without GUI auth.
 - The encrypted file is a natural backup artefact (aligns with ADR-0006).
 - Zero changes to domain crates or the `Keychain` port surface.
 
-### Negative
+#### Negative
 
 - Operator must remember the passphrase. Loss of passphrase = loss of keystore.
   Operators should store the passphrase in a secrets manager.
@@ -176,7 +178,7 @@ In `build_app_context` (`run.rs`):
 - File backend has no hardware-backed key storage; the security posture is lower
   than OS keychain on platforms with Secure Enclave / TPM.
 
-### Neutral
+#### Neutral
 
 - `MERKLE_KEYSTORE_PASSPHRASE` env var introduces a new operator secret that CI
   pipelines must provision (GitHub Actions: `secrets.MERKLE_KEYSTORE_PASSPHRASE`).
