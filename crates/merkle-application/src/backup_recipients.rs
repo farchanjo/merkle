@@ -11,7 +11,7 @@
 //! both paths produce decryptable dual-recipient artifacts.
 
 use merkle_domain_identity::KEYCHAIN_SERVICE;
-use merkle_ports::KeychainError;
+use merkle_ports::{AgeIdentity, KeychainError};
 use secrecy::ExposeSecret as _;
 use tracing::{info, warn};
 
@@ -79,6 +79,41 @@ async fn ensure_master_recipient(ctx: &AppContext) -> Result<String, AppError> {
             Ok(trimmed)
         }
         Err(KeychainError::NotFound) => generate_and_store_master_identity(ctx).await,
+        Err(e) => Err(AppError::Keychain(e)),
+    }
+}
+
+/// Load the master backup age identity (`AGE-SECRET-KEY-1…`) from the keychain.
+///
+/// Ensures a master identity exists (same path as backup creation) then returns
+/// the secret identity string for age decryption of dual-recipient backups.
+///
+/// # Errors
+///
+/// - [`AppError::Keychain`] / [`AppError::Domain`] — missing or invalid identity.
+pub async fn load_master_identity(ctx: &AppContext) -> Result<AgeIdentity, AppError> {
+    // Ensure generation path has run when only recovery recipient existed.
+    let _ = ensure_master_recipient(ctx).await?;
+    match ctx
+        .keychain
+        .retrieve(KEYCHAIN_SERVICE, BACKUP_MASTER_IDENTITY_ACCOUNT)
+        .await
+    {
+        Ok(bytes) => {
+            let s = String::from_utf8(bytes).map_err(|e| {
+                AppError::Domain(format!("backup master identity is not utf-8: {e}"))
+            })?;
+            let trimmed = s.trim().to_owned();
+            if trimmed.is_empty() || !trimmed.starts_with("AGE-SECRET-KEY-1") {
+                return Err(AppError::Domain(
+                    "backup master identity keychain entry is empty or invalid".into(),
+                ));
+            }
+            Ok(AgeIdentity(trimmed))
+        }
+        Err(KeychainError::NotFound) => Err(AppError::Domain(
+            "backup master age identity is not available in the keychain".into(),
+        )),
         Err(e) => Err(AppError::Keychain(e)),
     }
 }

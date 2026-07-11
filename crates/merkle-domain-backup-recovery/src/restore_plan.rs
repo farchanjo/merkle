@@ -71,6 +71,28 @@ pub struct RestorePlan {
     pub validated_at: Rfc3339Timestamp,
 }
 
+impl RestorePlan {
+    /// `true` when `now` is strictly after `expires_at`.
+    #[must_use]
+    pub fn is_expired_at(&self, now: Rfc3339Timestamp) -> bool {
+        now.inner() > self.expires_at.inner()
+    }
+
+    /// `true` when the plan has expired relative to wall clock now.
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        self.is_expired_at(Rfc3339Timestamp::now())
+    }
+
+    /// `true` when any conflict resolves to [`ConflictResolution::Halt`].
+    #[must_use]
+    pub fn has_halt_conflict(&self) -> bool {
+        self.conflicts
+            .iter()
+            .any(|c| c.resolution == ConflictResolution::Halt)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

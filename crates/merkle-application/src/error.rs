@@ -52,4 +52,16 @@ pub enum AppError {
     /// Functionality that has not yet been implemented.
     #[error("not implemented")]
     NotImplemented,
+
+    /// Backup ciphertext failed HMAC verification (encrypt-then-MAC).
+    #[error("backup_integrity_check_failed")]
+    BackupIntegrity,
+
+    /// The restore plan TTL elapsed before apply.
+    #[error("restore plan expired")]
+    RestorePlanExpired,
+
+    /// The restore plan was already applied.
+    #[error("restore plan already applied")]
+    RestorePlanAlreadyApplied,
 }

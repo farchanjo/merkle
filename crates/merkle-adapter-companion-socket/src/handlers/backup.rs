@@ -23,7 +23,6 @@ use merkle_domain_backup_recovery::{
     restore_mode::RestoreMode as DomainRestoreMode, restore_plan::ConflictResolution,
     trigger::BackupTrigger as DomainBackupTrigger,
 };
-use merkle_ports::AgeIdentity;
 use merkle_types::{NamespaceId, Rfc3339Timestamp, UuidV7};
 use std::sync::Arc;
 use tracing::instrument;
@@ -195,9 +194,9 @@ fn conflict_resolution_str(r: ConflictResolution) -> &'static str {
     }
 }
 
-/// Restore plans remain fail-closed until durable plan storage is wired.
+/// Restore is available once durable plans, HMAC verify, and rehydration ship.
 fn restore_available() -> bool {
-    false
+    true
 }
 
 /// `POST /v1/backup/restore-plan`
@@ -261,6 +260,10 @@ pub async fn create_restore_plan(
     };
     let backup_snapshot_id: UuidV7 = found_backup.snapshot_id;
 
+    // Product modes → domain modes (Feature 002 clarifications).
+    // overwrite: always prefer backup on conflict
+    // merge: preserve both / import missing and non-conflicting
+    // newest_wins: timestamp policy favoring existing when newer
     let domain_mode = match body.mode {
         DtoRestoreMode::Overwrite => DomainRestoreMode::NewestWinsBackup,
         DtoRestoreMode::Merge => DomainRestoreMode::MergePreserveBoth,
@@ -290,9 +293,9 @@ pub async fn create_restore_plan(
                 snapshot_filename: body.snapshot_filename,
                 namespaces_to_add: 0,
                 namespaces_to_skip: 0,
-                secrets_to_add: 0,
-                secrets_to_overwrite: 0,
-                secrets_to_skip: u32::try_from(plan.conflicts.len()).unwrap_or(0),
+                secrets_to_add: output.secrets_to_add,
+                secrets_to_overwrite: output.secrets_to_overwrite,
+                secrets_to_skip: output.secrets_to_skip,
                 conflicts,
                 expires_at: plan.expires_at.inner(),
             };
@@ -333,23 +336,10 @@ pub async fn execute_restore(
         .into_response();
     }
 
-    let Some(namespace_id) = default_namespace_id(&ctx).await else {
+    // plan_id is the durable RestorePlan.id (not the backup snapshot id).
+    let Ok(plan_id) = body.plan_id.parse::<UuidV7>() else {
         return Problem {
-            kind: ProblemType::NamespaceNotFound,
-            title: "No namespace found".into(),
-            status: 404,
-            detail: "No namespace exists in this vault.".into(),
-            instance: None,
-            hint: None,
-            fields: vec![],
-        }
-        .into_response();
-    };
-
-    // The plan_id is the snapshot_id from the restore plan.
-    let Ok(backup_snapshot_id) = body.plan_id.parse::<UuidV7>() else {
-        return Problem {
-            kind: ProblemType::RestorePlanExpired,
+            kind: ProblemType::SchemaValidationFailed,
             title: "Invalid plan ID".into(),
             status: 400,
             detail: format!("'{}' is not a valid plan_id (UUIDv7).", body.plan_id),
@@ -360,16 +350,7 @@ pub async fn execute_restore(
         .into_response();
     };
 
-    // Use a placeholder age identity for Phase 6.
-    // FIXME(F6.C): Load the real age identity from VaultIdentity or from the
-    // request recovery_key_path once key management is wired.
-    let age_identity = AgeIdentity("AGE-SECRET-KEY-1PLACEHOLDER".into());
-
-    let cmd = ExecuteRestoreCommand {
-        namespace_id,
-        backup_snapshot_id,
-        age_identity,
-    };
+    let cmd = ExecuteRestoreCommand { plan_id };
 
     match cmd.execute(&ctx).await {
         Ok(output) => {

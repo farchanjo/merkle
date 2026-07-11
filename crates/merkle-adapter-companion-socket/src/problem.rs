@@ -68,6 +68,10 @@ pub enum ProblemType {
     RateLimitExceeded,
     /// Restore plan has expired.
     RestorePlanExpired,
+    /// Restore plan was already applied.
+    RestorePlanAlreadyApplied,
+    /// Backup file failed HMAC integrity verification.
+    BackupIntegrityCheckFailed,
     /// Restore conflict that could not be resolved.
     RestoreConflict,
     /// Schema validation failed.
@@ -345,5 +349,32 @@ pub fn app_error_to_problem(err: merkle_application::AppError) -> Problem {
         AppError::NotImplemented => not_implemented(
             "This operation is not yet fully implemented in the application layer.",
         ),
+        AppError::BackupIntegrity => Problem {
+            kind: ProblemType::BackupIntegrityCheckFailed,
+            title: "Backup integrity check failed".into(),
+            status: 422,
+            detail: "backup_integrity_check_failed".into(),
+            instance: None,
+            hint: Some("The backup file was modified after creation or the HMAC key differs.".into()),
+            fields: vec![],
+        },
+        AppError::RestorePlanExpired => Problem {
+            kind: ProblemType::RestorePlanExpired,
+            title: "Restore plan expired".into(),
+            status: 410,
+            detail: "The restore plan TTL elapsed; create a new plan and re-confirm.".into(),
+            instance: None,
+            hint: Some("Call POST /v1/backup/restore-plan again.".into()),
+            fields: vec![],
+        },
+        AppError::RestorePlanAlreadyApplied => Problem {
+            kind: ProblemType::RestorePlanAlreadyApplied,
+            title: "Restore plan already applied".into(),
+            status: 409,
+            detail: "This restore plan was already applied and cannot be applied again.".into(),
+            instance: None,
+            hint: Some("Create a new restore plan if another restore is required.".into()),
+            fields: vec![],
+        },
     }
 }

@@ -142,3 +142,10 @@ All package schemas for Merkle domain contracts. Referenced from domain docs and
 - [`secret_storage/sensitivity.cue`](secret_storage/sensitivity.cue)
 - [`secret_storage/tag.cue`](secret_storage/tag.cue)
 
+## feature_contracts
+
+Control-plane feature posture schemas (not domain aggregates).
+
+- [`backup-restore-path.cue`](backup-restore-path.cue)
+- [`corpus-health-green.cue`](corpus-health-green.cue)
+
