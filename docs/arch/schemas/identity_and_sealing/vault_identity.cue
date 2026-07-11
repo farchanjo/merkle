@@ -42,11 +42,3 @@ import "time"
 	// last_unsealed_at is absent until the first successful unseal.
 	last_unsealed_at?: time.Time
 }
-
-// #MasterKeyRef is a value object that locates the Master Key in the OS
-// keychain without embedding the key material.
-#MasterKeyRef: {
-	service_id: "dev.fapp.merkle"
-	account:    =~ "^master-v\\d+$"
-	version:    int & >=1
-}

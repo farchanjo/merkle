@@ -1,6 +1,6 @@
+// DDD role: ValueObject
 package identity_and_sealing
 
-// DDD role: ValueObject
 
 // #KeystoreBackend selects the backing implementation of the Keychain port.
 //
