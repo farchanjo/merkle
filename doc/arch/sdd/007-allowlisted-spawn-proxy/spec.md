@@ -4,6 +4,7 @@ number: 007
 slug: allowlisted-spawn-proxy
 status: implemented
 created_at: 2026-07-11T03:41:51.507092Z
+archived: true
 ---
 # Feature Specification: Allowlisted Spawn Proxy
 
