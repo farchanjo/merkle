@@ -28,7 +28,7 @@ use crate::{
     AppContext, consumer_gate,
     dto::{RevealAuthorizationResponse, RevealRequest},
     extensions::ExtractedPeerCred,
-    problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
+    problem::{Problem, ProblemType, app_error_to_problem},
 };
 
 // ---------------------------------------------------------------------------
@@ -188,33 +188,24 @@ async fn execute_reveal(
         .into_response();
     }
 
-    let oob_required = sensitivity >= policy.reveal.require_oob_above
-        || policy.security_profile == SecurityProfile::Paranoid;
-    if oob_required {
-        // `oob_ack` is supplied by the transport and therefore cannot prove
-        // that an operator approved this request.  The production dispatcher
-        // cannot currently bind and verify a signed resolution either.  Do
-        // not turn this into a 202/polling fiction: fail closed until that
-        // protocol exists end-to-end.
-        return not_implemented(
-            "reveal requires a cryptographically verified OOB resolution; this capability is disabled until the challenge registry and signature verification are implemented",
-        )
-        .into_response();
-    }
-
     let domain_confirmation = DomainOperatorConfirmation {
         slash_command: true,
-        // Compatibility input from `RevealRequest` is deliberately ignored.
-        // A boolean originating in a socket request is not an OOB proof.
+        // Transport oob_ack is never trusted; RevealSecretCommand dispatches a
+        // real OOB challenge and sets oob_ack only after verified approval.
         oob_ack: false,
         signed_config_flag: None,
     };
 
-    // No companion device is bound on this request path (CLI / MCP without an
-    // enrolled device). Requiring SecureEnclave against a Software default
-    // made every non-OOB reveal fail with `device_class_insufficient`. Device
-    // policy still applies once a real companion is attached to the command.
-    let required_device_class = CompanionDeviceClass::Software;
+    // Prefer the first non-revoked enrolled companion when present; otherwise
+    // the command uses a software placeholder for terminal/desktop OOB.
+    let companion_device = match ctx.storage.list_companion_devices().await {
+        Ok(devices) => devices.into_iter().find(|d| d.revoked_at.is_none()),
+        Err(e) => return app_error_to_problem(e.into()).into_response(),
+    };
+    let required_device_class = companion_device
+        .as_ref()
+        .map(|d| d.class)
+        .unwrap_or(CompanionDeviceClass::Software);
 
     let cmd = RevealSecretCommand {
         namespace_id,
@@ -225,7 +216,7 @@ async fn execute_reveal(
         oob_threshold: policy.reveal.require_oob_above,
         security_profile: policy.security_profile,
         dek_bytes,
-        companion_device: None,
+        companion_device,
         oob_channel,
         oob_timeout: Duration::from_secs(120),
         required_device_class,
