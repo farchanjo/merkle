@@ -860,9 +860,9 @@ async fn trigger_backup_persists_atomic_decryptable_artifact() {
         .crypto
         .age_decrypt(&recovery_identity, &ciphertext)
         .expect("recovery identity decrypts artifact");
-    let restored: Vec<merkle_domain_secret_storage::Secret> =
-        serde_json::from_slice(&plaintext).expect("artifact contains secret snapshot");
-    assert_eq!(restored.len(), 1);
+    let payload = merkle_application::backup_payload::BackupPlaintext::decode(&plaintext)
+        .expect("artifact contains secret snapshot");
+    assert_eq!(payload.secrets().len(), 1);
 
     let backups = ctx
         .storage
@@ -1788,4 +1788,130 @@ async fn restore_plan_and_apply_round_trip_with_integrity() {
     ));
 
     std::fs::remove_dir_all(directory).expect("cleanup");
+}
+
+/// Feature 003: backup v2 + disaster recover re-wraps master and rehydrates.
+#[tokio::test]
+async fn disaster_recover_rewrapping_master_from_v2_backup() {
+    use merkle_application::backup_recipients::resolve_dual_recipients;
+    use merkle_application::commands::disaster_recover::DisasterRecoverCommand;
+    use merkle_domain_backup_recovery::trigger::BackupTrigger;
+    use merkle_ports::AgeIdentity;
+    use secrecy::ExposeSecret as _;
+
+    let ctx = make_ctx().await;
+    // Seed recovery identity + key material BEFORE unseal so VaultIdentity matches.
+    let vrk = [0x42u8; 32];
+    let recovery_id = age::x25519::Identity::generate();
+    let recovery_recipient = recovery_id.to_public().to_string();
+    {
+        use merkle_domain_identity::{KeychainEntry, RecoveryPublicKey, VaultIdentity};
+        let keychain_ref = KeychainEntry::for_master_key(1, Rfc3339Timestamp::now());
+        let recovery_pubkey = RecoveryPublicKey::new(
+            recovery_recipient.clone(),
+            "SHA256:test=".to_owned(),
+            Rfc3339Timestamp::now(),
+        );
+        *ctx.identity.write().await = VaultIdentity::new(keychain_ref, recovery_pubkey);
+    }
+    let recovery_age = ctx
+        .crypto
+        .age_encrypt(
+            &[merkle_ports::AgeRecipient(recovery_recipient.clone())],
+            &vrk,
+        )
+        .expect("age wrap vrk");
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    ctx.keychain
+        .store(
+            "dev.fapp.merkle",
+            "vrk-recovery-v1",
+            BASE64.encode(&recovery_age).as_bytes(),
+        )
+        .await
+        .expect("store recovery wrap");
+    // Also need master key + master wrap for normal ops; store dummy for backup path.
+    let master = [0x11u8; 32];
+    ctx.keychain
+        .store("dev.fapp.merkle", "master-v1", &master)
+        .await
+        .expect("store master");
+    let nonce = ctx.crypto.random_bytes_24();
+    let wrapped = ctx
+        .crypto
+        .aead_encrypt(&master, &nonce, &vrk, b"vault-root-key")
+        .expect("aead wrap");
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&nonce);
+    blob.extend_from_slice(&wrapped);
+    ctx.keychain
+        .store(
+            "dev.fapp.merkle",
+            "vrk-master-v1",
+            BASE64.encode(&blob).as_bytes(),
+        )
+        .await
+        .expect("store master wrap");
+
+    assert!(unseal(&ctx).await, "unseal after key material seeded");
+
+    let (namespace_id, handle, _) = setup_ns_and_secret(
+        &ctx,
+        "dr-ns",
+        "vault://dr-ns/api-key/service",
+        b"dr-secret",
+    )
+    .await;
+
+    let (master_r, recovery_r) = resolve_dual_recipients(&ctx).await.expect("recipients");
+    let directory = std::env::temp_dir().join(format!(
+        "merkle-dr-{}",
+        merkle_types::UuidV7::new()
+    ));
+    std::fs::create_dir(&directory).expect("dir");
+    let output_path = directory.join("dr.merkle.age");
+
+    TriggerBackupCommand {
+        namespace_id,
+        trigger: BackupTrigger::Manual,
+        master_pubkey_recipient: master_r,
+        recovery_pubkey_recipient: recovery_r,
+        output_path: output_path.clone(),
+    }
+    .execute(&ctx)
+    .await
+    .expect("backup v2");
+
+    // Wipe secrets + master key to simulate disaster.
+    ctx.storage
+        .delete_secret(
+            &ctx.storage
+                .get_secret_by_handle(&handle)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+        )
+        .await
+        .expect("delete");
+    let _ = ctx.keychain.delete("dev.fapp.merkle", "master-v1").await;
+
+    let out = DisasterRecoverCommand {
+        recovery_identity: AgeIdentity(recovery_id.to_string().expose_secret().to_owned()),
+        backup_path: output_path,
+    }
+    .execute(&ctx)
+    .await
+    .expect("disaster recover");
+    assert!(out.unsealed);
+    assert!(out.secrets_restored >= 1);
+    assert!(
+        ctx.storage
+            .get_secret_by_handle(&handle)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    std::fs::remove_dir_all(directory).ok();
 }

@@ -26,6 +26,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod backup_payload;
 pub mod backup_recipients;
 pub mod commands;
 pub mod context;

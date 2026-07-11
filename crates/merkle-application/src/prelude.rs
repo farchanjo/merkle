@@ -27,6 +27,7 @@ pub use crate::commands::{
     crypto_decrypt::{CryptoDecryptCommand, CryptoDecryptOutput},
     crypto_sign::{CryptoSignCommand, CryptoSignOutput},
     delete_secret::{DeleteSecretCommand, DeleteSecretOutput},
+    disaster_recover::{DisasterRecoverCommand, DisasterRecoverOutput},
     execute_restore::{ExecuteRestoreCommand, ExecuteRestoreOutput},
     http_download::{HttpDownloadCommand, HttpDownloadOutput},
     http_request::{HttpRequestCommand, HttpRequestOutput},

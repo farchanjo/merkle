@@ -43,7 +43,9 @@ pub const KEYCHAIN_ACCOUNT_VRK_MASTER: &str = "vrk-master-v1";
 /// diverge. Sharing this constant prevents the two sides drifting apart.
 pub const VRK_MASTER_AAD: &[u8] = b"vault-root-key";
 /// OS Keychain account for the recovery-wrapped VRK.
-const KEYCHAIN_ACCOUNT_VRK_RECOVERY: &str = "vrk-recovery-v1";
+///
+/// `pub` so backup/disaster-recovery can embed and rehydrate this blob.
+pub const KEYCHAIN_ACCOUNT_VRK_RECOVERY: &str = "vrk-recovery-v1";
 /// Canonical service+account reference returned in the response.
 const KEYCHAIN_REF: &str = "dev.fapp.merkle/master-v1";
 

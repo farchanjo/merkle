@@ -10,6 +10,7 @@ use merkle_ports::SecretFilter;
 use merkle_types::{AuditOp, AuditOutcome, NamespaceId, Rfc3339Timestamp, UuidV7};
 use tracing::info;
 
+use crate::backup_payload::BackupPlaintext;
 use crate::backup_recipients::load_master_identity;
 use crate::commands::restore_plan::verify_backup_hmac;
 use crate::{AppContext, AppError};
@@ -101,8 +102,8 @@ impl ExecuteRestoreCommand {
 
         let identity = load_master_identity(ctx).await?;
         let plaintext = ctx.crypto.age_decrypt(&identity, &ciphertext)?;
-        let backup_secrets: Vec<Secret> = serde_json::from_slice(&plaintext)
-            .map_err(|e| AppError::Domain(format!("backup payload is not a secret snapshot: {e}")))?;
+        let payload = BackupPlaintext::decode(&plaintext).map_err(AppError::Domain)?;
+        let backup_secrets = payload.secrets().to_vec();
 
         let live_secrets = ctx
             .storage

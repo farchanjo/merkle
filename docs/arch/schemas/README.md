@@ -149,3 +149,5 @@ Control-plane feature posture schemas (not domain aggregates).
 - [`backup-restore-path.cue`](backup-restore-path.cue)
 - [`corpus-health-green.cue`](corpus-health-green.cue)
 
+
+- [`disaster-recovery-path.cue`](disaster-recovery-path.cue)
