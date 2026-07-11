@@ -4,6 +4,7 @@ number: 010
 slug: session-unbind-close
 status: implemented
 created_at: 2026-07-11T04:21:18.022973Z
+archived: true
 ---
 # Feature Specification: Session Unbind Close
 

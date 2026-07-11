@@ -4,6 +4,7 @@ number: 012
 slug: crypto-sign-rsa-sha256
 status: implemented
 created_at: 2026-07-11T04:25:44.315666Z
+archived: true
 ---
 # Feature Specification: Crypto Sign RSA-SHA256
 

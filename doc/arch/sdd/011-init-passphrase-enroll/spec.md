@@ -4,6 +4,7 @@ number: 011
 slug: init-passphrase-enroll
 status: implemented
 created_at: 2026-07-11T04:25:43.970701Z
+archived: true
 ---
 # Feature Specification: Init Passphrase Enroll
 

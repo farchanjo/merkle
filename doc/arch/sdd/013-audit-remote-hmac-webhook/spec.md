@@ -4,6 +4,7 @@ number: 013
 slug: audit-remote-hmac-webhook
 status: implemented
 created_at: 2026-07-11T04:25:44.514815Z
+archived: true
 ---
 # Feature Specification: Audit Remote HMAC Webhook
 
