@@ -238,3 +238,61 @@ called. The fix wires the verifier call and maps the outcome to the response DTO
 
 Cross-reference: [ADR-0025](0025-post-phase-2-cosmetic-cleanup.md) §Bug #3
 documents this gap, its root cause, fix location, and the required TDD test.
+
+
+## Amendment 6 — 2026-07-10 — SQLite atomic commit and snapshot-isolated verify
+
+### Supersedes file-based head pinning for the live path
+
+Amendment (2026-05-22) described `audit.jsonl` + `audit_head.json` with `O_SYNC`
+as the chain-head witness. That narrative is **historical drift**. Live
+persistence is SQLite (`audit_entries`, single-row `pinned_head` with keyed
+`hmac_head`, migration `004_pinned_head_hmac.sql`). Config fields that still
+name JSONL / `audit_head.json` paths may create parent directories at startup but
+are **not** the production write path. ADR-0029 trusted baseline is also
+SQLite-backed.
+
+### Atomic hot path: `commit_audit_entry`
+
+Every production writer that appends an authenticated audit entry MUST use
+`Storage::commit_audit_entry` (implemented in
+`crates/merkle-adapter-sqlite/src/audit.rs`):
+
+1. `BEGIN IMMEDIATE` (serialize concurrent writers on the `pinned_head` singleton).
+2. Insert the `audit_entries` row (append-only triggers still apply).
+3. Upsert `pinned_head` including the keyed MAC over
+   `head_hash || head_seq || head_id || entry_count` under the vault HMAC key.
+4. `COMMIT`.
+
+A crash between entry insert and head update is forbidden on the hot path: the
+split helpers (`append_audit_entry` then later `update_pinned_head`) may remain
+for tests or explicit two-phase callers, but any production command path that
+leaves `hmac_head` NULL after a successful op is a contract violation.
+
+### Snapshot-isolated verification (gap #10)
+
+`VerifyChainQuery`, `QueryAudit` with `verify_chain=true`, and the doctor's
+`audit_chain_integrity` check MUST read via `Storage::audit_snapshot()`:
+
+- One **read-only** deferred transaction loads entries + `pinned_head` + optional
+  trusted baseline (ADR-0029).
+- Verification (`verify_full` or `verify_from_baseline`) runs on that snapshot.
+
+Independent sequential queries are rejected as a verification contract: a
+concurrent `commit_audit_entry` can otherwise pair a pre-append head with a
+post-append entry set and produce false `HeadHashMismatch`.
+
+### Consequences
+
+* Crash cannot leave an authenticated entry with an unauthenticated pinned head.
+* Concurrent writers serialize on the head row; throughput is bounded by audit
+  commit rate (accepted).
+* Operators diagnose integrity from the DB, not from orphaned `audit_head.json`.
+* Complements ADR-0029: baseline-aware verify still consumes the same snapshot.
+
+### Cross-references
+
+* Implementation: `crates/merkle-adapter-sqlite/src/audit.rs`
+* ADR-0029 trusted baseline
+* `docs/arch/domain/audit-compliance.md`
+* OpenAPI: `GET /v1/audit?verify_chain=true`, `GET /v1/agent/doctor`
