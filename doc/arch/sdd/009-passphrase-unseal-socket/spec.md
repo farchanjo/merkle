@@ -4,6 +4,7 @@ number: 009
 slug: passphrase-unseal-socket
 status: implemented
 created_at: 2026-07-11T03:47:33.686262Z
+archived: true
 ---
 # Feature Specification: Passphrase Unseal Socket
 
