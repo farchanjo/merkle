@@ -41,11 +41,14 @@ Feature: Rotating a Secret's material
     Given the Secret "vault://acme-backend/ssh/bastion-prod" has active Version 4 and retained Versions 2 and 3
     When the operator issues the Slash Command "/merkle-rollback vault://acme-backend/ssh/bastion-prod version=3"
     And the Slash Command carries a verified Operator Confirmation flag
-    Then the Vault Agent sets active version to Version 3
+    Then the Vault Agent append-copies Version 3's Private Blob into a new Secret Version 5
+    And Version 5 becomes the active version (version_no is strictly monotonic; not reactivated as 3)
     And the previously active Version 4 is retained as a non-active Secret Version
-    And an Audit Entry with op "rollback", handle "vault://acme-backend/ssh/bastion-prod", target_version=3, and outcome "allow" is appended
+    And historical Version 3 remains immutable and non-active
+    And an Audit Entry with op "rotate", handle "vault://acme-backend/ssh/bastion-prod", and outcome "allow" is appended
     But if the rollback request arrives without a verified Operator Confirmation flag
     Then the Vault Agent rejects it with error "operator_confirmation_required"
+    And an Audit Entry with op "rotate", outcome "deny", and denial_reason about operator confirmation is appended
 
   Scenario: Rotate triggers a pre-snapshot Backup before applying changes
     When the operator calls vault_rotate with handle "vault://acme-backend/ssh/bastion-prod" and new key material

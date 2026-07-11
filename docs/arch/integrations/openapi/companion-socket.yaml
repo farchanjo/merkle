@@ -760,14 +760,17 @@ paths:
       operationId: secret-storage--rollback-secret
       summary: Roll back a Secret to a previous version
       description: >
-        Restores the active Private Blob of a Secret to a previous retained
-        version. Requires Operator Confirmation via slash command
-        (`operator_confirmation.slash_command: true`). Without it the
-        request is rejected with `403`.
+        Append-copies a previous retained version's Private Blob into a new
+        monotonic Secret Version (immutable history; does not re-activate the
+        historical `version_no` in place). Requires Operator Confirmation via
+        slash command (`operator_confirmation.slash_command: true`). Without
+        it the request is rejected with `403`.
 
 
-        An Audit Entry with `op: rollback` is appended on both success and
-        rejection.
+        An Audit Entry with `op: rotate` is appended on both success and
+        rejection (deliberate reuse of rotate; no separate `rollback` AuditOp —
+        see ADR-0014 amendment 2026-07-10). Response `active_version` is the
+        new max+1 version number, not `target_version`.
       tags:
         - secret-storage
       x-merkle-sensitivity: high
