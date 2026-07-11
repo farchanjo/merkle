@@ -443,13 +443,26 @@ Every session should start with `vault_bind { label }` (at most once per session
 
 ## 📚 Documentation
 
-The spec **is** the source of truth — `docs/arch/` gates every change via `spec validate`.
+### Index
+
+- [What is Merkle?](#what-is-merkle)
+- [How it works](#how-it-works)
+- [Quick start](#-quick-start)
+- [Documentation](#-documentation)
+- [Development](#-development)
+- [Crypto & security](#crypto--security)
+
+The architectural **source of truth** is [`docs/arch/`](docs/arch/). The
+[speckit control plane](doc/arch/) lives under `doc/arch/` (symlinks into
+`docs/arch/` for ADRs, schemas, features, and related slices). Drive SDD with
+`~/bin/speckit status` / `next` / `validate`.
 
 | Area | Path | Contents |
 |---|---|---|
+| Speckit plane | [doc/arch/](doc/arch/) | Constitution, governance, SDD, symlinks |
 | Architecture overview | [docs/arch/README.md](docs/arch/README.md) | DDD + hexagonal stack, directory layout |
 | Glossary | [docs/arch/glossary.md](docs/arch/glossary.md) | Canonical vocabulary by bounded context |
-| ADRs (28) | [docs/arch/adr/](docs/arch/adr) | MADR decision records `0001`–`0028`, all accepted |
+| ADRs | [docs/arch/adr/](docs/arch/adr) | MADR decision records `0001`–`0032` |
 | Domain narratives | [docs/arch/domain/](docs/arch/domain) | Bounded-context models and invariants |
 | CUE schemas (50) | [docs/arch/schemas/](docs/arch/schemas) | Type contracts for DTOs and categories |
 | Rego policies (18) | [docs/arch/policies/](docs/arch/policies) | Conftest policy gates |

@@ -2,6 +2,29 @@
 
 Local-first MCP secret vault. Rust, edition 2024, hexagonal architecture (DDD + ports/adapters per ADR-0002 / ADR-0024). A long-running **daemon** (`merkle-agent`) owns all key material, SQLite storage, and a tamper-evident audit chain, and exposes a single inbound driving port: the **Companion Socket** (HTTP/1.1 over a Unix domain socket). The **CLI** (`merkle`) and the **MCP server** (`merkle-mcp`) are thin external clients that talk only to that socket — they never touch keys, storage, or domain logic.
 
+## Project
+
+Canonical agent map: **[AGENTS.md](AGENTS.md)**. Architectural contract: `docs/arch/`. Speckit control plane: `doc/arch/` (symlinks into `docs/arch/` for ADRs/schemas/features).
+
+## Spec-first protocol
+
+spec-first: read the corpus before writing code. Drive the control plane with
+`~/bin/speckit status`, `~/bin/speckit next`, and `~/bin/speckit validate`
+(binary only). Behavioral changes update `docs/arch/` in the same train as code.
+
+## Commands
+
+```bash
+~/bin/speckit status
+~/bin/speckit next
+~/bin/speckit validate
+cargo build --workspace
+cargo test --workspace --no-fail-fast
+cargo clippy --workspace --all-targets -- -D warnings
+make doctor
+make deploy
+```
+
 ## First 5 minutes
 
 ```bash
