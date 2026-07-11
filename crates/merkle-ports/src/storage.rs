@@ -238,6 +238,32 @@ pub trait Storage: Send + Sync {
         namespace_id: &NamespaceId,
     ) -> Result<Vec<br::backup::Backup>, StorageError>;
 
+    /// Persist a generated [`RestorePlan`](br::restore_plan::RestorePlan).
+    ///
+    /// The plan is keyed by `plan.id` (independent of backup `snapshot_id`).
+    /// Implementations must reject a second put for an already-applied plan.
+    async fn put_restore_plan(&self, plan: &br::restore_plan::RestorePlan)
+    -> Result<(), StorageError>;
+
+    /// Load a restore plan by its plan id, or `None` if missing.
+    async fn get_restore_plan(
+        &self,
+        plan_id: &merkle_types::UuidV7,
+    ) -> Result<Option<br::restore_plan::RestorePlan>, StorageError>;
+
+    /// Return whether a plan has been marked applied (and when).
+    async fn restore_plan_applied_at(
+        &self,
+        plan_id: &merkle_types::UuidV7,
+    ) -> Result<Option<merkle_types::Rfc3339Timestamp>, StorageError>;
+
+    /// Mark a restore plan as applied. Fails if the plan is missing or already applied.
+    async fn mark_restore_plan_applied(
+        &self,
+        plan_id: &merkle_types::UuidV7,
+        applied_at: &merkle_types::Rfc3339Timestamp,
+    ) -> Result<(), StorageError>;
+
     /// Upsert a [`NamespacePolicy`](pp::NamespacePolicy) aggregate.
     async fn put_namespace_policy(&self, policy: &pp::NamespacePolicy) -> Result<(), StorageError>;
 

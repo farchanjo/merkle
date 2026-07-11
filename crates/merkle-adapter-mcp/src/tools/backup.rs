@@ -140,13 +140,15 @@ impl MerkleMcpServer {
             .map_err(client_error_to_mcp)?;
 
         // Step 2: execute restore.
+        // confirm=true is the MCP operator gate (MERK-001); both confirmation
+        // flags are set so the Companion Socket dual-flag check passes.
         let result = self
             .client
             .execute_restore(ExecuteRestoreRequest {
                 plan_id: plan.plan_id.clone(),
                 operator_confirmation: OperatorConfirmationDeleteSecret {
                     slash_command: true,
-                    oob_ack: false,
+                    oob_ack: true,
                 },
             })
             .await

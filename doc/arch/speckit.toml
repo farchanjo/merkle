@@ -7,4 +7,11 @@ email = "farchanjo@gmail.com"
 
 [guard]
 mode = "enforce"
-specScopeGlobs = []
+# Dual-tree: technical corpus lives under docs/arch (symlinked from doc/arch).
+# Without these globs, specify cannot scaffold ADRs (real path resolves outside
+# the active SDD workdir under doc/arch/sdd/).
+specScopeGlobs = [
+  "docs/arch/**",
+  "crates/**",
+  "bin/**",
+]

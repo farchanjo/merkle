@@ -14,10 +14,10 @@ use merkle_adapter_sqlite::SqliteStorage;
 use merkle_application::{
     AppContext,
     commands::{
-        bind_namespace::BindNamespaceCommand, init_vault::InitVaultCommand,
-        list_secrets::ListSecretsCommand, put_secret::PutSecretCommand,
-        seal_vault::SealVaultCommand, trigger_backup::TriggerBackupCommand,
-        unseal_vault::UnsealVaultCommand,
+        bind_namespace::BindNamespaceCommand, execute_restore::ExecuteRestoreCommand,
+        init_vault::InitVaultCommand, list_secrets::ListSecretsCommand,
+        put_secret::PutSecretCommand, restore_plan::RestorePlanCommand, seal_vault::SealVaultCommand,
+        trigger_backup::TriggerBackupCommand, unseal_vault::UnsealVaultCommand,
     },
     queries::{
         agent_status::AgentStatusQuery, list_namespaces::ListNamespacesQuery,
@@ -1665,4 +1665,127 @@ async fn init_wraps_vrk_recoverably_under_operator_recipient() {
         .age_decrypt(&AgeIdentity(identity_str), &age_ct)
         .expect("recovery blob must decrypt with the operator's age identity");
     assert_eq!(vrk.len(), 32, "recovered VRK must be 32 bytes");
+}
+
+/// Feature 002: backup → durable plan → apply rehydrates secrets; tamper fails.
+#[tokio::test]
+async fn restore_plan_and_apply_round_trip_with_integrity() {
+    use merkle_domain_backup_recovery::restore_mode::RestoreMode;
+    use merkle_domain_backup_recovery::trigger::BackupTrigger;
+    use merkle_application::backup_recipients::resolve_dual_recipients;
+
+    let ctx = make_ctx().await;
+    assert!(unseal(&ctx).await);
+    let (namespace_id, handle, _) = setup_ns_and_secret(
+        &ctx,
+        "restore-roundtrip",
+        "vault://restore-roundtrip/api-key/service",
+        b"original-secret",
+    )
+    .await;
+
+    let (master_recipient, recovery_recipient) = resolve_dual_recipients(&ctx)
+        .await
+        .expect("dual recipients");
+
+    let directory = std::env::temp_dir().join(format!(
+        "merkle-restore-roundtrip-{}",
+        merkle_types::UuidV7::new()
+    ));
+    std::fs::create_dir(&directory).expect("backup dir");
+    let output_path = directory.join("snapshot.merkle.age");
+
+    let backup_out = TriggerBackupCommand {
+        namespace_id,
+        trigger: BackupTrigger::Manual,
+        master_pubkey_recipient: master_recipient,
+        recovery_pubkey_recipient: recovery_recipient,
+        output_path: output_path.clone(),
+    }
+    .execute(&ctx)
+    .await
+    .expect("backup succeeds");
+
+    // Delete the live secret so restore has work to do.
+    ctx.storage
+        .delete_secret(&{
+            let secret = ctx
+                .storage
+                .get_secret_by_handle(&handle)
+                .await
+                .expect("get")
+                .expect("secret exists");
+            secret.id
+        })
+        .await
+        .expect("delete secret");
+
+    let plan_out = RestorePlanCommand {
+        namespace_id,
+        backup_snapshot_id: backup_out.backup.snapshot_id,
+        mode: RestoreMode::NewestWinsBackup,
+    }
+    .execute(&ctx)
+    .await
+    .expect("restore plan");
+
+    assert!(plan_out.secrets_to_add >= 1);
+    assert_eq!(
+        ctx.storage
+            .get_restore_plan(&plan_out.plan.id)
+            .await
+            .expect("load plan")
+            .expect("plan durable")
+            .id,
+        plan_out.plan.id
+    );
+
+    let apply_out = ExecuteRestoreCommand {
+        plan_id: plan_out.plan.id,
+    }
+    .execute(&ctx)
+    .await
+    .expect("execute restore");
+    assert!(apply_out.secrets_restored >= 1);
+
+    let restored = ctx
+        .storage
+        .get_secret_by_handle(&handle)
+        .await
+        .expect("get restored")
+        .expect("secret rehydrated");
+    assert_eq!(restored.handle, handle);
+
+    // Already applied → reject.
+    let err = ExecuteRestoreCommand {
+        plan_id: plan_out.plan.id,
+    }
+    .execute(&ctx)
+    .await
+    .expect_err("second apply rejected");
+    assert!(matches!(
+        err,
+        merkle_application::AppError::RestorePlanAlreadyApplied
+    ));
+
+    // Tamper: flip a ciphertext byte and attempt a new plan.
+    let mut cipher = std::fs::read(&output_path).expect("read artifact");
+    let last = cipher.len() - 1;
+    cipher[last] ^= 0xff;
+    std::fs::write(&output_path, &cipher).expect("write tampered");
+
+    let tamper_err = RestorePlanCommand {
+        namespace_id,
+        backup_snapshot_id: backup_out.backup.snapshot_id,
+        mode: RestoreMode::NewestWinsBackup,
+    }
+    .execute(&ctx)
+    .await
+    .expect_err("tampered backup denied");
+    assert!(matches!(
+        tamper_err,
+        merkle_application::AppError::BackupIntegrity
+    ));
+
+    std::fs::remove_dir_all(directory).expect("cleanup");
 }

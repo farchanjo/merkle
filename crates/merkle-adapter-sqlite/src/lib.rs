@@ -24,6 +24,7 @@ mod error;
 mod mappers;
 mod namespaces;
 mod policies;
+mod restore_plans;
 pub mod schema;
 mod secrets;
 
@@ -31,12 +32,13 @@ use async_trait::async_trait;
 use merkle_domain_access_mediation::companion_device::CompanionDevice;
 use merkle_domain_audit_compliance::{AuditBaseline, AuditEntry, AuditQuery, PinnedHead};
 use merkle_domain_backup_recovery::backup::Backup;
+use merkle_domain_backup_recovery::restore_plan::RestorePlan;
 use merkle_domain_policy_permissions::NamespacePolicy;
 use merkle_domain_secret_storage::{Namespace, Secret};
 use merkle_ports::{
     AuditSnapshot, RankedSearchParams, RankedSearchResult, SecretFilter, Storage, StorageError,
 };
-use merkle_types::{Handle, NamespaceId, NamespaceLabel, SecretId};
+use merkle_types::{Handle, NamespaceId, NamespaceLabel, Rfc3339Timestamp, SecretId, UuidV7};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
@@ -237,6 +239,36 @@ impl Storage for SqliteStorage {
     #[instrument(skip(self))]
     async fn list_backups(&self, namespace_id: &NamespaceId) -> Result<Vec<Backup>, StorageError> {
         backups::list_backups(&self.pool, namespace_id).await
+    }
+
+    #[instrument(skip(self, plan), fields(plan_id = %plan.id))]
+    async fn put_restore_plan(&self, plan: &RestorePlan) -> Result<(), StorageError> {
+        restore_plans::put_restore_plan(&self.pool, plan).await
+    }
+
+    #[instrument(skip(self), fields(plan_id = %plan_id))]
+    async fn get_restore_plan(
+        &self,
+        plan_id: &UuidV7,
+    ) -> Result<Option<RestorePlan>, StorageError> {
+        restore_plans::get_restore_plan(&self.pool, plan_id).await
+    }
+
+    #[instrument(skip(self), fields(plan_id = %plan_id))]
+    async fn restore_plan_applied_at(
+        &self,
+        plan_id: &UuidV7,
+    ) -> Result<Option<Rfc3339Timestamp>, StorageError> {
+        restore_plans::restore_plan_applied_at(&self.pool, plan_id).await
+    }
+
+    #[instrument(skip(self), fields(plan_id = %plan_id))]
+    async fn mark_restore_plan_applied(
+        &self,
+        plan_id: &UuidV7,
+        applied_at: &Rfc3339Timestamp,
+    ) -> Result<(), StorageError> {
+        restore_plans::mark_restore_plan_applied(&self.pool, plan_id, applied_at).await
     }
 
     #[instrument(skip(self, policy))]

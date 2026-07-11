@@ -357,7 +357,7 @@ pub(crate) mod test_support {
     };
     use merkle_types::{
         Blake3Hash, CategoryName, Handle, HmacSignature, NamespaceId, NamespaceLabel,
-        Rfc3339Timestamp, SecretId, SecurityProfile, Sensitivity,
+        Rfc3339Timestamp, SecretId, SecurityProfile, Sensitivity, UuidV7,
     };
 
     use crate::AppContext;
@@ -588,6 +588,33 @@ pub(crate) mod test_support {
             namespace_id: &NamespaceId,
         ) -> Result<Vec<br::backup::Backup>, StorageError> {
             self.inner.list_backups(namespace_id).await
+        }
+        async fn put_restore_plan(
+            &self,
+            plan: &br::restore_plan::RestorePlan,
+        ) -> Result<(), StorageError> {
+            self.inner.put_restore_plan(plan).await
+        }
+        async fn get_restore_plan(
+            &self,
+            plan_id: &UuidV7,
+        ) -> Result<Option<br::restore_plan::RestorePlan>, StorageError> {
+            self.inner.get_restore_plan(plan_id).await
+        }
+        async fn restore_plan_applied_at(
+            &self,
+            plan_id: &UuidV7,
+        ) -> Result<Option<merkle_types::Rfc3339Timestamp>, StorageError> {
+            self.inner.restore_plan_applied_at(plan_id).await
+        }
+        async fn mark_restore_plan_applied(
+            &self,
+            plan_id: &UuidV7,
+            applied_at: &merkle_types::Rfc3339Timestamp,
+        ) -> Result<(), StorageError> {
+            self.inner
+                .mark_restore_plan_applied(plan_id, applied_at)
+                .await
         }
         async fn put_namespace_policy(
             &self,
