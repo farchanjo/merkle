@@ -10,7 +10,8 @@ use merkle_ports::KeychainError;
 use merkle_types::{Rfc3339Timestamp, SecurityProfile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::instrument;
+use std::time::Duration;
+use tracing::{instrument, warn};
 
 use crate::{
     AppContext,
@@ -46,7 +47,11 @@ pub async fn status(State(ctx): State<Arc<AppContext>>) -> impl IntoResponse {
         warnings.push("vault is sealed; unseal to run HMAC chain verification".into());
     }
     if !keychain_reachable {
-        warnings.push("keychain probe failed".into());
+        warnings.push(
+            "keychain probe failed or timed out (dismiss any Keychain auth dialog; \
+             use Always Allow for merkle-agent)"
+                .into(),
+        );
     }
     if !audit_chain_valid {
         warnings.push("audit chain verification failed".into());
@@ -120,14 +125,32 @@ fn disk_free_bytes(_path: &Path) -> u64 {
     0
 }
 
+/// Upper bound for the status keychain probe.
+///
+/// On macOS a `retrieve` can block indefinitely behind a `SecurityAgent`
+/// authorization dialog (Touch ID / password). `GET /v1/agent/status` must
+/// remain responsive for operators and for `merkle status` — a hung keychain
+/// must not freeze the whole status endpoint. After this budget we report
+/// unreachable and keep serving seal/db diagnostics.
+const KEYCHAIN_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
+
 async fn probe_keychain_reachable(ctx: &AppContext) -> bool {
-    match ctx
-        .keychain
-        .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY)
-        .await
+    match tokio::time::timeout(
+        KEYCHAIN_PROBE_TIMEOUT,
+        ctx.keychain
+            .retrieve(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_MASTER_KEY),
+    )
+    .await
     {
-        Ok(_) | Err(KeychainError::NotFound) => true,
-        Err(_) => false,
+        Ok(Ok(_) | Err(KeychainError::NotFound)) => true,
+        Ok(Err(_)) => false,
+        Err(_) => {
+            warn!(
+                timeout_ms = KEYCHAIN_PROBE_TIMEOUT.as_millis(),
+                "status: keychain probe timed out (likely SecurityAgent auth dialog)"
+            );
+            false
+        }
     }
 }
 

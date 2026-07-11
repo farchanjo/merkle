@@ -602,7 +602,8 @@ async fn test_rollback_secret_happy_path() {
     assert_eq!(json["handle"], handle);
 }
 
-/// 11. `POST /v1/reveal` with slash_command=true but unsealed + no secret → 412 (VaultSealed) or 404 (HandleNotFound).
+/// 11. `POST /v1/reveal` with slash_command=true while sealed → 412 agent_sealed
+/// (even when the handle does not exist — sealed gate precedes handle lookup).
 #[tokio::test]
 async fn test_reveal_with_slash_command_requires_unsealed_vault() {
     let ctx = make_app_ctx().await;
@@ -620,7 +621,7 @@ async fn test_reveal_with_slash_command_requires_unsealed_vault() {
     });
 
     let (status, resp_body) = http(&sock, "POST", "/v1/reveal", Some(body)).await;
-    // Sealed vault must return 412 (agent_sealed) — not 200, and not 403 (gate passed).
+    // Sealed vault must return 412 (agent_sealed) — not 200, not 403, not 404.
     assert_eq!(
         status,
         StatusCode::PRECONDITION_FAILED,

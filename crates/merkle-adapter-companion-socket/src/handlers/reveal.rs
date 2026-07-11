@@ -102,6 +102,13 @@ pub async fn reveal(
         .into_response();
     }
 
+    // 1b. Sealed gate BEFORE handle lookup. Looking up storage first leaks
+    //     existence (404 handle_not_found vs 412 agent_sealed) and skips the
+    //     contract that sealed vaults refuse all plaintext paths uniformly.
+    if let Err(err) = ctx.require_unsealed().await {
+        return app_error_to_problem(err).into_response();
+    }
+
     // 2. Resolve the secret (and its owning namespace) by handle.
     //
     // Historically this path treated `session_id` as `namespace_id` (1:1 in
