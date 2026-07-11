@@ -4,6 +4,7 @@ number: 001
 slug: corpus-health-green
 status: implemented
 created_at: 2026-07-11T00:00:00Z
+archived: true
 ---
 # Feature Specification: Corpus Health Green
 
