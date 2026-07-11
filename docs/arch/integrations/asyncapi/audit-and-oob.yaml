@@ -230,12 +230,10 @@ components:
               outcome: "allow"
               caller_pid: 12345
               caller_program: "claude"
-              prev_hash: >-
-                blake3:0000000000000000000000000000000000000000\
-                000000000000000000000000
-              current_hash: >-
-                blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
-                b2c3d4e5f6a1b2c3d4e5f6a1b2
+              # yamllint disable-line rule:line-length
+              prev_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+              # yamllint disable-line rule:line-length
+              current_hash: "blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
               hmac: "<computed-blake3-hmac>"
 
     AuditChainVerified:
@@ -258,9 +256,8 @@ components:
             verification:
               outcome: "intact"
               entries_checked: 1000
-              head_hash: >-
-                blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
-                b2c3d4e5f6a1b2c3d4e5f6a1b2
+              # yamllint disable-line rule:line-length
+              head_hash: "blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
               range_from_id: "0192ac11-7000-7000-8000-000000000001"
               range_to_id: "0192ac11-7000-7000-8000-000000000042"
               anomalies_detected: 0
@@ -279,9 +276,8 @@ components:
               outcome: "broken_at_entry"
               entries_checked: 500
               broken_at_id: "0192ac11-7000-7000-8000-000000000320"
-              head_hash: >-
-                blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
-                b2c3d4e5f6a1b2c3d4e5f6a1b2
+              # yamllint disable-line rule:line-length
+              head_hash: "blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
               anomalies_detected: 1
               triggered_by: "doctor"
               verified_at: "2026-05-22T14:35:00Z"
@@ -380,9 +376,8 @@ components:
             description: >-
               UUIDv7 identifying the Merkle vault that emitted the
               event.
-            pattern: >-
-              ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89\
-              abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+            # yamllint disable-line rule:line-length
+            pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 
   schemas:
     # -- Shared envelope types -----------------------------------------------
@@ -416,18 +411,16 @@ components:
           type: string
           description: >-
             UUIDv7 of the Merkle vault that emitted the event.
-          pattern: >-
-            ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89ab\
-            AB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+          # yamllint disable-line rule:line-length
+          pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 
     # -- Scalar / value types ------------------------------------------------
 
     UuidV7:
       type: string
       description: UUIDv7 — time-ordered unique identifier.
-      pattern: >-
-        ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB]\
-        [0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+      # yamllint disable-line rule:line-length
+      pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
       examples:
         - "0192ac11-7000-7000-8000-000000000042"
 
@@ -439,10 +432,10 @@ components:
         "blake3:0000...0000" (64 zeros).
       pattern: "^blake3:[0-9a-f]{64}$"
       examples:
-        - "blake3:0000000000000000000000000000000000000000\
-0000000000000000000000000"
-        - "blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1\
-b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        # yamllint disable-line rule:line-length
+        - "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+        # yamllint disable-line rule:line-length
+        - "blake3:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
     HmacValue:
       type: string
@@ -605,9 +598,8 @@ b2c3d4e5f6a1b2c3d4e5f6a1b2"
           description: >-
             Opaque Handle URI (vault://<namespace>/<category>/<name>)
             of the Secret involved.  Absent for namespace-level ops.
-          pattern: >-
-            ^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/\
-            [a-z][a-z0-9-]{1,62}[a-z0-9]$
+          # yamllint disable-line rule:line-length
+          pattern: "^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/[a-z][a-z0-9-]{1,62}[a-z0-9]$"
         purpose:
           type: string
           description: Caller-supplied justification for the operation.
@@ -785,9 +777,8 @@ b2c3d4e5f6a1b2c3d4e5f6a1b2"
             Opaque Handle URI of the Secret for which the Reveal was
             requested (vault://<namespace>/<category>/<name>).
             Plaintext is never included; only the Handle is exposed.
-          pattern: >-
-            ^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/\
-            [a-z][a-z0-9-]{1,62}[a-z0-9]$
+          # yamllint disable-line rule:line-length
+          pattern: "^vault://[a-z][a-z0-9-]{1,61}[a-z0-9]/[a-z][a-z0-9-]*/[a-z][a-z0-9-]{1,62}[a-z0-9]$"
         sensitivity:
           $ref: "#/components/schemas/Sensitivity"
           description: >-
