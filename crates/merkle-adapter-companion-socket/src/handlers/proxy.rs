@@ -35,7 +35,7 @@ use merkle_application::commands::{
     http_upload::HttpUploadCommand, ssh_copy::SshCopyCommand, ssh_exec::SshExecCommand,
 };
 use merkle_ports::{HttpAuth, HttpRequestSpec};
-use merkle_types::{AuditOp, AuditOutcome, NamespaceId};
+use merkle_types::NamespaceId;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -47,7 +47,7 @@ use crate::{
         ProxyHttpDownloadResponse, ProxyHttpRequestRequest, ProxyHttpRequestResponse,
         ProxyHttpUploadRequest, ProxyHttpUploadResponse, ProxyPortForwardRequest,
         ProxySpawnRequest, ProxySpawnResponse, ProxySshCopyRequest, ProxySshCopyResponse,
-        ProxySshExecRequest, ProxySshExecResponse, ProxySshShellRequest, ProxySshShellResponse,
+        ProxySshExecRequest, ProxySshExecResponse, ProxySshShellRequest,
     },
     problem::{Problem, ProblemType, app_error_to_problem, not_implemented},
 };
@@ -80,26 +80,6 @@ async fn derive_dek(ctx: &AppContext, namespace_id: &NamespaceId) -> Result<[u8;
     let ns_bytes: &[u8; 16] = ns_uuid.as_bytes();
     let dek_sig = ctx.crypto.blake3_keyed(&hmac_key, ns_bytes);
     Ok(*dek_sig.as_bytes())
-}
-
-/// Record an attempted use of a capability that is intentionally disabled.
-///
-/// The audit happens before the 501 response and before any secret is looked
-/// up or decrypted. This keeps disabled proxy endpoints observable without
-/// granting their former ambient process-execution authority.
-async fn audit_disabled_capability(
-    ctx: &AppContext,
-    namespace_id: NamespaceId,
-    op: AuditOp,
-) -> Result<(), Problem> {
-    let hmac_key = ctx.require_hmac_key().await.map_err(app_error_to_problem)?;
-    let params =
-        merkle_domain_audit_compliance::AppendParams::new(op, AuditOutcome::Deny, namespace_id)
-            .denial_reason("capability_disabled_pending_security_controls")
-            .caller_program("merkle-agent");
-    merkle_application::commands::unseal_vault::audit_commit(ctx, params, &hmac_key)
-        .await
-        .map_err(app_error_to_problem)
 }
 
 /// Resolve a vault secret by handle and decrypt it to raw bytes.
