@@ -4,6 +4,7 @@ number: 008
 slug: verified-oob-high-reveal
 status: implemented
 created_at: 2026-07-11T03:45:29.614571Z
+archived: true
 ---
 # Feature Specification: Verified OOB High Reveal
 
