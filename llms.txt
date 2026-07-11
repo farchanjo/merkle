@@ -1,0 +1,22 @@
+# mcp-vault
+
+> Local-first MCP secret vault (Merkle). Specs under docs/arch are the
+> architectural source of truth; doc/arch hosts the speckit control plane with
+> symlinks into that corpus. Code implements the spec.
+
+## Documentation
+
+- [Agent context](AGENTS.md): dense LLM project map
+- [Grok guide](GROK.md): Grok Build notes
+- [Human overview](README.md): product and security story
+- [Architecture corpus](docs/arch/): ADRs, domain, OpenAPI, Gherkin, CUE
+- [Speckit plane](doc/arch/): constitution, governance, SDD, symlinks
+- [Companion Socket OpenAPI](docs/arch/integrations/openapi/companion-socket.yaml)
+- [Threat model](docs/arch/threat-model/stride-analysis.md)
+- [Privacy (LINDDUN)](doc/arch/threat-model/privacy-threat-model.md)
+
+## Protocol
+
+spec-first: read docs/arch (or doc/arch symlinks) before writing code. Drive
+speckit with `~/bin/speckit` only. Behavioral changes update the corpus in the
+same change train as implementation.

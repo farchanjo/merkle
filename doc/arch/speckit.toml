@@ -1,0 +1,10 @@
+[project]
+org = "fapp"
+codeRoot = "crates"
+
+[git]
+email = "farchanjo@gmail.com"
+
+[guard]
+mode = "enforce"
+specScopeGlobs = []

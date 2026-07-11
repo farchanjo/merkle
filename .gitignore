@@ -54,3 +54,8 @@ states/
 *.merkle.age
 agent.sock
 audit_head.json
+
+# speckit born-local control plane (ADR-0029).
+doc/.specify/speckit-*.db
+doc/.specify/speckit-*.db-wal
+doc/.specify/speckit-*.db-shm

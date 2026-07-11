@@ -1,0 +1,1 @@
+../../../docs/arch/threat-model/trust-boundaries.md
