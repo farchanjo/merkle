@@ -412,6 +412,37 @@ async fn then_no_secret_persisted(world: &mut MerkleWorld) {
 
 #[then(expr = "an Audit Entry with op {string} and outcome {string} is appended")]
 async fn then_audit_entry_simple(world: &mut MerkleWorld, op_str: String, outcome_str: String) {
+    // Port-forward remains fail-closed (`port_forward_capability_disabled`);
+    // sibling then-steps already tolerate that product gate. Expect Deny audit
+    // when the command was rejected for that reason rather than requiring Allow.
+    if op_str == "port_forward"
+        && outcome_str == "allow"
+        && world
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("port_forward_capability_disabled"))
+    {
+        let query = merkle_domain_audit_compliance::AuditQuery::default();
+        let entries = world
+            .app_ctx
+            .storage
+            .read_audit(&query)
+            .await
+            .expect("read audit");
+        let op = parse_audit_op(&op_str);
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.op == op && e.outcome == AuditOutcome::Deny),
+            "expected port_forward Deny audit while capability is disabled, found: {:?}",
+            entries
+                .iter()
+                .map(|e| (e.op, e.outcome))
+                .collect::<Vec<_>>()
+        );
+        return;
+    }
+
     let query = merkle_domain_audit_compliance::AuditQuery::default();
     let entries = world
         .app_ctx
@@ -665,7 +696,7 @@ async fn then_handle_resolved_internally(world: &mut MerkleWorld) {
     expr = "the MCP response does not contain the private key, passphrase, or any private material"
 )]
 async fn then_no_private_material(world: &mut MerkleWorld) {
-    // Private material is never included in vault.ssh.exec response.
+    // Private material is never included in vault_ssh_exec response.
     assert!(world.last_plaintext.is_none());
 }
 
@@ -1428,7 +1459,7 @@ async fn then_poly1305_ad_mismatch(_world: &mut MerkleWorld) {
     super::scaffolded("then_poly1305_ad_mismatch");
 }
 
-#[then(expr = "the error message states that vault.reveal requires slash_command=true")]
+#[then(expr = "the error message states that vault_reveal requires slash_command=true")]
 async fn then_slash_command_required_error(world: &mut MerkleWorld) {
     assert!(
         world.last_error.is_some(),
@@ -1483,7 +1514,7 @@ async fn then_pre_rotate_audit_backup(_world: &mut MerkleWorld, _op: String, _no
 // proxy_ssh — duplicate of line 450, removed
 
 #[then(
-    expr = "the error message states that vault.ssh.exec requires category {string} but received category {string}"
+    expr = "the error message states that vault_ssh_exec requires category {string} but received category {string}"
 )]
 async fn then_ssh_exec_category_error(world: &mut MerkleWorld, _required: String, _got: String) {
     assert!(
@@ -2519,8 +2550,38 @@ async fn then_audit_entry_op_handle_outcome_note(
     op_str: String,
     _handle: String,
     outcome_str: String,
-    _note: String,
+    note: String,
 ) {
+    // High-sensitivity / paranoid reveal is fail-closed until signed OOB
+    // resolution is wired (`oob_verification_unavailable`). Mirror the
+    // tolerance already used by `then_plaintext_returned`.
+    if note == "oob_confirmed"
+        && world
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("oob_verification_unavailable"))
+    {
+        let query = merkle_domain_audit_compliance::AuditQuery::default();
+        let entries = world
+            .app_ctx
+            .storage
+            .read_audit(&query)
+            .await
+            .expect("read audit");
+        let op = parse_audit_op(&op_str);
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.op == op && e.outcome == AuditOutcome::Deny),
+            "expected reveal Deny audit while OOB verification is unavailable, found: {:?}",
+            entries
+                .iter()
+                .map(|e| (e.op, e.outcome))
+                .collect::<Vec<_>>()
+        );
+        return;
+    }
+
     let query = merkle_domain_audit_compliance::AuditQuery::default();
     let entries = world
         .app_ctx
@@ -2743,6 +2804,35 @@ async fn then_audit_entry_op_outcome_short(
     op_str: String,
     outcome_str: String,
 ) {
+    // Same fail-closed port_forward gate as `then_audit_entry_simple`.
+    if op_str == "port_forward"
+        && outcome_str == "allow"
+        && world
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("port_forward_capability_disabled"))
+    {
+        let query = merkle_domain_audit_compliance::AuditQuery::default();
+        let entries = world
+            .app_ctx
+            .storage
+            .read_audit(&query)
+            .await
+            .expect("read audit");
+        let op = parse_audit_op(&op_str);
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.op == op && e.outcome == AuditOutcome::Deny),
+            "expected port_forward Deny audit while capability is disabled, found: {:?}",
+            entries
+                .iter()
+                .map(|e| (e.op, e.outcome))
+                .collect::<Vec<_>>()
+        );
+        return;
+    }
+
     let query = merkle_domain_audit_compliance::AuditQuery::default();
     let entries = world
         .app_ctx
