@@ -608,18 +608,68 @@ pub async fn spawn(
     State(ctx): State<Arc<AppContext>>,
     Json(body): Json<ProxySpawnRequest>,
 ) -> impl IntoResponse {
+    use merkle_application::commands::spawn_command::SpawnCommandCommand;
+
     let namespace_id = match parse_namespace_id(body.namespace_id) {
         Ok(id) => id,
         Err(p) => return p.into_response(),
     };
-
-    if let Err(problem) = audit_disabled_capability(&ctx, namespace_id, AuditOp::Spawn).await {
-        return problem.into_response();
+    if body.command.trim().is_empty() {
+        return Problem {
+            kind: ProblemType::SchemaValidationFailed,
+            title: "Invalid spawn request".into(),
+            status: 400,
+            detail: "command must not be empty".into(),
+            instance: None,
+            hint: None,
+            fields: vec![],
+        }
+        .into_response();
     }
-    not_implemented(
-        "spawn is disabled until a fail-closed command policy, non-exfiltrating output model, timeout/process isolation, and complete per-secret auditing are implemented",
-    )
-    .into_response()
+    let Some(handle) = body.secret_handles.first().cloned() else {
+        return Problem {
+            kind: ProblemType::SchemaValidationFailed,
+            title: "Invalid spawn request".into(),
+            status: 400,
+            detail: "secret_handles must contain at least one handle".into(),
+            instance: None,
+            hint: None,
+            fields: vec![],
+        }
+        .into_response();
+    };
+    let dek = match derive_dek(&ctx, &namespace_id).await {
+        Ok(b) => b,
+        Err(p) => return p.into_response(),
+    };
+    let env_var = body
+        .env
+        .first()
+        .map(|(k, _)| k.clone())
+        .unwrap_or_else(|| "MERKLE_SECRET".to_owned());
+    let mut argv = Vec::with_capacity(1 + body.args.len());
+    argv.push(body.command);
+    argv.extend(body.args);
+
+    let cmd = SpawnCommandCommand {
+        namespace_id,
+        handle,
+        env_var,
+        dek_bytes: dek,
+        argv,
+    };
+
+    match cmd.execute(&ctx).await {
+        Ok(out) => {
+            let resp = ProxySpawnResponse {
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                exit_code: out.exit_code,
+            };
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(err) => app_error_to_problem(err).into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
