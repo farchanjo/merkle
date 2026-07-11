@@ -948,24 +948,26 @@ pub struct ProxyPortForwardResponse {
 
 /// Request body for `POST /v1/proxy/ssh/shell`.
 ///
-/// Full PTY proxy is out of scope for this phase. The endpoint is wired but
-/// returns 501 Not Implemented. A future phase will introduce a streaming
-/// WebSocket sub-protocol over the Companion Socket.
+/// Buffered remote shell execution (not interactive PTY). Optional `command`
+/// defaults to `/bin/sh -l` on the remote host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxySshShellRequest {
     pub namespace_id: Uuid,
     /// Handle to the SSH private-key secret stored in the vault.
     pub key_handle: Handle,
-    /// SSH target in `host:port` form.
+    /// SSH target in `host:port` or `user@host` form.
     pub target: String,
+    /// Optional remote command; defaults to a login shell when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
-/// Response placeholder for `POST /v1/proxy/ssh/shell` (501 today).
+/// Response body for buffered `POST /v1/proxy/ssh/shell`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxySshShellResponse {
-    pub session_id: Uuid,
-    /// Transport URI for the future streaming channel.
-    pub transport_uri: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
 }
 
 // ---------------------------------------------------------------------------

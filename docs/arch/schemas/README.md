@@ -155,3 +155,5 @@ Control-plane feature posture schemas (not domain aggregates).
 - [`device-pair-endpoint.cue`](device-pair-endpoint.cue)
 
 - [`ssh-port-forward.cue`](ssh-port-forward.cue)
+
+- [`buffered-ssh-shell.cue`](buffered-ssh-shell.cue)
