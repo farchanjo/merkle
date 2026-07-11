@@ -116,30 +116,42 @@ format = 'text'
         let cfg_path = write_temp_config(&tmp);
         let sock_path = tmp.path().join("agent.sock");
 
+        let keystore_path = tmp.path().join("keystore.age");
+        let stderr_path = tmp.path().join("agent.stderr");
+        let stderr_file = std::fs::File::create(&stderr_path).expect("create stderr log");
+
         // Spawn the agent.
+        //
+        // Force file keystore via env: the config crate overlays
+        // `MERKLE__KEYSTORE__BACKEND` over the TOML, and developer shells often
+        // export `=os` (login keychain). Without the override the agent hangs
+        // on the OS keychain and never binds the socket.
         let mut child = Command::new(&bin)
             .arg("--config")
             .arg(&cfg_path)
-            // File keystore needs a passphrase; GAP-003 needs a real recovery
-            // recipient. Both are env-only and let the agent reach a sealed,
-            // socket-listening state in an isolated temp keystore.
+            .env("MERKLE__KEYSTORE__BACKEND", "file")
+            .env("MERKLE_KEYSTORE_PATH", &keystore_path)
             .env("MERKLE_KEYSTORE_PASSPHRASE", "lifecycle-test-pass")
+            .env("MERKLE__METRICS__ENABLED", "false")
             .env(
                 "MERKLE_RECOVERY_RECIPIENT",
                 "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
             )
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::from(stderr_file))
             .spawn()
             .expect("failed to spawn merkle-agent");
 
-        // Wait up to 5 s for the Companion Socket to appear.
-        let socket_bound = wait_for_path(&sock_path, Duration::from_secs(5));
-        assert!(
-            socket_bound,
-            "companion socket did not appear at {} within 5 s",
-            sock_path.display()
-        );
+        // Wait up to 15 s for the Companion Socket to appear (cold debug binary).
+        let socket_bound = wait_for_path(&sock_path, Duration::from_secs(15));
+        if !socket_bound {
+            let _ = child.kill();
+            let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+            panic!(
+                "companion socket did not appear at {} within 15 s\nagent stderr:\n{stderr}",
+                sock_path.display()
+            );
+        }
 
         // Send SIGTERM to trigger graceful shutdown.
         sigterm(child.id());
